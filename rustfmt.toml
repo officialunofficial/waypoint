@@ -1,0 +1,14 @@
+# Configuration for rustfmt 
+edition = "2021"
+reorder_imports = true
+use_field_init_shorthand = true
+use_small_heuristics = "Max"
+max_width = 100
+
+# The following options will be used with rustfmt stable
+merge_derives = true
+match_block_trailing_comma = true
+
+# DRY (Don't Repeat Yourself) formatting
+newline_style = "Unix"
+use_try_shorthand = true

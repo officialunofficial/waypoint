@@ -1,0 +1,12 @@
+# Clippy configuration for Waypoint
+
+# Set more restrictive lints for cleaner code
+disallowed-methods = [
+    { path = "std::env::var", reason = "Use config system instead of direct env vars" },
+    { path = "std::fs::write", reason = "Use fs_err or tokio::fs for better error handling" },
+    { path = "std::fs::read", reason = "Use fs_err or tokio::fs for better error handling" },
+]
+
+# DRY/YAGNI principles
+too-many-arguments-threshold = 6
+cognitive-complexity-threshold = 20

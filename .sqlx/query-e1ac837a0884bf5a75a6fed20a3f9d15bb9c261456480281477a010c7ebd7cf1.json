@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO username_proofs (\n                    fid,\n                    username,\n                    timestamp,\n                    type,\n                    signature,\n                    owner\n                )\n                VALUES ($1, $2, $3, $4, $5, $6)\n                ON CONFLICT (username, timestamp) \n                DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Timestamptz",
+        "Int2",
+        "Bytea",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e1ac837a0884bf5a75a6fed20a3f9d15bb9c261456480281477a010c7ebd7cf1"
+}

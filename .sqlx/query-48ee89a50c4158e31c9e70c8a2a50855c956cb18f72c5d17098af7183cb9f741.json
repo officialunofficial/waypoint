@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                                INSERT INTO casts (hash, timestamp)\n                                VALUES ($1, $2)\n                                ON CONFLICT (hash) DO UPDATE SET\n                                    updated_at = CURRENT_TIMESTAMP\n                                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "48ee89a50c4158e31c9e70c8a2a50855c956cb18f72c5d17098af7183cb9f741"
+}

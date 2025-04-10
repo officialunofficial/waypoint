@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO links (\n                    fid,\n                    target_fid,\n                    type,\n                    hash,\n                    timestamp,\n                    deleted_at,\n                    display_timestamp\n                )\n                VALUES ($1, $2, $3, $4, $5, NULL, $6)\n                ON CONFLICT (hash) DO UPDATE SET\n                    deleted_at = NULL,\n                    timestamp = LEAST(EXCLUDED.timestamp, links.timestamp),\n                    display_timestamp = COALESCE(links.display_timestamp, EXCLUDED.display_timestamp)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Bytea",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "30576100e0547df570a7cc48ff4940458562dbf2c4898376a93226b845401426"
+}

@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Update VERSION file
+        run: |
+          echo "${VERSION#v}" > VERSION
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+
+      - name: Update Cargo.toml version
+        run: |
+          NEW_VERSION="${VERSION#v}"
+          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+
+      - name: Generate changelog
+        run: |
+          git-cliff --tag ${{ github.event.inputs.version }} -o CHANGELOG.md
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(release): prepare ${{ github.event.inputs.version }}"
+          file_pattern: "VERSION Cargo.toml CHANGELOG.md"
+          branch: release/${{ github.event.inputs.version }}
+          create_branch: true
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "Release ${{ github.event.inputs.version }}"
+          body: |
+            This PR prepares for the ${{ github.event.inputs.version }} release.
+            
+            - Updates VERSION file
+            - Updates Cargo.toml version
+            - Updates CHANGELOG.md
+            
+            Please review the changes and approve the release.
+          base: main
+          branch: release/${{ github.event.inputs.version }}
+          draft: false

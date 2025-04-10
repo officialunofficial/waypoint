@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO casts (fid, hash, deleted_at, timestamp)\n                VALUES ($1, $2, $3, $4)\n                ON CONFLICT (hash) DO UPDATE SET\n                    deleted_at = EXCLUDED.deleted_at,\n                    timestamp = LEAST(COALESCE(casts.timestamp, EXCLUDED.timestamp), EXCLUDED.timestamp)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4d869c1493f9ad05dd1bdd3e748d803fd709132dcf8a2caa0a4d198500fac149"
+}

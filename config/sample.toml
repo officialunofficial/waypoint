@@ -1,0 +1,44 @@
+# This is a sample configuration for Waypoint.
+# You can use this as a starting point for your own configuration.
+# Copy this file to config.toml and modify it to suit your needs.
+# You can also set these values using environment variables prefixed with WAYPOINT__
+
+# Database Configuration
+[database]
+# PostgreSQL connection URL
+url = "postgresql://postgres:postgres@localhost:5432/waypoint"
+# Maximum number of connections in the pool
+max_connections = 20
+# Connection timeout in seconds
+timeout_seconds = 30
+
+# Redis Configuration
+[redis]
+# Redis connection URL
+url = "redis://localhost:6379"
+# Connection pool size
+pool_size = 5
+
+# Farcaster Hub Configuration
+[hub]
+# Hub gRPC URL
+url = "snapchain.farcaster.xyz:3383"
+
+# OpenTelemetry Configuration
+[otel]
+# Enable OpenTelemetry tracing
+enabled = false
+# OpenTelemetry collector endpoint
+endpoint = "http://otel-collector:4317"
+# Service name used in traces
+service_name = "waypoint"
+# Timeout in seconds for telemetry operations
+timeout_seconds = 3
+
+# Logging Configuration
+# Format can be "json" for structured logging or "text" for human-readable logs
+log_format = "json"
+
+# Database Management
+# Set to true to clear database on startup (use with caution)
+clear_db = false

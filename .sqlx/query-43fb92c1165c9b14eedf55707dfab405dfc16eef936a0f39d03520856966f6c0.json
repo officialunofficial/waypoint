@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE verifications\n                SET deleted_at = $3\n                WHERE\n                    fid = $1 AND\n                    signer_address = $2\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "43fb92c1165c9b14eedf55707dfab405dfc16eef936a0f39d03520856966f6c0"
+}

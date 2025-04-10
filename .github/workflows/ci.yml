@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Set environment variables at the job level so they're available in all steps
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
+      SQLX_OFFLINE: true
+      RUSTFLAGS: "-D warnings"
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install Protoc
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+    
+    - name: Build
+      run: cargo build
+    
+    - name: Run tests without database connection
+      run: cargo test --no-default-features
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Clippy
+      run: cargo clippy -- -D warnings

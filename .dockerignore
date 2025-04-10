@@ -1,0 +1,59 @@
+# Git
+.git
+.github
+.gitignore
+
+# Build artifacts
+/target
+**/*.rs.bk
+*.pdb
+
+# Development environment
+.env
+.env.*
+.vscode
+.idea
+*.iml
+
+# Cargo
+Cargo.lock
+
+# Documentation
+README.md
+CONTRIBUTING.md
+CHANGELOG.md
+LICENSE
+DOCKER_HUB.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+docker-bake.hcl
+.dockerignore
+
+# Configuration files (not used in build)
+config/examples
+
+# Test data
+/tests/data
+
+# Logs
+*.log
+
+# Backup files
+*~
+*.bak
+*.swp
+*.tmp
+
+# Local dev files
+.local
+.direnv
+.devcontainer
+
+# CI configuration
+*.yml
+*.yaml
+.travis.yml
+.gitlab-ci.yml
+cliff.toml

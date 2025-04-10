@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: waypoint
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d waypoint"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+    networks:
+      - waypoint-network
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+    networks:
+      - waypoint-network
+
+  waypoint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: on-failure
+    command: ./waypoint start
+    ports:
+      - "8080:8080"
+    environment:
+      WAYPOINT_DATABASE__URL: postgresql://postgres:postgres@postgres:5432/waypoint
+      WAYPOINT_DATABASE__MAX_CONNECTIONS: 20
+      WAYPOINT_DATABASE__TIMEOUT_SECONDS: 60
+      WAYPOINT_REDIS__URL: redis://redis:6379
+      WAYPOINT_HUB__URL: snapchain.farcaster.xyz:3383
+      HOST: 0.0.0.0
+      PORT: 8080
+      RUST_LOG: info,sqlx=debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - waypoint-network
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  waypoint-network:
+    driver: bridge
