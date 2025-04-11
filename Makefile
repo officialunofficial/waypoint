@@ -6,7 +6,7 @@ REGISTRY ?= localhost
 IMAGE_NAME := waypoint
 DEFAULT_TAG := latest
 
-.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-worker-highperf backfill-update-user-data backfill-update-user-data-max test docker-build docker-run docker-push docker-tag fmt fmt-rust fmt-biome changelog help
+.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-worker-highperf backfill-update-user-data backfill-update-user-data-max backfill-block-queue backfill-block-queue-range backfill-block-worker backfill-block-worker-highperf test docker-build docker-run docker-push docker-tag fmt fmt-rust fmt-biome changelog help
 
 init:
 	mkdir -p $(PROTO_DIR)
@@ -61,6 +61,24 @@ backfill-update-user-data-max: proto build
 		exit 1; \
 	fi
 	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --release --bin backfill -- user-data --max-fid $(MAX_FID)
+
+# Block-based backfill queue commands
+backfill-block-queue: proto build
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --bin backfill -- block-queue
+
+backfill-block-queue-range: proto build
+	@if [ "$(START_BLOCK)" = "" ] || [ "$(END_BLOCK)" = "" ]; then \
+		echo "Please specify START_BLOCK=<number> END_BLOCK=<number> for block range"; \
+		exit 1; \
+	fi
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --bin backfill -- block-queue --start-block $(START_BLOCK) --end-block $(END_BLOCK)
+
+# Block-based backfill worker commands
+backfill-block-worker: proto build
+	WAYPOINT_CONFIG=config/examples/config.default.toml BACKFILL_CONCURRENCY=25 cargo run --bin backfill -- block-worker
+
+backfill-block-worker-highperf: proto build
+	WAYPOINT_CONFIG=config/examples/config.default.toml BACKFILL_CONCURRENCY=50 RUST_LOG=info cargo run --release --bin backfill -- block-worker
 
 # Run the container with proper env vars and port mapping
 docker-run: docker-build
@@ -133,6 +151,10 @@ help:
 	@echo "  make backfill-worker-highperf - Run high-performance worker (100 concurrent jobs)"
 	@echo "  make backfill-update-user-data - Update user_data for all FIDs"
 	@echo "  make backfill-update-user-data-max MAX_FID=1000 - Update user_data for FIDs up to 1000"
+	@echo "  make backfill-block-queue     - Queue all blocks for backfill"
+	@echo "  make backfill-block-queue-range START_BLOCK=1 END_BLOCK=1000 - Queue specific block range"
+	@echo "  make backfill-block-worker    - Run block-based backfill worker"
+	@echo "  make backfill-block-worker-highperf - Run high-performance block worker"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make docker-build             - Build Docker image"
@@ -151,3 +173,5 @@ help:
 	@echo "  TAG                           - Docker image tag (for docker-tag target)"
 	@echo "  FIDS                          - Comma-separated list of FIDs (for backfill-queue-fids)"
 	@echo "  MAX_FID                       - Maximum FID (for backfill-queue-max and backfill-update-user-data-max)"
+	@echo "  START_BLOCK                   - Starting block number (for backfill-block-queue-range)"
+	@echo "  END_BLOCK                     - Ending block number (for backfill-block-queue-range)"

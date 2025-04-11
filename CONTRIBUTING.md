@@ -2,6 +2,14 @@
 
 Thank you for your interest in contributing to Waypoint! This document provides guidelines and instructions for contributing.
 
+## Note on Terminology
+
+When working with this codebase, it's important to understand the distinction between different types of events:
+
+- **Snapchain Events**: These are events from Farcaster's Snapchain protocol. In the codebase and database schema, they're often referred to as "OnChainEvents" following Farcaster's protocol terminology, but they're not actual blockchain transactions. They're consensus events from Snapchain's internal block structure.
+
+- **True On-chain Events**: These refer to actual blockchain transactions like verifications, signers, etc. that occur on the Ethereum blockchain.
+
 ## Code of Conduct
 
 By participating in this project, you agree to maintain a respectful and inclusive environment for everyone.

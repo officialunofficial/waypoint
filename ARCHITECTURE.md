@@ -1,6 +1,8 @@
 # Waypoint Architecture
 
-This document provides an overview of Waypoint's streaming architecture, which is responsible for processing real-time Snapchain events through Redis consumer groups and database processors.
+This document provides an overview of Waypoint's architecture, which consists of two main components:
+1. A streaming service for processing real-time Snapchain events through Redis consumer groups
+2. A backfill system with both FID-based and block-based approaches for historical data processing
 
 ## Streaming Service Architecture
 
@@ -127,7 +129,81 @@ The PostgreSQL database is the final destination for processed events:
 - Supports vector extensions for similarity search
 - Maintains indexes for efficient querying
 
+## Backfill System Architecture
+
+Waypoint provides two complementary backfill approaches for historical data processing.
+
+### FID-based Backfill
+
+The FID-based approach processes messages by Farcaster user ID (FID):
+
+```mermaid
+sequenceDiagram
+    participant Queue as Redis Queue
+    participant Worker as FID Worker
+    participant Hub as Snapchain Hub
+    participant Processor as Database Processor
+    participant DB as PostgreSQL
+
+    Queue->>Worker: BackfillJob with FIDs [1,2,3,...]
+    
+    loop For Each FID
+        Worker->>Hub: Request all message types for FID
+        Hub->>Worker: Messages (casts, reactions, etc.)
+        
+        par Process Different Message Types
+            Worker->>Processor: Process casts
+            Worker->>Processor: Process reactions
+            Worker->>Processor: Process links
+            Worker->>Processor: Process user_data
+            Worker->>Processor: Process verifications
+        end
+        
+        Processor->>DB: Store processed messages
+    end
+    
+    Worker->>Queue: Mark job as completed
+```
+
+### Block-based Backfill (Snapchain Blocks)
+
+The block-based approach processes messages chronologically by Snapchain block height (not Ethereum blocks):
+
+```mermaid
+sequenceDiagram
+    participant Queue as Redis Queue
+    participant Worker as Block Worker
+    participant Hub as Snapchain Hub
+    participant Processor as Database Processor
+    participant DB as PostgreSQL
+
+    Queue->>Worker: BlockBackfillJob (start_block to end_block)
+    
+    loop For Each Block
+        Worker->>Hub: Get block by height
+        Hub->>Worker: Block data
+        
+        Worker->>Hub: Get shard chunks for block
+        Hub->>Worker: Shard chunk data with transactions
+        
+        loop For Each Transaction
+            loop For Each Message
+                Worker->>Processor: Process message
+                Processor->>DB: Store message
+            end
+        end
+        
+        Worker->>DB: Update block_sync_state
+    end
+    
+    Worker->>Queue: Mark job as completed
+```
+
 ## Key Features
+
+- **Dual Backfill Approaches**: 
+  - FID-based for targeted user data processing
+  - Block-based for chronological consistency
 
 - **Memory efficient**: Optimized Snapchain event processing
 - **Efficient Buffer Management**: Carefully managed memory allocations
@@ -137,3 +213,4 @@ The PostgreSQL database is the final destination for processed events:
 - **Graceful Shutdown**: Proper shutdown sequence for minimal data loss
 - **Connection Monitoring**: Detects and recovers from stale connections
 - **Dead Letter Queuing**: Optionally moves problematic messages to dead letter queues
+- **Checkpointing**: Tracks progress for resumable operations

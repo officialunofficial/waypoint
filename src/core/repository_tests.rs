@@ -71,7 +71,7 @@ mod tests {
 
             // Apply cursor if provided
             if let Some(cursor) = cursor {
-                result = result.into_iter().filter(|m| m.id.value() > cursor.value()).collect();
+                result.retain(|m| m.id.value() > cursor.value());
             }
 
             // Apply limit

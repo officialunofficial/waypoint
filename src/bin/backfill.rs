@@ -5,6 +5,8 @@ use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use waypoint::{
     backfill::{
+        block_reconciler::BlockReconciler,
+        block_worker::{BlockBackfillJob, BlockBackfillQueue, BlockWorker},
         reconciler::MessageReconciler,
         worker::{BackfillJob, BackfillQueue, Worker},
     },
@@ -84,6 +86,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         .default_value("25"),
                 ),
         )
+        .subcommand(
+            Command::new("block-queue")
+                .about("Queue blocks for backfill")
+                .arg(
+                    Arg::new("shard_id")
+                        .long("shard-id")
+                        .help("Shard ID to backfill")
+                        .value_parser(clap::value_parser!(u32))
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::new("start_block")
+                        .long("start-block")
+                        .help("Starting block number")
+                        .value_parser(clap::value_parser!(u64))
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("end_block")
+                        .long("end-block")
+                        .help("Ending block number")
+                        .value_parser(clap::value_parser!(u64))
+                        .required(false),
+                )
+                .arg(
+                    Arg::new("batch_size")
+                        .long("batch-size")
+                        .help("Number of blocks per job")
+                        .value_parser(clap::value_parser!(u64))
+                        .default_value("100"),
+                ),
+        )
+        .subcommand(Command::new("block-worker").about("Start block-based backfill worker"))
         .get_matches();
 
     // We already loaded config for logging, reuse it
@@ -93,8 +128,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let hub = Arc::new(Mutex::new(Hub::new(config.hub.clone())?));
     let database = Arc::new(Database::new(&config.database).await?);
 
-    // Initialize queue
-    let queue = Arc::new(BackfillQueue::new(redis.clone(), "backfill:queue".to_string()));
+    // Initialize queues
+    let fid_queue = Arc::new(BackfillQueue::new(redis.clone(), "backfill:fid:queue".to_string()));
+    let block_queue = Arc::new(BlockBackfillQueue::new(redis.clone(), "backfill:block:queue".to_string()));
 
     match matches.subcommand() {
         Some(("queue", args)) => {
@@ -133,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let end = std::cmp::min(start + batch_size - 1, max);
                     let batch_fids = (start..=end).collect::<Vec<_>>();
 
-                    queue
+                    fid_queue
                         .add_job(BackfillJob {
                             fids: batch_fids,
                             priority: waypoint::backfill::worker::JobPriority::Normal,
@@ -158,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let end = std::cmp::min(start + batch_size - 1, hub_max_fid);
                     let batch_fids = (start..=end).collect::<Vec<_>>();
 
-                    queue
+                    fid_queue
                         .add_job(BackfillJob {
                             fids: batch_fids,
                             priority: waypoint::backfill::worker::JobPriority::Normal,
@@ -177,7 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Add any directly specified FIDs
             if !fids.is_empty() {
-                queue
+                fid_queue
                     .add_job(BackfillJob {
                         fids,
                         priority: waypoint::backfill::worker::JobPriority::Normal,
@@ -229,12 +265,115 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let concurrency = config.backfill.concurrency.unwrap_or(50);
 
             info!("Using worker concurrency: {}", concurrency);
-            let mut worker = Worker::new(reconciler, queue, concurrency);
+            let mut worker = Worker::new(reconciler, fid_queue, concurrency);
 
             // Add processors to worker
             worker.add_processor(db_processor);
 
             info!("Starting backfill worker");
+            worker.run().await?;
+
+            // Disconnect hub client when done
+            let mut hub_guard = hub.lock().await;
+            hub_guard.disconnect().await?;
+        },
+        Some(("block-queue", args)) => {
+            let shard_id = args.get_one::<u32>("shard_id").copied().unwrap_or(0);
+            let batch_size = args.get_one::<u64>("batch_size").copied().unwrap_or(100);
+            
+            // Connect to hub to get block info
+            let mut hub_guard = hub.lock().await;
+            hub_guard.connect().await?;
+            // Validate that hub client is available
+            hub_guard.client().ok_or::<Box<dyn std::error::Error + Send + Sync>>(
+                "No hub client available".into(),
+            )?;
+            
+            // Get latest block from hub
+            let hub_info = hub_guard.get_hub_info().await?;
+            
+            // Find the shard info
+            let mut latest_block = 0;
+            for shard_info in hub_info.shard_infos {
+                if shard_info.shard_id == shard_id {
+                    latest_block = shard_info.max_height;
+                    break;
+                }
+            }
+            
+            if latest_block == 0 {
+                return Err(format!("Shard {} not found or has no blocks", shard_id).into());
+            }
+            
+            info!("Detected latest block from hub: {} for shard {}", latest_block, shard_id);
+            
+            // Get block range from args or use defaults
+            let start_block = args.get_one::<u64>("start_block").copied().unwrap_or(1);
+            let end_block = args.get_one::<u64>("end_block").copied().unwrap_or(latest_block);
+            
+            info!("Will queue blocks {} to {} for shard {}", start_block, end_block, shard_id);
+            
+            // Queue block jobs in batches
+            for batch_start in (start_block..=end_block).step_by(batch_size as usize) {
+                let batch_end = std::cmp::min(batch_start + batch_size - 1, end_block);
+                
+                block_queue
+                    .add_job(BlockBackfillJob {
+                        shard_id,
+                        start_block: batch_start,
+                        end_block: batch_end,
+                        priority: waypoint::backfill::block_worker::JobPriority::Normal,
+                        state: waypoint::backfill::block_worker::JobState::Pending,
+                        visibility_timeout: None,
+                        attempts: 0,
+                        created_at: chrono::Utc::now(),
+                        id: String::new(),
+                    })
+                    .await?;
+                    
+                info!("Queued blocks {}-{} for shard {}", batch_start, batch_end, shard_id);
+            }
+            
+            info!("Block backfill jobs queued successfully");
+            hub_guard.disconnect().await?;
+        },
+        Some(("block-worker", _)) => {
+            // Clone the hub client first
+            let hub_client = {
+                let mut hub_guard = hub.lock().await;
+                hub_guard.connect().await?;
+                hub_guard
+                    .client()
+                    .ok_or::<Box<dyn std::error::Error + Send + Sync>>(
+                        "No hub client available".into(),
+                    )?
+                    .clone()
+            };
+
+            // Create shared application resources
+            let app_resources =
+                Arc::new(AppResources::new(hub.clone(), redis.clone(), database.clone()));
+
+            // Create processors
+            let db_processor = Arc::new(DatabaseProcessor::new(app_resources.clone()));
+
+            // Create reconciler for blocks
+            let block_reconciler = Arc::new(BlockReconciler::new(
+                hub_client,
+                database.clone(),
+                std::time::Duration::from_secs(30),
+            ));
+
+            // Create and run worker with block-based approach
+            let concurrency = config.backfill.concurrency.unwrap_or(25);
+
+            info!("Using block worker concurrency: {}", concurrency);
+            let mut worker = BlockWorker::new(block_reconciler, block_queue, concurrency);
+
+            // Add processors to worker
+            worker.add_processor(db_processor);
+
+            info!("Starting block-based backfill worker");
             worker.run().await?;
 
             // Disconnect hub client when done
