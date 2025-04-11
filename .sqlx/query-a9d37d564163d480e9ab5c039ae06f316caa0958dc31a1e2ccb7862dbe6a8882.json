@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO links (\n                    fid,\n                    target_fid,\n                    type,\n                    hash,\n                    timestamp,\n                    deleted_at,\n                    display_timestamp\n                )\n                VALUES ($1, $2, $3, $4, $5, $6, $7)\n                ON CONFLICT (hash) DO UPDATE SET\n                    deleted_at = CASE\n                        WHEN EXCLUDED.timestamp >= links.timestamp THEN EXCLUDED.deleted_at\n                        ELSE links.deleted_at\n                    END,\n                    timestamp = LEAST(EXCLUDED.timestamp, links.timestamp),\n                    display_timestamp = COALESCE(links.display_timestamp, EXCLUDED.display_timestamp)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Bytea",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a9d37d564163d480e9ab5c039ae06f316caa0958dc31a1e2ccb7862dbe6a8882"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO verifications (\n                    fid,\n                    signer_address,\n                    hash,\n                    block_hash,\n                    signature,\n                    protocol,\n                    timestamp,\n                    deleted_at\n                )\n                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n                ON CONFLICT (signer_address, fid) DO UPDATE SET\n                    deleted_at = CASE\n                        WHEN EXCLUDED.timestamp >= verifications.timestamp THEN EXCLUDED.deleted_at\n                        ELSE verifications.deleted_at\n                    END,\n                    timestamp = GREATEST(verifications.timestamp, EXCLUDED.timestamp)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Bytea",
+        "Bytea",
+        "Bytea",
+        "Int2",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0031bb4cc35d04c7fa0f15c66070b99dbb2a15a1194f0029c3e0f01b607ffb84"
+}

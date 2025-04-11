@@ -58,7 +58,7 @@ CREATE TABLE public.casts
     updated_at         timestamp with time zone DEFAULT CURRENT_TIMESTAMP      NOT NULL,
     "timestamp"        timestamp with time zone                                NOT NULL,
     deleted_at         timestamp with time zone,
-    fid                bigint                                                  NOT NULL,
+    fid                bigint,                   -- Nullable to support CRDT out-of-order messages
     parent_fid         bigint,
     hash               bytea                                                   NOT NULL,
     parent_hash        bytea,
@@ -68,8 +68,6 @@ CREATE TABLE public.casts
     mentions           json                     DEFAULT '[]'::json NOT NULL,
     mentions_positions json                     DEFAULT '[]'::json NOT NULL,
     type               smallint                 DEFAULT 0                      NOT NULL,
-    count_likes        int                      DEFAULT 0                      NOT NULL,
-    count_recasts      int                      DEFAULT 0                      NOT NULL,
     CONSTRAINT casts_pkey PRIMARY KEY (id),
     CONSTRAINT casts_hash_key UNIQUE (hash)
 );
@@ -81,7 +79,7 @@ CREATE TABLE public.reactions
     updated_at       timestamp with time zone DEFAULT CURRENT_TIMESTAMP      NOT NULL,
     "timestamp"      timestamp with time zone                                NOT NULL,
     deleted_at       timestamp with time zone,
-    fid              bigint                                                  NOT NULL,
+    fid              bigint,                                                  -- Nullable to support CRDT out-of-order messages
     target_cast_fid  bigint,
     type             smallint                                                NOT NULL,
     hash             bytea                                                   NOT NULL,
@@ -98,7 +96,7 @@ CREATE TABLE public.links
     updated_at        timestamp with time zone DEFAULT CURRENT_TIMESTAMP      NOT NULL,
     "timestamp"       timestamp with time zone                                NOT NULL,
     deleted_at        timestamp with time zone,
-    fid               bigint                                                  NOT NULL,
+    fid               bigint,                                                  -- Nullable to support CRDT out-of-order messages
     target_fid        bigint                                                  NOT NULL,
     display_timestamp timestamp with time zone,
     type              text                                                    NOT NULL,
@@ -128,7 +126,7 @@ CREATE TABLE public.verifications
     updated_at     timestamp with time zone DEFAULT CURRENT_TIMESTAMP      NOT NULL,
     "timestamp"    timestamp with time zone                                NOT NULL,
     deleted_at     timestamp with time zone,
-    fid            bigint                                                  NOT NULL,
+    fid            bigint,                                                  -- Nullable to support CRDT out-of-order messages
     hash           bytea                                                   NOT NULL,
     signer_address bytea                                                   NOT NULL,
     block_hash     bytea                                                   NOT NULL,
@@ -151,7 +149,7 @@ CREATE TABLE public.username_proofs
     signature        bytea                                                   NOT NULL,
     owner            bytea,
     CONSTRAINT username_proofs_pkey PRIMARY KEY (id),
-    CONSTRAINT username_proofs_username_timestamp_unique UNIQUE (username, "timestamp")
+    CONSTRAINT username_proofs_username_fid_unique UNIQUE (username, fid)      -- Changed for better CRDT semantics
 );
 
 -- Create indexes
@@ -167,9 +165,10 @@ CREATE INDEX casts_parent_hash_index ON public.casts USING btree (parent_hash) W
 CREATE INDEX casts_parent_url_index ON public.casts USING btree (parent_url) WHERE (parent_url IS NOT NULL);
 CREATE INDEX casts_timestamp_index ON public.casts USING btree ("timestamp");
 CREATE INDEX idx_casts_feed ON public.casts USING btree (fid, parent_hash, deleted_at, "timestamp" DESC, hash)
-    WHERE ((deleted_at IS NULL) AND (parent_hash IS NULL));
+    WHERE ((deleted_at IS NULL) AND (parent_hash IS NULL) AND (fid IS NOT NULL));
 
 CREATE INDEX reactions_fid_type_target_cast_hash_index ON public.reactions USING btree (fid, type, target_cast_hash);
+CREATE INDEX reactions_active_index ON public.reactions USING btree (fid, type, target_cast_hash) WHERE (deleted_at IS NULL);
 CREATE INDEX reactions_target_cast_hash_index ON public.reactions USING btree (target_cast_hash) WHERE (target_cast_hash IS NOT NULL);
 CREATE INDEX reactions_target_url_index ON public.reactions USING btree (target_url) WHERE (target_url IS NOT NULL);
 
@@ -177,6 +176,7 @@ CREATE INDEX links_fid_index ON public.links USING btree (fid);
 CREATE INDEX links_hash_index ON public.links USING btree (hash);
 CREATE INDEX links_type_index ON public.links USING btree (type);
 CREATE INDEX links_target_fid_index ON public.links USING btree (target_fid);
+CREATE INDEX links_active_index ON public.links USING btree (fid, target_fid, type) WHERE (deleted_at IS NULL);
 CREATE INDEX idx_links_followers ON public.links USING btree (fid, target_fid, type, deleted_at)
     WHERE ((deleted_at IS NULL) AND (type = 'follow'::text));
 
@@ -185,6 +185,7 @@ CREATE INDEX user_data_timestamp_index ON public.user_data USING btree ("timesta
 CREATE INDEX user_data_type_index ON public.user_data USING btree (type);
 
 CREATE INDEX verifications_fid_timestamp_index ON public.verifications USING btree (fid, "timestamp");
+CREATE INDEX verifications_active_index ON public.verifications USING btree (fid, signer_address) WHERE (deleted_at IS NULL);
 
 CREATE INDEX username_proofs_fid_index ON public.username_proofs USING btree (fid);
 CREATE INDEX username_proofs_username_index ON public.username_proofs USING btree (username);

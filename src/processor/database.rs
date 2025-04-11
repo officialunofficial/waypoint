@@ -100,12 +100,19 @@ impl DatabaseProcessor {
             if let Some(CastRemoveBody(remove_body)) = &data.body {
                 let ts = Self::convert_timestamp(data.timestamp);
 
+                // Process cast removal with CRDT semantics
+                // - Using timestamp-based conflict resolution: higher timestamp wins
+                // - For equal timestamps, remove operation wins (remove-wins semantics)
+                // - Handles out-of-order messages where removals arrive before additions
                 sqlx::query!(
                     r#"
-                INSERT INTO casts (fid, hash, deleted_at, timestamp)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO casts (fid, hash, deleted_at, timestamp, text, embeds, mentions, mentions_positions)
+                VALUES ($1, $2, $3, $4, '', '[]'::json, '[]'::json, '[]'::json)
                 ON CONFLICT (hash) DO UPDATE SET
-                    deleted_at = EXCLUDED.deleted_at,
+                    deleted_at = CASE
+                        WHEN EXCLUDED.timestamp >= COALESCE(casts.timestamp, EXCLUDED.timestamp) THEN EXCLUDED.deleted_at
+                        ELSE casts.deleted_at
+                    END,
                     timestamp = LEAST(COALESCE(casts.timestamp, EXCLUDED.timestamp), EXCLUDED.timestamp)
                 "#,
                     data.fid as i64,
@@ -157,42 +164,7 @@ impl DatabaseProcessor {
                     .execute(pool)
                     .await?;
 
-                // Then update cast counters if this is a cast reaction
-                if let Some(cast_hash) = target_cast_hash {
-                    match reaction.r#type {
-                        1 => {
-                            // Like
-                            sqlx::query!(
-                                r#"
-                            INSERT INTO casts (hash, timestamp)
-                            VALUES ($1, $2)
-                            ON CONFLICT (hash) DO UPDATE SET
-                                updated_at = CURRENT_TIMESTAMP
-                            "#,
-                                cast_hash,
-                                ts
-                            )
-                            .execute(pool)
-                            .await?;
-                        },
-                        2 => {
-                            // Recast
-                            sqlx::query!(
-                                r#"
-                            INSERT INTO casts (hash, timestamp)
-                            VALUES ($1, $2)
-                            ON CONFLICT (hash) DO UPDATE SET
-                                updated_at = CURRENT_TIMESTAMP
-                            "#,
-                                cast_hash,
-                                ts
-                            )
-                            .execute(pool)
-                            .await?;
-                        },
-                        _ => {},
-                    }
-                }
+                // Process reaction add
             }
         }
         Ok(())
@@ -209,7 +181,13 @@ impl DatabaseProcessor {
 
                 match &reaction.target {
                     Some(ReactionTarget::TargetCastId(cast_id)) => {
-                        // First upsert reaction with deletion
+                        // Process reaction removal
+
+                        // Then upsert reaction with deletion
+                        // CRDT conflict resolution for reactions:
+                        // - If timestamps are distinct, the message with the higher timestamp wins
+                        // - If timestamps are identical, the removal operation wins (delete-wins)
+                        // - Handles out-of-order messages with proper conflict resolution
                         sqlx::query!(
                         r#"
                         INSERT INTO reactions (fid, type, target_cast_hash, hash, timestamp, deleted_at)
@@ -229,42 +207,10 @@ impl DatabaseProcessor {
                         ts
                     ).execute(pool).await?;
 
-                        // Then update cast counters
-                        match reaction.r#type {
-                            1 => {
-                                // Like
-                                sqlx::query!(
-                                    r#"
-                                INSERT INTO casts (hash, timestamp)
-                                VALUES ($1, $2)
-                                ON CONFLICT (hash) DO UPDATE SET
-                                    updated_at = CURRENT_TIMESTAMP
-                                "#,
-                                    &cast_id.hash,
-                                    ts
-                                )
-                                .execute(pool)
-                                .await?;
-                            },
-                            2 => {
-                                // Recast
-                                sqlx::query!(
-                                    r#"
-                                INSERT INTO casts (hash, timestamp)
-                                VALUES ($1, $2)
-                                ON CONFLICT (hash) DO UPDATE SET
-                                    updated_at = CURRENT_TIMESTAMP
-                                "#,
-                                    &cast_id.hash,
-                                    ts
-                                )
-                                .execute(pool)
-                                .await?;
-                            },
-                            _ => {},
-                        }
+                        // Follow CRDT semantics - no cross-entity updates
                     },
                     Some(ReactionTarget::TargetUrl(url)) => {
+                        // Process URL-targeted reaction removal
                         sqlx::query!(
                         r#"
                         INSERT INTO reactions (fid, type, target_url, hash, timestamp, deleted_at)
@@ -354,6 +300,12 @@ impl DatabaseProcessor {
                 let ts = Self::convert_timestamp(data.timestamp);
                 let display_ts = link.display_timestamp.map(Self::convert_timestamp);
 
+                // Process link removal
+
+                // CRDT-compliant link removal:
+                // - If timestamps are distinct, message with higher timestamp wins
+                // - If timestamps match, removal operations win
+                // - LEAST is used for timestamps to preserve earliest timestamp
                 sqlx::query!(
                 r#"
                 INSERT INTO links (
@@ -367,7 +319,10 @@ impl DatabaseProcessor {
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (hash) DO UPDATE SET
-                    deleted_at = EXCLUDED.deleted_at,
+                    deleted_at = CASE
+                        WHEN EXCLUDED.timestamp >= links.timestamp THEN EXCLUDED.deleted_at
+                        ELSE links.deleted_at
+                    END,
                     timestamp = LEAST(EXCLUDED.timestamp, links.timestamp),
                     display_timestamp = COALESCE(links.display_timestamp, EXCLUDED.display_timestamp)
                 "#,
@@ -465,46 +420,36 @@ impl DatabaseProcessor {
         let username = String::from_utf8(proof.name.clone()).unwrap_or_default();
         let ts = Self::convert_timestamp(proof.timestamp as u32);
 
-        if is_deleted {
-            // For deleted proofs, simply mark existing one as deleted if it exists
-            sqlx::query!(
-                r#"
-                UPDATE username_proofs
-                SET deleted_at = $3
-                WHERE username = $1 AND fid = $2
-                "#,
+        // Use a single UPSERT pattern with conditional handling of deleted_at
+        // This handles both additions and deletions with a consistent approach
+        sqlx::query!(
+            r#"
+            INSERT INTO username_proofs (
+                fid,
                 username,
-                proof.fid as i64,
-                ts
+                timestamp,
+                type,
+                signature,
+                owner,
+                deleted_at
             )
-            .execute(&self.resources.database.pool)
-            .await?;
-        } else {
-            // For new proofs, simply insert
-            sqlx::query!(
-                r#"
-                INSERT INTO username_proofs (
-                    fid,
-                    username,
-                    timestamp,
-                    type,
-                    signature,
-                    owner
-                )
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (username, timestamp) 
-                DO NOTHING
-                "#,
-                proof.fid as i64,
-                username,
-                ts,
-                proof.r#type as i16,
-                &proof.signature,
-                &proof.owner
-            )
-            .execute(&self.resources.database.pool)
-            .await?;
-        }
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (username, timestamp) DO UPDATE SET
+                deleted_at = CASE 
+                    WHEN $7 IS NOT NULL THEN $7
+                    ELSE username_proofs.deleted_at
+                END
+            "#,
+            proof.fid as i64,
+            username,
+            ts,
+            proof.r#type as i16,
+            &proof.signature,
+            &proof.owner,
+            if is_deleted { Some(ts) } else { None::<chrono::DateTime<chrono::Utc>> }
+        )
+        .execute(&self.resources.database.pool)
+        .await?;
 
         Ok(())
     }
@@ -608,16 +553,38 @@ impl DatabaseProcessor {
             if let Some(VerificationRemoveBody(verification)) = &data.body {
                 let ts = Self::convert_timestamp(data.timestamp);
 
+                // Process verification removal with CRDT semantics:
+                // - Conflict resolution based on timestamp ordering
+                // - For equal timestamps, removal wins
+                // - Default values for required fields when creating placeholder records
                 sqlx::query!(
                     r#"
-                UPDATE verifications
-                SET deleted_at = $3
-                WHERE
-                    fid = $1 AND
-                    signer_address = $2
+                INSERT INTO verifications (
+                    fid,
+                    signer_address,
+                    hash,
+                    block_hash,
+                    signature,
+                    protocol,
+                    timestamp,
+                    deleted_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (signer_address, fid) DO UPDATE SET
+                    deleted_at = CASE
+                        WHEN EXCLUDED.timestamp >= verifications.timestamp THEN EXCLUDED.deleted_at
+                        ELSE verifications.deleted_at
+                    END,
+                    timestamp = GREATEST(verifications.timestamp, EXCLUDED.timestamp)
                 "#,
                     data.fid as i64,
                     &verification.address,
+                    &msg.hash,
+                    // Default values for required columns
+                    &verification.address, // Using address as block_hash placeholder
+                    &verification.address, // Using address as signature placeholder
+                    0 as i16,              // Default protocol value
+                    ts,
                     ts
                 )
                 .execute(pool)
