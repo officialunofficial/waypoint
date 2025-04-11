@@ -7,7 +7,7 @@ use waypoint::{
     app::App,
     config::Config,
     error,
-    services::streaming::{ProcessorType, StreamingOptions, StreamingService},
+    services::streaming::{ProcessorType, StreamingService},
 };
 
 #[tokio::main]
@@ -87,19 +87,17 @@ async fn main() -> color_eyre::Result<()> {
 
             app.with_health_server(port);
 
-            // Configure streaming service with appropriate processors
-            let processors = vec![
-                ProcessorType::Database, // Enable database by default
-                ProcessorType::Print,    // Enable print processor by default for easier debugging
-            ];
-
-            let streaming_service = StreamingService::new().with_options(StreamingOptions {
-                batch_size: Some(10),
-                concurrency: Some(200),
-                timeout: Some(Duration::from_secs(120)),
-                retention: Some(Duration::from_secs(24 * 60 * 60)),
-                subscriber: None,
-                processors,
+            // Configure streaming service with appropriate processors using the builder pattern
+            let streaming_service = StreamingService::new().configure(|options| {
+                options
+                    .with_batch_size(10)
+                    .with_concurrency(200)
+                    .with_timeout(Duration::from_secs(120))
+                    .with_retention(Duration::from_secs(24 * 60 * 60))
+                    .with_processors(vec![
+                        ProcessorType::Database, // Enable database by default
+                        ProcessorType::Print,    // Enable print processor by default for easier debugging
+                    ])
             });
 
             app.register_service(streaming_service);

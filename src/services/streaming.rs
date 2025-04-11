@@ -496,6 +496,55 @@ pub struct StreamingOptions {
     pub processors: Vec<ProcessorType>,
 }
 
+impl StreamingOptions {
+    /// Create a new default options instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set subscriber options
+    pub fn with_subscriber(mut self, subscriber: SubscriberOptions) -> Self {
+        self.subscriber = Some(subscriber);
+        self
+    }
+
+    /// Set batch size
+    pub fn with_batch_size(mut self, batch_size: u64) -> Self {
+        self.batch_size = Some(batch_size);
+        self
+    }
+
+    /// Set concurrency
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = Some(concurrency);
+        self
+    }
+
+    /// Set timeout
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Set retention
+    pub fn with_retention(mut self, retention: Duration) -> Self {
+        self.retention = Some(retention);
+        self
+    }
+
+    /// Add a processor type
+    pub fn with_processor(mut self, processor: ProcessorType) -> Self {
+        self.processors.push(processor);
+        self
+    }
+
+    /// Add multiple processor types
+    pub fn with_processors(mut self, processors: Vec<ProcessorType>) -> Self {
+        self.processors.extend(processors);
+        self
+    }
+}
+
 impl StreamingService {
     /// Create a new streaming service
     pub fn new() -> Self {
@@ -505,6 +554,15 @@ impl StreamingService {
     /// Set options for the service
     pub fn with_options(mut self, options: StreamingOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    /// Configure the service with a builder pattern
+    pub fn configure<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(StreamingOptions) -> StreamingOptions,
+    {
+        self.options = f(StreamingOptions::new());
         self
     }
 }
