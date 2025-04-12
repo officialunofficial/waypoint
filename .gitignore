@@ -5,3 +5,6 @@ Cargo.lock
 .DS_Store
 .vscode/
 .idea/
+
+grafana/data
+graphite

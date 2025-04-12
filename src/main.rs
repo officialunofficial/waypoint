@@ -1,5 +1,5 @@
 //! Waypoint - Snapchain synchronization tool
-//! 
+//!
 //! Main application entry point with unified CLI command structure
 //! for Snapchain synchronization and backfill operations.
 
@@ -9,10 +9,7 @@ mod service;
 use clap::Command;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
-use waypoint::{
-    config::Config,
-    error,
-};
+use waypoint::{config::Config, error, metrics};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -37,6 +34,9 @@ async fn main() -> color_eyre::Result<()> {
     let mut env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&config.logging.default_level));
 
+    // Initialize metrics
+    metrics::setup_metrics(&config);
+
     // Apply noisy crates filter
     let noisy_crates = "h2=warn,tokio_util=warn,mio=warn,hyper=warn,rustls=warn,tonic=info";
     let filter_string = format!("{},{}", env_filter, noisy_crates);
@@ -50,23 +50,20 @@ async fn main() -> color_eyre::Result<()> {
 
     // Initialize the subscriber
     let format = fmt::format().with_thread_ids(true).with_target(false);
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(fmt::layer().event_format(format))
-        .init();
+    tracing_subscriber::registry().with(env_filter).with(fmt::layer().event_format(format)).init();
 
     // Define base CLI structure
     let base_app = Command::new("Waypoint")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Official Unofficial, Inc.")
         .about("Farcaster data synchronization service");
-    
+
     // Register all command modules
     let app = commands::register_commands(base_app);
-    
+
     // Parse command line arguments
     let matches = app.get_matches();
-    
+
     // Handle commands based on matches
     commands::handle_commands(matches, &config).await?;
 

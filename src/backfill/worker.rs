@@ -1,5 +1,5 @@
 use crate::{
-    backfill::reconciler::MessageReconciler, hub::filter::SpamFilter,
+    backfill::reconciler::MessageReconciler, hub::filter::SpamFilter, metrics,
     processor::consumer::EventProcessor, redis::client::Redis,
 };
 use bb8_redis::redis::RedisResult;
@@ -196,6 +196,9 @@ impl BackfillQueue {
                     let mut metrics = self.metrics.write().await;
                     metrics.jobs_queued += 1;
                 }
+
+                // Update StatsD metrics
+                metrics::set_jobs_in_queue(fid_count as u64);
             },
             Err(e) => error!("Failed to add job {} to queue {}: {:?}", job_id, queue_key, e),
         }
@@ -303,6 +306,9 @@ impl BackfillQueue {
         // Update metrics
         let mut metrics = self.metrics.write().await;
         metrics.jobs_processed += 1;
+
+        // Update StatsD metrics
+        metrics::increment_jobs_processed();
 
         Ok(())
     }
@@ -429,8 +435,15 @@ impl Worker {
             0.0
         };
 
+        // Track backfill rate
+        metrics::set_backfill_fids_per_second(fids_per_second);
+
         // Only log non-zero progress
-        if self.stats.jobs_processed > 0 || self.stats.fids_processed > 0 || self.stats.errors > 0 || queue_length > 0 {
+        if self.stats.jobs_processed > 0
+            || self.stats.fids_processed > 0
+            || self.stats.errors > 0
+            || queue_length > 0
+        {
             info!(
                 "Backfill progress: {} jobs, {} FIDs processed ({:.2} FIDs/sec), {} spam FIDs skipped, {} errors, {} jobs remaining in queue",
                 self.stats.jobs_processed,
@@ -572,6 +585,7 @@ impl Worker {
                                                     fid, processor_name
                                                 );
                                                 success = true;
+                                                metrics::increment_fids_processed(1);
                                             },
                                             Err(e) => {
                                                 error!(
@@ -584,6 +598,7 @@ impl Worker {
                                                 {
                                                     error!("Failed to send error update: {}", e);
                                                 }
+                                                metrics::increment_job_errors();
                                             },
                                         }
                                     }

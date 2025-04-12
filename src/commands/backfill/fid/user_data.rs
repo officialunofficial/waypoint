@@ -1,8 +1,8 @@
+use clap::{Arg, ArgMatches, Command};
+use color_eyre::eyre::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info};
-use clap::{Arg, ArgMatches, Command};
-use color_eyre::eyre::Result;
 use waypoint::{
     backfill::reconciler::MessageReconciler,
     config::Config,
@@ -17,21 +17,21 @@ pub fn register_command() -> Command {
             Arg::new("max_fid")
                 .long("max-fid")
                 .help("Maximum FID to update user data for")
-                .value_parser(clap::value_parser!(String))
+                .value_parser(clap::value_parser!(String)),
         )
         .arg(
             Arg::new("batch_size")
                 .long("batch-size")
                 .help("Number of FIDs to process in each batch")
                 .value_parser(clap::value_parser!(usize))
-                .default_value("50")
+                .default_value("50"),
         )
         .arg(
             Arg::new("concurrency")
                 .long("concurrency")
                 .help("Number of concurrent FIDs to process")
                 .value_parser(clap::value_parser!(usize))
-                .default_value("25")
+                .default_value("25"),
         )
 }
 
@@ -41,7 +41,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     let redis = Arc::new(waypoint::redis::client::Redis::new(&config.redis).await?);
     let hub = Arc::new(Mutex::new(waypoint::hub::client::Hub::new(config.hub.clone())?));
     let database = Arc::new(waypoint::database::client::Database::new(&config.database).await?);
-    
+
     // Get parameters
     let max_fid_str = args.get_one::<String>("max_fid");
     let batch_size = args.get_one::<usize>("batch_size").copied().unwrap_or(50);
@@ -50,9 +50,8 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     // Initialize hub client
     let mut hub_guard = hub.lock().await;
     hub_guard.connect().await?;
-    let hub_client = hub_guard.client().ok_or_else(|| 
-        color_eyre::eyre::eyre!("No hub client available")
-    )?;
+    let hub_client =
+        hub_guard.client().ok_or_else(|| color_eyre::eyre::eyre!("No hub client available"))?;
 
     // Get max FID from hub if not specified
     let hub_max_fid = if max_fid_str.is_none() {
@@ -120,10 +119,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                             return (fid, true, 0);
                         }
 
-                        info!(
-                            "Retrieved {} user_data messages for FID {}",
-                            message_count, fid
-                        );
+                        info!("Retrieved {} user_data messages for FID {}", message_count, fid);
 
                         // Process each message
                         let mut success = true;
@@ -198,6 +194,6 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
 
     // Disconnect hub client when done
     hub_guard.disconnect().await?;
-    
+
     Ok(())
 }

@@ -28,6 +28,6 @@ pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()>
             println!("Unknown command group: {}. Available command groups:", cmd);
             println!("  fid    - FID-based backfill operations");
             Ok(())
-        }
+        },
     }
 }

@@ -3,9 +3,9 @@ use crate::{
     hub::error::Error,
     processor::consumer::EventProcessor,
     proto::{
-        self, FidRequest, FidTimestampRequest, HubEvent, HubEventType, LinksByFidRequest, 
-        MergeMessageBody, Message, ReactionsByFidRequest, OnChainEventRequest, 
-        OnChainEventType, MergeOnChainEventBody,
+        self, FidRequest, FidTimestampRequest, HubEvent, HubEventType, LinksByFidRequest,
+        MergeMessageBody, MergeOnChainEventBody, Message, OnChainEventRequest, OnChainEventType,
+        ReactionsByFidRequest,
     },
 };
 use std::{sync::Arc, time::Duration};
@@ -43,15 +43,16 @@ impl MessageReconciler {
         let start_time = std::time::Instant::now();
 
         // Fetch all message types concurrently using tokio::try_join!
-        let (casts, reactions, links, verifications, user_data, username_proofs, onchain_events) = tokio::try_join!(
-            self.get_all_cast_messages(fid),
-            self.get_all_reaction_messages(fid),
-            self.get_all_link_messages(fid),
-            self.get_all_verification_messages(fid),
-            self.get_all_user_data_messages(fid),
-            self.get_all_username_proofs(fid),
-            self.get_all_onchain_events(fid)
-        )?;
+        let (casts, reactions, links, verifications, user_data, username_proofs, onchain_events) =
+            tokio::try_join!(
+                self.get_all_cast_messages(fid),
+                self.get_all_reaction_messages(fid),
+                self.get_all_link_messages(fid),
+                self.get_all_verification_messages(fid),
+                self.get_all_user_data_messages(fid),
+                self.get_all_username_proofs(fid),
+                self.get_all_onchain_events(fid)
+            )?;
 
         // Process count for each message type
         let casts_count = casts.len();
@@ -64,7 +65,14 @@ impl MessageReconciler {
 
         info!(
             "Fetched messages for FID {}: {} casts, {} reactions, {} links, {} verifications, {} user data, {} username proofs, {} onchain events",
-            fid, casts_count, reactions_count, links_count, verifications_count, user_data_count, username_proofs_count, onchain_events_count
+            fid,
+            casts_count,
+            reactions_count,
+            links_count,
+            verifications_count,
+            user_data_count,
+            username_proofs_count,
+            onchain_events_count
         );
 
         // Process each message type, but handle user_data specially
@@ -231,41 +239,44 @@ impl MessageReconciler {
 
             let mut success_count = 0;
             let mut error_count = 0;
-            
+
             // Process in chunks to avoid overwhelming the system
             let mut handles = Vec::new();
-            
+
             for (idx, event) in onchain_events.into_iter().enumerate() {
                 let processor_clone = Arc::clone(&processor);
                 let semaphore_clone = Arc::clone(&semaphore);
-                
+
                 let handle = tokio::spawn(async move {
                     // Acquire permit to limit concurrency
                     let _permit = semaphore_clone.acquire().await.unwrap();
-                    
+
                     let onchain_event = HubEvent {
                         id: 0,
                         r#type: HubEventType::MergeOnChainEvent as i32,
                         body: Some(proto::hub_event::Body::MergeOnChainEventBody(
-                            MergeOnChainEventBody {
-                                on_chain_event: Some(event),
-                            }
+                            MergeOnChainEventBody { on_chain_event: Some(event) },
                         )),
                     };
-                    
+
                     match processor_clone.process_event(onchain_event).await {
                         Ok(_) => (1, 0),
                         Err(e) => {
-                            error!("Error processing onchain event {}/{} for FID {}: {:?}", 
-                                  idx + 1, onchain_events_count, fid, e);
+                            error!(
+                                "Error processing onchain event {}/{} for FID {}: {:?}",
+                                idx + 1,
+                                onchain_events_count,
+                                fid,
+                                e
+                            );
                             (0, 1)
-                        }
+                        },
                     }
                 });
-                
+
                 handles.push(handle);
             }
-            
+
             // Wait for all tasks to complete
             for handle in handles {
                 match handle.await {
@@ -276,10 +287,10 @@ impl MessageReconciler {
                     Err(e) => {
                         error!("Task error processing onchain events for FID {}: {:?}", fid, e);
                         error_count += 1;
-                    }
+                    },
                 }
             }
-            
+
             info!(
                 "Completed processing {} onchain events for FID {} ({} succeeded, {} failed)",
                 onchain_events_count, fid, success_count, error_count
@@ -287,9 +298,13 @@ impl MessageReconciler {
         }
 
         // Calculate total messages processed
-        let total_count = casts_count + reactions_count + links_count + 
-                          verifications_count + user_data_count + 
-                          username_proofs_count + onchain_events_count;
+        let total_count = casts_count
+            + reactions_count
+            + links_count
+            + verifications_count
+            + user_data_count
+            + username_proofs_count
+            + onchain_events_count;
         let elapsed = start_time.elapsed();
         info!(
             "Completed reconciliation for FID {} in {:.2?}: processed {} total messages ({} casts, {} reactions, {} links, {} verifications, {} user data, {} username proofs, {} onchain events)",
@@ -811,7 +826,7 @@ impl MessageReconciler {
         );
         Ok(messages)
     }
-    
+
     /// Get all username proofs for the given FID
     async fn get_all_username_proofs(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
@@ -831,7 +846,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            // Try to get username proofs - first from user data, then filter 
+            // Try to get username proofs - first from user data, then filter
             // We need to use FidTimestampRequest for bulk methods
             let ts_request = FidTimestampRequest {
                 fid,
@@ -841,8 +856,10 @@ impl MessageReconciler {
                 start_timestamp: None,
                 stop_timestamp: None,
             };
-            
-            let response = match self.hub_client.clone()
+
+            let response = match self
+                .hub_client
+                .clone()
                 .get_all_user_data_messages_by_fid(tonic::Request::new(ts_request))
                 .await
             {
@@ -850,15 +867,19 @@ impl MessageReconciler {
                 Err(e) => {
                     debug!("Error getting username proof messages: {}", e);
                     // Try regular user data as fallback
-                    let resp = self.hub_client.clone()
+                    let resp = self
+                        .hub_client
+                        .clone()
                         .get_user_data_by_fid(tonic::Request::new(request))
                         .await?;
                     resp.into_inner()
-                }
+                },
             };
 
             // Filter the messages to keep only username proofs
-            let username_messages: Vec<Message> = response.messages.into_iter()
+            let username_messages: Vec<Message> = response
+                .messages
+                .into_iter()
                 .filter(|msg| {
                     if let Some(data) = &msg.data {
                         if let Some(body) = &data.body {
@@ -899,7 +920,7 @@ impl MessageReconciler {
         );
         Ok(messages)
     }
-    
+
     /// Get all onchain events for the given FID
     async fn get_all_onchain_events(&self, fid: u64) -> Result<Vec<proto::OnChainEvent>, Error> {
         let mut events = Vec::new();
@@ -917,7 +938,7 @@ impl MessageReconciler {
         ] {
             let mut local_page_count = 0;
             let mut local_page_token = None;
-            
+
             loop {
                 local_page_count += 1;
                 let request = OnChainEventRequest {
@@ -928,15 +949,17 @@ impl MessageReconciler {
                     reverse: Some(false),
                 };
 
-                let response = match self.hub_client.clone()
+                let response = match self
+                    .hub_client
+                    .clone()
                     .get_on_chain_events(tonic::Request::new(request))
-                    .await 
+                    .await
                 {
                     Ok(resp) => resp.into_inner(),
                     Err(e) => {
                         debug!("Error fetching onchain events of type {:?}: {}", event_type, e);
                         break;
-                    }
+                    },
                 };
 
                 let page_events_count = response.events.len();
@@ -958,11 +981,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!(
-            "Fetched a total of {} onchain events for FID {}",
-            events.len(),
-            fid
-        );
+        debug!("Fetched a total of {} onchain events for FID {}", events.len(), fid);
         Ok(events)
     }
 

@@ -1,8 +1,9 @@
+use crate::proto::{FidsRequest, FidsResponse};
 use crate::{
     config::HubConfig,
     hub::stream::EventStream,
     proto::{
-        GetInfoRequest, GetInfoResponse, BlocksRequest, ShardChunksRequest, ShardChunksResponse,
+        BlocksRequest, GetInfoRequest, GetInfoResponse, ShardChunksRequest, ShardChunksResponse,
         hub_service_client::HubServiceClient,
     },
 };
@@ -10,7 +11,6 @@ use std::{sync::Arc, time::Duration};
 use tokio_stream::Stream;
 use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::info;
-use crate::proto::{FidsRequest, FidsResponse};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -70,10 +70,7 @@ impl Hub {
     }
 
     pub async fn stream(&mut self) -> Result<EventStream, Error> {
-        let client = self
-            .client
-            .as_mut()
-            .ok_or(Error::NotConnected)?;
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
         Ok(EventStream::new(client))
     }
 
@@ -84,17 +81,17 @@ impl Hub {
         end_block: Option<u64>,
     ) -> Result<impl Stream<Item = Result<crate::proto::Block, tonic::Status>>, Error> {
         let client = self.client.as_mut().ok_or(Error::NotConnected)?;
-        
+
         let request = BlocksRequest {
             shard_id,
             start_block_number: start_block,
             stop_block_number: end_block,
         };
-        
+
         let response = client.get_blocks(tonic::Request::new(request)).await?;
         Ok(response.into_inner())
     }
-    
+
     pub async fn get_shard_chunks(
         &mut self,
         shard_id: u32,
@@ -102,13 +99,13 @@ impl Hub {
         end_block: Option<u64>,
     ) -> Result<ShardChunksResponse, Error> {
         let client = self.client.as_mut().ok_or(Error::NotConnected)?;
-        
+
         let request = ShardChunksRequest {
             shard_id,
             start_block_number: start_block,
             stop_block_number: end_block,
         };
-        
+
         let response = client.get_shard_chunks(tonic::Request::new(request)).await?;
         Ok(response.into_inner())
     }
@@ -119,10 +116,7 @@ impl Hub {
     }
 
     pub async fn get_hub_info(&mut self) -> Result<GetInfoResponse, Error> {
-        let client = self
-            .client
-            .as_mut()
-            .ok_or(Error::NotConnected)?;
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
 
         let request = tonic::Request::new(GetInfoRequest {});
         let response = client.get_info(request).await?;
@@ -142,7 +136,7 @@ impl Hub {
             },
         }
     }
-    
+
     /// Get all FIDs from the hub
     pub async fn get_fids(
         &mut self,
@@ -150,17 +144,10 @@ impl Hub {
         page_token: Option<Vec<u8>>,
         reverse: Option<bool>,
     ) -> Result<FidsResponse, Error> {
-        let client = self
-            .client
-            .as_mut()
-            .ok_or(Error::NotConnected)?;
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
 
-        let request = tonic::Request::new(FidsRequest {
-            page_size,
-            page_token,
-            reverse,
-        });
-        
+        let request = tonic::Request::new(FidsRequest { page_size, page_token, reverse });
+
         let response = client.get_fids(request).await?;
         Ok(response.into_inner())
     }

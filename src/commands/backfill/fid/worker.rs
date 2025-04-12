@@ -1,8 +1,8 @@
+use clap::{ArgMatches, Command};
+use color_eyre::eyre::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
-use clap::{ArgMatches, Command};
-use color_eyre::eyre::Result;
 use waypoint::{
     backfill::{
         reconciler::MessageReconciler,
@@ -14,8 +14,7 @@ use waypoint::{
 
 /// Register worker command
 pub fn register_command() -> Command {
-    Command::new("worker")
-        .about("Start FID-based backfill worker")
+    Command::new("worker").about("Start FID-based backfill worker")
 }
 
 /// Run a backfill worker for FIDs
@@ -25,7 +24,7 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
     let hub = Arc::new(Mutex::new(waypoint::hub::client::Hub::new(config.hub.clone())?));
     let database = Arc::new(waypoint::database::client::Database::new(&config.database).await?);
     let fid_queue = Arc::new(BackfillQueue::new(redis.clone(), "backfill:fid:queue".to_string()));
-    
+
     // Clone the hub client first
     let hub_client = {
         let mut hub_guard = hub.lock().await;
@@ -65,6 +64,6 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
     // Disconnect hub client when done
     let mut hub_guard = hub.lock().await;
     hub_guard.disconnect().await?;
-    
+
     Ok(())
 }

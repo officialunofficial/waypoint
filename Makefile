@@ -7,7 +7,7 @@ IMAGE_NAME := waypoint
 DEFAULT_TAG := latest
 ARGS ?= 
 
-.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-worker-highperf backfill-update-user-data backfill-update-user-data-max test docker-build docker-run docker-push docker-tag fmt fmt-rust fmt-biome changelog help
+.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-update-user-data backfill-update-user-data-max test docker-build docker-run docker-push docker-tag metrics-start metrics-stop metrics-open fmt fmt-rust fmt-biome changelog help
 
 init:
 	mkdir -p $(PROTO_DIR)
@@ -103,6 +103,19 @@ fmt-biome:
 		echo "Biome is not installed. Skipping."; \
 	fi
 
+# Metrics commands
+metrics-start:
+	@echo "Starting metrics infrastructure..."
+	cd grafana && docker-compose up -d
+
+metrics-stop:
+	@echo "Stopping metrics infrastructure..."
+	cd grafana && docker-compose down
+
+metrics-open:
+	@echo "Opening Grafana dashboard in browser..."
+	open http://localhost:3000 || xdg-open http://localhost:3000 || echo "Could not open browser automatically. Please visit http://localhost:3000"
+
 # Generate changelog using git-cliff
 changelog:
 	@echo "Generating changelog..."
@@ -138,6 +151,9 @@ help:
 	@echo "  make docker-run               - Run Docker container"
 	@echo "  make docker-push              - Push image to registry ($(REGISTRY)/$(IMAGE_NAME):$(DEFAULT_TAG))"
 	@echo "  make docker-tag TAG=v1.0.0    - Build and push with specific tag"
+	@echo ""
+	@echo "Metrics:"
+	@echo "  make metrics-open             - Open Grafana dashboard in browser (http://localhost:3050)"
 	@echo ""
 	@echo "Other:"
 	@echo "  make clean                    - Clean build artifacts"

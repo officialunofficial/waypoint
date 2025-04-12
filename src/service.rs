@@ -1,6 +1,6 @@
+use color_eyre::eyre::Result;
 use std::time::Duration;
 use tracing::info;
-use color_eyre::eyre::Result;
 use waypoint::{
     app::App,
     config::Config,
@@ -10,9 +10,7 @@ use waypoint::{
 /// Run the main streaming service
 pub async fn run_service(config: &Config) -> Result<()> {
     // Validate configuration
-    config
-        .validate()
-        .map_err(|e| color_eyre::eyre::eyre!("Invalid configuration: {}", e))?;
+    config.validate().map_err(|e| color_eyre::eyre::eyre!("Invalid configuration: {}", e))?;
 
     // Create the application
     let mut app = App::new(config.clone())
@@ -37,7 +35,7 @@ pub async fn run_service(config: &Config) -> Result<()> {
             .with_retention(Duration::from_secs(24 * 60 * 60))
             .with_processors(vec![
                 ProcessorType::Database, // Enable database by default
-                ProcessorType::Print, // Enable print processor by default for easier debugging
+                ProcessorType::Print,    // Enable print processor by default for easier debugging
             ])
     });
 
