@@ -21,14 +21,3 @@ target "default" {
         "${REGISTRY}/waypoint:latest"
     ]
 }
-
-// GCR build target for backward compatibility
-target "gcr" {
-    context = "."
-    dockerfile = "Dockerfile"
-    platforms = ["linux/amd64"]
-    tags = [
-        "gcr.io/official-unofficial/waypoint:${TAG}",
-        "gcr.io/official-unofficial/waypoint:latest"
-    ]
-}
