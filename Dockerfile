@@ -28,9 +28,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /usr/src/waypoint/target/release/waypoint /app/
-COPY --from=builder /usr/src/waypoint/target/release/backfill /app/
 COPY --from=builder /usr/src/waypoint/src/proto /app/proto
-RUN chmod +x /app/waypoint /app/backfill
+RUN chmod +x /app/waypoint
 ENV RUST_BACKTRACE=full
 # Default command
 CMD ["./waypoint", "start"]
