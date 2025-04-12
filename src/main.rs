@@ -1,14 +1,15 @@
 //! Waypoint - Snapchain synchronization tool
-use clap::{Arg, ArgAction, Command};
-use std::time::Duration;
+//!
+//! Main application entry point with unified CLI command structure
+//! for Snapchain synchronization and backfill operations.
+
+mod commands;
+mod service;
+
+use clap::Command;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
-use waypoint::{
-    app::App,
-    config::Config,
-    error,
-    services::streaming::{ProcessorType, StreamingService},
-};
+use waypoint::{config::Config, error, metrics};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -33,6 +34,9 @@ async fn main() -> color_eyre::Result<()> {
     let mut env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&config.logging.default_level));
 
+    // Initialize metrics
+    metrics::setup_metrics(&config);
+
     // Apply noisy crates filter
     let noisy_crates = "h2=warn,tokio_util=warn,mio=warn,hyper=warn,rustls=warn,tonic=info";
     let filter_string = format!("{},{}", env_filter, noisy_crates);
@@ -48,103 +52,21 @@ async fn main() -> color_eyre::Result<()> {
     let format = fmt::format().with_thread_ids(true).with_target(false);
     tracing_subscriber::registry().with(env_filter).with(fmt::layer().event_format(format)).init();
 
-    // Parse command line arguments
-    let matches = Command::new("Waypoint")
+    // Define base CLI structure
+    let base_app = Command::new("Waypoint")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Official Unofficial, Inc.")
-        .about("Farcaster data synchronization service")
-        .subcommand(Command::new("start").about("Start the service"))
-        .subcommand(
-            Command::new("backfill").about("Backfill data from the Hub").arg(
-                Arg::new("fids")
-                    .long("fids")
-                    .help("Comma-separated list of FIDs to backfill")
-                    .action(ArgAction::Set)
-                    .value_name("FIDS"),
-            ),
-        )
-        .subcommand(Command::new("worker").about("Start backfill worker"))
-        .get_matches();
+        .about("Farcaster data synchronization service");
 
-    match matches.subcommand() {
-        Some(("start", _)) => {
-            // Validate configuration
-            config
-                .validate()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid configuration: {}", e))?;
+    // Register all command modules
+    let app = commands::register_commands(base_app);
 
-            // Create the application
-            let mut app = App::new(config)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Failed to create application: {}", e))?;
+    // Parse command line arguments
+    let matches = app.get_matches();
 
-            // Configure health server
-            let port = std::env::var_os("PORT")
-                .and_then(|p| p.to_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "8080".to_string())
-                .parse::<u16>()
-                .expect("Invalid PORT");
+    // Handle commands based on matches
+    commands::handle_commands(matches, &config).await?;
 
-            app.with_health_server(port);
-
-            // Configure streaming service with appropriate processors using the builder pattern
-            let streaming_service = StreamingService::new().configure(|options| {
-                options
-                    .with_batch_size(10)
-                    .with_concurrency(200)
-                    .with_timeout(Duration::from_secs(120))
-                    .with_retention(Duration::from_secs(24 * 60 * 60))
-                    .with_processors(vec![
-                        ProcessorType::Database, // Enable database by default
-                        ProcessorType::Print, // Enable print processor by default for easier debugging
-                    ])
-            });
-
-            app.register_service(streaming_service);
-
-            // Run the application
-            info!("Starting Waypoint service");
-            app.run_until_shutdown()
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Application error: {}", e))?;
-
-            info!("Shutdown complete");
-        },
-        Some(("backfill", args)) => {
-            let fids_str = args.get_one::<String>("fids").cloned().unwrap_or_default();
-            let command = format!("cargo run --bin backfill queue --fids {}", fids_str);
-
-            let status =
-                std::process::Command::new("sh").arg("-c").arg(command).status().map_err(|e| {
-                    color_eyre::eyre::eyre!("Failed to execute backfill command: {}", e)
-                })?;
-
-            if !status.success() {
-                return Err(color_eyre::eyre::eyre!(
-                    "Backfill command failed with status: {}",
-                    status
-                ));
-            }
-        },
-        Some(("worker", _)) => {
-            let command = "cargo run --bin backfill worker";
-
-            let status =
-                std::process::Command::new("sh").arg("-c").arg(command).status().map_err(|e| {
-                    color_eyre::eyre::eyre!("Failed to execute worker command: {}", e)
-                })?;
-
-            if !status.success() {
-                return Err(color_eyre::eyre::eyre!(
-                    "Worker command failed with status: {}",
-                    status
-                ));
-            }
-        },
-        _ => {
-            println!("Please specify a subcommand. Use --help for more information.");
-        },
-    }
-
+    info!("Execution completed successfully");
     Ok(())
 }

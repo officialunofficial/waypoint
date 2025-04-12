@@ -1,9 +1,14 @@
+use crate::proto::{FidsRequest, FidsResponse};
 use crate::{
     config::HubConfig,
     hub::stream::EventStream,
-    proto::{GetInfoRequest, GetInfoResponse, hub_service_client::HubServiceClient},
+    proto::{
+        BlocksRequest, GetInfoRequest, GetInfoResponse, ShardChunksRequest, ShardChunksResponse,
+        hub_service_client::HubServiceClient,
+    },
 };
 use std::{sync::Arc, time::Duration};
+use tokio_stream::Stream;
 use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::info;
 
@@ -11,6 +16,8 @@ use tracing::info;
 pub enum Error {
     #[error("Connection error: {0}")]
     ConnectionError(String),
+    #[error("Not connected")]
+    NotConnected,
     #[error("Transport error: {0}")]
     TransportError(#[from] tonic::transport::Error),
     #[error("gRPC status error: {0}")]
@@ -63,11 +70,44 @@ impl Hub {
     }
 
     pub async fn stream(&mut self) -> Result<EventStream, Error> {
-        let client = self
-            .client
-            .as_mut()
-            .ok_or_else(|| Error::ConnectionError("Not connected".to_string()))?;
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
         Ok(EventStream::new(client))
+    }
+
+    pub async fn get_blocks(
+        &mut self,
+        shard_id: u32,
+        start_block: u64,
+        end_block: Option<u64>,
+    ) -> Result<impl Stream<Item = Result<crate::proto::Block, tonic::Status>>, Error> {
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
+
+        let request = BlocksRequest {
+            shard_id,
+            start_block_number: start_block,
+            stop_block_number: end_block,
+        };
+
+        let response = client.get_blocks(tonic::Request::new(request)).await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn get_shard_chunks(
+        &mut self,
+        shard_id: u32,
+        start_block: u64,
+        end_block: Option<u64>,
+    ) -> Result<ShardChunksResponse, Error> {
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
+
+        let request = ShardChunksRequest {
+            shard_id,
+            start_block_number: start_block,
+            stop_block_number: end_block,
+        };
+
+        let response = client.get_shard_chunks(tonic::Request::new(request)).await?;
+        Ok(response.into_inner())
     }
 
     pub async fn disconnect(&mut self) -> Result<(), Error> {
@@ -76,10 +116,7 @@ impl Hub {
     }
 
     pub async fn get_hub_info(&mut self) -> Result<GetInfoResponse, Error> {
-        let client = self
-            .client
-            .as_mut()
-            .ok_or_else(|| Error::ConnectionError("Not connected".to_string()))?;
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
 
         let request = tonic::Request::new(GetInfoRequest {});
         let response = client.get_info(request).await?;
@@ -98,5 +135,20 @@ impl Hub {
                 }
             },
         }
+    }
+
+    /// Get all FIDs from the hub
+    pub async fn get_fids(
+        &mut self,
+        page_size: Option<u32>,
+        page_token: Option<Vec<u8>>,
+        reverse: Option<bool>,
+    ) -> Result<FidsResponse, Error> {
+        let client = self.client.as_mut().ok_or(Error::NotConnected)?;
+
+        let request = tonic::Request::new(FidsRequest { page_size, page_token, reverse });
+
+        let response = client.get_fids(request).await?;
+        Ok(response.into_inner())
     }
 }

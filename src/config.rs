@@ -85,8 +85,28 @@ impl Default for LoggingConfig {
             format: "text".to_string(),
             default_level: "info".to_string(),
             dependency_filter: Some(
-                "hyper=warn,h2=warn,tower=info,tokio_util=warn,mio=warn,rustls=warn,tonic=info,want=warn,warp=warn".to_string()
+                "hyper=warn,h2=warn,tower=info,tokio_util=warn,mio=warn,rustls=warn,tonic=info,want=warn,warp=warn,sqlx=warn".to_string()
             ),
+        }
+    }
+}
+
+/// StatsD configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatsdConfig {
+    pub prefix: String,
+    pub addr: String,
+    pub use_tags: bool,
+    pub enabled: bool,
+}
+
+impl Default for StatsdConfig {
+    fn default() -> Self {
+        Self {
+            prefix: "way_read".to_string(),
+            addr: "127.0.0.1:8125".to_string(),
+            use_tags: false,
+            enabled: false,
         }
     }
 }
@@ -99,6 +119,7 @@ pub struct Config {
     pub hub: HubConfig,
     pub logging: LoggingConfig,
     pub backfill: BackfillConfig,
+    pub statsd: StatsdConfig,
     pub clear_db: bool,
 }
 

@@ -42,3 +42,14 @@ log_format = "json"
 # Database Management
 # Set to true to clear database on startup (use with caution)
 clear_db = false
+
+# StatsD Metrics Configuration
+[statsd]
+# Prefix for all metrics
+prefix = "way_read"
+# StatsD server address (host:port)
+addr = "127.0.0.1:8125"
+# Whether to use tagged metrics (requires a StatsD server that supports tags)
+use_tags = false
+# Enable metrics collection
+enabled = false

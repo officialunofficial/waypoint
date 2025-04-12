@@ -218,6 +218,18 @@ CREATE INDEX onchain_events_fid_index ON public.onchain_events USING btree (fid)
 CREATE INDEX onchain_events_type_index ON public.onchain_events USING btree (type);
 CREATE INDEX onchain_events_timestamp_index ON public.onchain_events USING btree ("timestamp");
 
+-- Create block sync state table
+CREATE TABLE public.block_sync_state (
+    shard_id INT NOT NULL,
+    block_height BIGINT NOT NULL,
+    processed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    status TEXT NOT NULL,  -- 'completed', 'failed', 'processing'
+    error_message TEXT,
+    PRIMARY KEY (shard_id, block_height)
+);
+
+CREATE INDEX idx_block_sync_state_status ON public.block_sync_state(status);
+
 
 -- Add triggers for updated_at columns
 CREATE TRIGGER update_casts_updated_at BEFORE UPDATE ON public.casts

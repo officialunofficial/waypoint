@@ -53,7 +53,12 @@ services:
       WAYPOINT_HUB__URL: snapchain.farcaster.xyz:3383
       HOST: 0.0.0.0
       PORT: 8080
-      RUST_LOG: info,sqlx=debug
+      RUST_LOG: info,sqlx=warn
+      # StatsD Configuration
+      WAYPOINT_STATSD__PREFIX: way_read
+      WAYPOINT_STATSD__ADDR: localhost:8125
+      WAYPOINT_STATSD__USE_TAGS: false
+      WAYPOINT_STATSD__ENABLED: true
     depends_on:
       postgres:
         condition: service_healthy
