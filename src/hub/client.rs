@@ -10,6 +10,7 @@ use std::{sync::Arc, time::Duration};
 use tokio_stream::Stream;
 use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::info;
+use crate::proto::{FidsRequest, FidsResponse};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -140,5 +141,27 @@ impl Hub {
                 }
             },
         }
+    }
+    
+    /// Get all FIDs from the hub
+    pub async fn get_fids(
+        &mut self,
+        page_size: Option<u32>,
+        page_token: Option<Vec<u8>>,
+        reverse: Option<bool>,
+    ) -> Result<FidsResponse, Error> {
+        let client = self
+            .client
+            .as_mut()
+            .ok_or(Error::NotConnected)?;
+
+        let request = tonic::Request::new(FidsRequest {
+            page_size,
+            page_token,
+            reverse,
+        });
+        
+        let response = client.get_fids(request).await?;
+        Ok(response.into_inner())
     }
 }

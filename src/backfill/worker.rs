@@ -272,8 +272,7 @@ impl BackfillQueue {
                     return Ok(Some(job));
                 },
                 Ok(_) => {
-                    debug!("No jobs available in queue {}", queue_key);
-                    // Continue to next queue
+                    // Continue to next queue without logging
                 },
                 Err(e) => {
                     error!("Error retrieving job from queue {}: {:?}", queue_key, e);
@@ -430,15 +429,18 @@ impl Worker {
             0.0
         };
 
-        info!(
-            "Backfill progress: {} jobs, {} FIDs processed ({:.2} FIDs/sec), {} spam FIDs skipped, {} errors, {} jobs remaining in queue",
-            self.stats.jobs_processed,
-            self.stats.fids_processed,
-            fids_per_second,
-            self.stats.spam_fids_skipped,
-            self.stats.errors,
-            queue_length
-        );
+        // Only log non-zero progress
+        if self.stats.jobs_processed > 0 || self.stats.fids_processed > 0 || self.stats.errors > 0 || queue_length > 0 {
+            info!(
+                "Backfill progress: {} jobs, {} FIDs processed ({:.2} FIDs/sec), {} spam FIDs skipped, {} errors, {} jobs remaining in queue",
+                self.stats.jobs_processed,
+                self.stats.fids_processed,
+                fids_per_second,
+                self.stats.spam_fids_skipped,
+                self.stats.errors,
+                queue_length
+            );
+        }
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

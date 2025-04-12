@@ -5,8 +5,9 @@ PROTO_DIR := src/proto
 REGISTRY ?= localhost
 IMAGE_NAME := waypoint
 DEFAULT_TAG := latest
+ARGS ?= 
 
-.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-worker-highperf backfill-update-user-data backfill-update-user-data-max backfill-block-queue backfill-block-queue-range backfill-block-worker backfill-block-worker-highperf test docker-build docker-run docker-push docker-tag fmt fmt-rust fmt-biome changelog help
+.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-worker-highperf backfill-update-user-data backfill-update-user-data-max test docker-build docker-run docker-push docker-tag fmt fmt-rust fmt-biome changelog help
 
 init:
 	mkdir -p $(PROTO_DIR)
@@ -23,36 +24,32 @@ clean:
 	cargo clean
 
 run: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run -- start
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run -- start $(ARGS)
 	
 
 backfill-queue: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --bin backfill -- queue
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run -- backfill fid queue $(ARGS)
 
 backfill-queue-fids: proto build
 	@if [ "$(FIDS)" = "" ]; then \
 		echo "Please specify FIDS=<comma-separated list of FIDs> to backfill"; \
 		exit 1; \
 	fi
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --bin backfill -- queue --fids $(FIDS)
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run -- backfill fid queue --fids $(FIDS) $(ARGS)
 	
 backfill-queue-max: proto build
 	@if [ "$(MAX_FID)" = "" ]; then \
 		echo "Please specify MAX_FID=<number> to backfill up to"; \
 		exit 1; \
 	fi
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --bin backfill -- queue --max-fid $(MAX_FID)
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run -- backfill fid queue --max-fid $(MAX_FID) $(ARGS)
 
 backfill-worker: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml BACKFILL_CONCURRENCY=50 cargo run --bin backfill -- worker
-
-# Run high-performance backfill worker with increased concurrency
-backfill-worker-highperf: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml BACKFILL_CONCURRENCY=100 RUST_LOG=info cargo run --release --bin backfill -- worker
+	WAYPOINT_CONFIG=config/examples/config.default.toml BACKFILL_CONCURRENCY=50 cargo run -- backfill fid worker $(ARGS)
 
 # Run the user-data update process
 backfill-update-user-data: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --release --bin backfill -- user-data
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --release -- backfill fid user-data $(ARGS)
 
 # Run the user-data update process with max FID limit
 backfill-update-user-data-max: proto build
@@ -60,25 +57,8 @@ backfill-update-user-data-max: proto build
 		echo "Please specify MAX_FID=<number> to update user data up to"; \
 		exit 1; \
 	fi
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --release --bin backfill -- user-data --max-fid $(MAX_FID)
+	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --release -- backfill fid user-data --max-fid $(MAX_FID) $(ARGS)
 
-# Block-based backfill queue commands
-backfill-block-queue: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --bin backfill -- block-queue
-
-backfill-block-queue-range: proto build
-	@if [ "$(START_BLOCK)" = "" ] || [ "$(END_BLOCK)" = "" ]; then \
-		echo "Please specify START_BLOCK=<number> END_BLOCK=<number> for block range"; \
-		exit 1; \
-	fi
-	WAYPOINT_CONFIG=config/examples/config.default.toml cargo run --bin backfill -- block-queue --start-block $(START_BLOCK) --end-block $(END_BLOCK)
-
-# Block-based backfill worker commands
-backfill-block-worker: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml BACKFILL_CONCURRENCY=25 cargo run --bin backfill -- block-worker
-
-backfill-block-worker-highperf: proto build
-	WAYPOINT_CONFIG=config/examples/config.default.toml BACKFILL_CONCURRENCY=50 RUST_LOG=info cargo run --release --bin backfill -- block-worker
 
 # Run the container with proper env vars and port mapping
 docker-run: docker-build
@@ -140,22 +120,19 @@ help:
 	@echo "Development:"
 	@echo "  make build                    - Build the project"
 	@echo "  make run                      - Run the main service"
-		@echo "  make test                     - Run tests"
+	@echo "  make test                     - Run tests"
 	@echo "  make fmt                      - Format all code"
 	@echo ""
 	@echo "Backfill:"
+	@echo "  FID-Based Backfill:"
 	@echo "  make backfill-queue           - Queue all FIDs for backfill"
 	@echo "  make backfill-queue-fids FIDS=1,2,3  - Queue specific FIDs"
 	@echo "  make backfill-queue-max MAX_FID=1000 - Queue FIDs up to 1000"
-	@echo "  make backfill-worker          - Run standard worker (50 concurrent jobs)"
-	@echo "  make backfill-worker-highperf - Run high-performance worker (100 concurrent jobs)"
+	@echo "  make backfill-worker          - Run backfill worker (50 concurrent jobs by default)"
 	@echo "  make backfill-update-user-data - Update user_data for all FIDs"
 	@echo "  make backfill-update-user-data-max MAX_FID=1000 - Update user_data for FIDs up to 1000"
-	@echo "  make backfill-block-queue     - Queue all blocks for backfill"
-	@echo "  make backfill-block-queue-range START_BLOCK=1 END_BLOCK=1000 - Queue specific block range"
-	@echo "  make backfill-block-worker    - Run block-based backfill worker"
-	@echo "  make backfill-block-worker-highperf - Run high-performance block worker"
 	@echo ""
+
 	@echo "Docker:"
 	@echo "  make docker-build             - Build Docker image"
 	@echo "  make docker-run               - Run Docker container"
@@ -173,5 +150,4 @@ help:
 	@echo "  TAG                           - Docker image tag (for docker-tag target)"
 	@echo "  FIDS                          - Comma-separated list of FIDs (for backfill-queue-fids)"
 	@echo "  MAX_FID                       - Maximum FID (for backfill-queue-max and backfill-update-user-data-max)"
-	@echo "  START_BLOCK                   - Starting block number (for backfill-block-queue-range)"
-	@echo "  END_BLOCK                     - Ending block number (for backfill-block-queue-range)"
+	@echo "  ARGS                          - Additional command line arguments to pass to the binary"

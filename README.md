@@ -16,7 +16,6 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 - **Commands**: 
   - Queue: `make backfill-queue`
   - Workers: `make backfill-worker`
-  - High-performance Workers: `make backfill-worker-highperf` (100x faster)
 
 ## Local Development
 
@@ -33,8 +32,7 @@ make backfill-queue-fids FIDS=1,2,3    # Queue specific FIDs
 make backfill-queue-max MAX_FID=1000   # Queue FIDs up to 1000
 
 # Run a backfill worker
-make backfill-worker                   # Standard worker (50 concurrent jobs)
-make backfill-worker-highperf          # High-performance worker (100 concurrent jobs)
+make backfill-worker                   # Run backfill worker (50 concurrent jobs by default)
 
 # Update user_data
 make backfill-update-user-data         # Update user_data for all FIDs
@@ -154,7 +152,6 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Key Files
 
 - `src/main.rs`: Main application entry point
-- `src/bin/backfill.rs`: Backfill worker and queue code
 - `src/backfill/reconciler.rs`: Message reconciliation logic
 - `src/backfill/worker.rs`: Worker implementation
 

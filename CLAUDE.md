@@ -46,16 +46,7 @@ make backfill-queue-fids FIDS=1,2,3    # Queue specific FIDs
 make backfill-queue-max MAX_FID=1000   # Queue FIDs up to 1000
 
 # Run a FID-based backfill worker
-make backfill-worker                   # Standard worker (50 concurrent jobs)
-make backfill-worker-highperf          # High-performance worker (100 concurrent jobs)
-
-# Queue Snapchain block-based backfill jobs
-make backfill-block-queue              # Queue all blocks from Snapchain
-make backfill-block-queue-range START_BLOCK=1 END_BLOCK=1000  # Queue specific block range
-
-# Run a Snapchain block-based backfill worker
-make backfill-block-worker             # Standard block worker
-make backfill-block-worker-highperf    # High-performance block worker
+make backfill-worker                   # Run backfill worker (50 concurrent jobs by default)
 
 # Update user_data
 make backfill-update-user-data         # Update user_data for all FIDs
@@ -125,37 +116,16 @@ The backfill system has been optimized for high throughput with two complementar
    - Concurrent processing of messages within a single FID
    - Batched database operations for better throughput
 
-### Snapchain Block-based Backfill
+### General Performance Tuning
 
-1. **Chronological Processing**:
-   - Processes data in Snapchain block order for consistency
-   - Ensures no transactions are missed between blocks
-   - Maintains accurate historical record
-
-2. **Checkpoint Management**:
-   - Tracks progress by Snapchain block height
-   - Resume capability after interruption
-   - Database tracking of processed blocks
-
-3. **Scalable Design**:
-   - Configurable block batch sizes
-   - Parallel processing of blocks
-   - Multiple workers can process different block ranges
-
-4. **General Performance Tuning**:
-   - Release mode compilation for production
-   - Configurable logging levels for reduced overhead
-   - Adaptive rate limiting based on Snapchain server response
-
-**Note on Terminology**: "Block-based" backfill refers to Snapchain protocol blocks, not Ethereum blockchain blocks. The Snapchain protocol uses block terminology for its internal consensus mechanism.
+- Release mode compilation for production
+- Configurable logging levels for reduced overhead
+- Adaptive rate limiting based on Snapchain server response
 
 ## Key Files
-- `src/main.rs`: Main application entry point
-- `src/bin/backfill.rs`: Backfill worker and queue code
+- `src/main.rs`: Main application entry point with unified CLI commands
 - `src/backfill/reconciler.rs`: FID-based reconciliation logic
 - `src/backfill/worker.rs`: FID-based worker implementation
-- `src/backfill/block_reconciler.rs`: Snapchain block-based reconciliation logic
-- `src/backfill/block_worker.rs`: Snapchain block-based worker implementation
 - `Dockerfile`: Container build instructions
 - `docker-compose.yml`: Local development setup with PostgreSQL 17 and pgvector
 - `ARCHITECTURE.md`: Detailed system architecture documentation

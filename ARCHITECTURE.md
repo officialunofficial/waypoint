@@ -2,7 +2,7 @@
 
 This document provides an overview of Waypoint's architecture, which consists of two main components:
 1. A streaming service for processing real-time Snapchain events through Redis consumer groups
-2. A backfill system with both FID-based and block-based approaches for historical data processing
+2. A backfill system for historical data processing using a FID-based approach
 
 ## Streaming Service Architecture
 
@@ -131,8 +131,6 @@ The PostgreSQL database is the final destination for processed events:
 
 ## Backfill System Architecture
 
-Waypoint provides two complementary backfill approaches for historical data processing.
-
 ### FID-based Backfill
 
 The FID-based approach processes messages by Farcaster user ID (FID):
@@ -165,45 +163,9 @@ sequenceDiagram
     Worker->>Queue: Mark job as completed
 ```
 
-### Block-based Backfill (Snapchain Blocks)
-
-The block-based approach processes messages chronologically by Snapchain block height (not Ethereum blocks):
-
-```mermaid
-sequenceDiagram
-    participant Queue as Redis Queue
-    participant Worker as Block Worker
-    participant Hub as Snapchain Hub
-    participant Processor as Database Processor
-    participant DB as PostgreSQL
-
-    Queue->>Worker: BlockBackfillJob (start_block to end_block)
-    
-    loop For Each Block
-        Worker->>Hub: Get block by height
-        Hub->>Worker: Block data
-        
-        Worker->>Hub: Get shard chunks for block
-        Hub->>Worker: Shard chunk data with transactions
-        
-        loop For Each Transaction
-            loop For Each Message
-                Worker->>Processor: Process message
-                Processor->>DB: Store message
-            end
-        end
-        
-        Worker->>DB: Update block_sync_state
-    end
-    
-    Worker->>Queue: Mark job as completed
-```
-
 ## Key Features
 
-- **Dual Backfill Approaches**: 
-  - FID-based for targeted user data processing
-  - Block-based for chronological consistency
+- **FID-based Backfill**: Optimized for targeted user data processing
 
 - **Memory efficient**: Optimized Snapchain event processing
 - **Efficient Buffer Management**: Carefully managed memory allocations
