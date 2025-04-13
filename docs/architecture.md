@@ -7,6 +7,7 @@ This document provides an overview of Waypoint's architecture, which consists of
 ## Streaming Service Architecture
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#f5f5f5' }}}%%
 sequenceDiagram
     participant Hub as Snapchain
     participant Subscriber as HubSubscriber
@@ -136,6 +137,7 @@ The PostgreSQL database is the final destination for processed events:
 The FID-based approach processes messages by Farcaster user ID (FID):
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#f5f5f5' }}}%%
 sequenceDiagram
     participant Queue as Redis Queue
     participant Worker as FID Worker

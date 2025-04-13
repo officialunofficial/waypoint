@@ -107,6 +107,7 @@ For detailed metrics documentation, see [metrics.md](docs/metrics.md)
 ## Architecture
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#f5f5f5' }}}%%
 sequenceDiagram
     participant Hub as Snapchain
     participant Subscriber as HubSubscriber

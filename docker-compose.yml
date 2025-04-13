@@ -38,9 +38,9 @@ services:
       - waypoint-network
 
   waypoint:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: officialunofficial/waypoint:latest
+    pull_policy: always
+    init: true
     restart: on-failure
     command: ./waypoint start
     ports:

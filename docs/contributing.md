@@ -58,7 +58,7 @@ We welcome feature suggestions! Please create an issue with:
 
 1. Install prerequisites:
    - Rust 1.85+
-   - PostgreSQL 15+
+   - PostgreSQL 17+
    - Redis
    - Protobuf compiler
 
