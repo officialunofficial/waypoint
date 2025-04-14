@@ -394,7 +394,7 @@ impl DatabaseProcessor {
                     owner
                 )
                 VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (username, timestamp) 
+                ON CONFLICT (username, fid) 
                 DO NOTHING
                 "#,
                     data.fid as i64,
@@ -434,7 +434,7 @@ impl DatabaseProcessor {
                 deleted_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (username, timestamp) DO UPDATE SET
+            ON CONFLICT (username, fid) DO UPDATE SET
                 deleted_at = CASE 
                     WHEN $7 IS NOT NULL THEN $7
                     ELSE username_proofs.deleted_at
