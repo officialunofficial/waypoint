@@ -15,10 +15,9 @@ use crate::{
     },
 };
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
 use futures::future::BoxFuture;
 use rayon::prelude::*;
-use sqlx::postgres::PgPool;
+use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
 use std::hash::Hasher;
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -33,10 +32,10 @@ impl DatabaseProcessor {
         Self { resources }
     }
 
-    fn convert_timestamp(timestamp: u32) -> DateTime<Utc> {
+    fn convert_timestamp(timestamp: u32) -> OffsetDateTime {
         // Convert from farcaster time (seconds since epoch) to unix seconds
         let unix_time = from_farcaster_time(timestamp) / 1000; // Convert ms to seconds
-        Utc.timestamp_opt(unix_time as i64, 0).unwrap()
+        OffsetDateTime::from_unix_timestamp(unix_time as i64).unwrap()
     }
 
     async fn add_cast(
@@ -446,7 +445,7 @@ impl DatabaseProcessor {
             proof.r#type as i16,
             &proof.signature,
             &proof.owner,
-            if is_deleted { Some(ts) } else { None::<chrono::DateTime<chrono::Utc>> }
+            if is_deleted { Some(ts) } else { None::<OffsetDateTime> }
         )
         .execute(&self.resources.database.pool)
         .await?;
@@ -458,7 +457,7 @@ impl DatabaseProcessor {
         &self,
         event: &OnChainEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let ts = Utc.timestamp_opt(event.block_timestamp as i64, 0).unwrap();
+        let ts = OffsetDateTime::from_unix_timestamp(event.block_timestamp as i64).unwrap();
 
         // Generate a deterministic hash for this onchain event
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -625,15 +624,15 @@ impl DatabaseProcessor {
                 serde_json::to_value(data)?,
                 msg.data_bytes.as_deref().unwrap_or_default(),
                 match operation {
-                    "delete" => Some(Utc::now()),
+                    "delete" => Some(OffsetDateTime::now_utc()),
                     _ => None,
                 },
                 match operation {
-                    "prune" => Some(Utc::now()),
+                    "prune" => Some(OffsetDateTime::now_utc()),
                     _ => None,
                 },
                 match operation {
-                    "revoke" => Some(Utc::now()),
+                    "revoke" => Some(OffsetDateTime::now_utc()),
                     _ => None,
                 }
             )
