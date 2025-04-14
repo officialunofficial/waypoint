@@ -35,7 +35,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "jso
 thiserror = "1.0.66"
 anyhow = "1.0.94"
 color-eyre = "0.6.3"
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "macros", "uuid", "time", "chrono"] }
+sqlx = { version = "0.8.4", features = ["runtime-tokio-rustls", "postgres", "json", "macros", "uuid", "time", "chrono"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 uuid = { version = "1.11.0", features = ["v4", "serde"] }
 chrono = { version = "0.4.39", features = ["serde"] }
