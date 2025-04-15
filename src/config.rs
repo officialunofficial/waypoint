@@ -66,6 +66,49 @@ fn default_metrics_collection_interval() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubConfig {
     pub url: String,
+
+    // Retry configuration
+    #[serde(default = "default_retry_attempts")]
+    pub retry_max_attempts: u32,
+
+    #[serde(default = "default_retry_base_delay_ms")]
+    pub retry_base_delay_ms: u64,
+
+    #[serde(default = "default_retry_max_delay_ms")]
+    pub retry_max_delay_ms: u64,
+
+    #[serde(default = "default_retry_jitter_factor")]
+    pub retry_jitter_factor: f32,
+
+    #[serde(default = "default_retry_timeout_ms")]
+    pub retry_timeout_ms: u64,
+
+    #[serde(default = "default_conn_timeout_ms")]
+    pub conn_timeout_ms: u64,
+}
+
+fn default_retry_attempts() -> u32 {
+    5 // Default to 5 retry attempts
+}
+
+fn default_retry_base_delay_ms() -> u64 {
+    100 // Start with a 100ms delay
+}
+
+fn default_retry_max_delay_ms() -> u64 {
+    30000 // Maximum 30 second delay
+}
+
+fn default_retry_jitter_factor() -> f32 {
+    0.25 // 25% random jitter
+}
+
+fn default_retry_timeout_ms() -> u64 {
+    60000 // 1 minute request timeout
+}
+
+fn default_conn_timeout_ms() -> u64 {
+    30000 // 30 second connection timeout
 }
 
 /// Logging configuration
@@ -161,7 +204,15 @@ impl Default for RedisConfig {
 
 impl Default for HubConfig {
     fn default() -> Self {
-        Self { url: "hub.farcaster.xyz:2283".to_string() }
+        Self {
+            url: "snapchain.farcaster.xyz:3383".to_string(),
+            retry_max_attempts: default_retry_attempts(),
+            retry_base_delay_ms: default_retry_base_delay_ms(),
+            retry_max_delay_ms: default_retry_max_delay_ms(),
+            retry_jitter_factor: default_retry_jitter_factor(),
+            retry_timeout_ms: default_retry_timeout_ms(),
+            conn_timeout_ms: default_conn_timeout_ms(),
+        }
     }
 }
 

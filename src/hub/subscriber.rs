@@ -1,4 +1,5 @@
 use crate::{
+    config::HubConfig,
     hub::{error::Error, filter::SpamFilter, stats::ProcessingStats},
     proto::{
         GetInfoRequest, HubEvent, HubEventType, SubscribeRequest, hub_event,
@@ -9,13 +10,14 @@ use crate::{
 use dashmap::DashMap;
 use futures::StreamExt;
 use prost::Message as ProstMessage;
+use rand::Rng;
 use std::{
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 pub type PreProcessHandler = Arc<
     dyn Fn(&[HubEvent], &[Vec<u8>]) -> futures::future::BoxFuture<'static, Vec<bool>> + Send + Sync,
@@ -58,6 +60,10 @@ pub struct HubSubscriber {
     spam_filter: Arc<SpamFilter>,
     // Track last successful Redis publish time for better connection monitoring
     last_successful_flush: Arc<RwLock<Option<Instant>>>,
+    // Enhanced connection tracking and retry configuration
+    consecutive_errors: Arc<std::sync::atomic::AtomicU32>,
+    last_success: Arc<std::sync::atomic::AtomicU64>,
+    hub_config: Arc<HubConfig>,
 }
 
 impl HubSubscriber {
@@ -90,6 +96,28 @@ impl HubSubscriber {
             info!("Spam filter loaded - Hub subscription will filter spam messages");
         }
 
+        // Get the current time in seconds since epoch for tracking the last successful operation
+        let current_time =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+
+        // Get connection timeout from HubConfig or use default
+        let hub_config = if let Some(config) = &opts.hub_config {
+            Arc::clone(config)
+        } else {
+            // Create a default config if none provided
+            Arc::new(HubConfig {
+                url: hub_host.clone(),
+                retry_max_attempts: 5,
+                retry_base_delay_ms: 100,
+                retry_max_delay_ms: 30000,
+                retry_jitter_factor: 0.25,
+                retry_timeout_ms: 60000,
+                conn_timeout_ms: 30000,
+            })
+        };
+
+        let connection_timeout = Duration::from_millis(hub_config.conn_timeout_ms);
+
         Self {
             hub,
             redis,
@@ -111,9 +139,12 @@ impl HubSubscriber {
             _after_process: opts.after_process,
             _stats: Arc::new(RwLock::new(ProcessingStats::new())),
             shutdown: Arc::new(RwLock::new(false)),
-            connection_timeout: Duration::from_millis(30000),
+            connection_timeout,
             spam_filter,
             last_successful_flush: Arc::new(RwLock::new(Some(Instant::now()))),
+            consecutive_errors: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            last_success: Arc::new(std::sync::atomic::AtomicU64::new(current_time)),
+            hub_config,
         }
     }
 
@@ -122,19 +153,69 @@ impl HubSubscriber {
     }
 
     async fn wait_for_ready(&self) -> Result<(), Error> {
-        // Simulate TS _waitForReadyHubClient
-        let retry_delay = Duration::from_secs(5);
-        let start = Instant::now();
+        // Enhanced wait_for_ready with configurable retries and exponential backoff
+        let max_attempts = self.hub_config.retry_max_attempts;
+        let mut current_attempt = 0;
+        let mut backoff = Duration::from_millis(self.hub_config.retry_base_delay_ms);
+        let max_backoff = Duration::from_millis(self.hub_config.retry_max_delay_ms);
+        let jitter_factor = self.hub_config.retry_jitter_factor;
 
-        while start.elapsed() < retry_delay {
-            if (self.hub.clone().get_info(tonic::Request::new(GetInfoRequest {})).await).is_err() {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
+        while current_attempt < max_attempts {
+            current_attempt += 1;
+
+            // Try to get hub info
+            match self.hub.clone().get_info(tonic::Request::new(GetInfoRequest {})).await {
+                Ok(_) => {
+                    // Success - reset error counter and update last success time
+                    self.consecutive_errors.store(0, std::sync::atomic::Ordering::SeqCst);
+                    self.last_success.store(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                    return Ok(());
+                },
+                Err(e) => {
+                    // Apply jitter to backoff to prevent thundering herd
+                    let jitter_ms = if jitter_factor > 0.0 {
+                        let jitter_range = (backoff.as_millis() as f32 * jitter_factor) as u64;
+                        if jitter_range > 0 {
+                            rand::thread_rng().gen_range(0..jitter_range)
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    let backoff_with_jitter = backoff + Duration::from_millis(jitter_ms);
+
+                    if current_attempt < max_attempts {
+                        warn!(
+                            "Hub not ready (attempt {}/{}) [status: {:?}], retrying in {:?}ms",
+                            current_attempt,
+                            max_attempts,
+                            e.code(),
+                            backoff_with_jitter.as_millis()
+                        );
+                        tokio::time::sleep(backoff_with_jitter).await;
+
+                        // Exponential backoff
+                        backoff = std::cmp::min(backoff * 2, max_backoff);
+                    } else {
+                        error!("Hub not ready after {} attempts, giving up: {:?}", max_attempts, e);
+                    }
+                },
             }
-            return Ok(());
         }
 
-        Err(Error::ConnectionError("Hub not ready after timeout".to_string()))
+        // Increment consecutive errors counter
+        self.consecutive_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        Err(Error::ConnectionError(format!(
+            "Hub not ready after {} attempts with max backoff of {}ms",
+            max_attempts,
+            max_backoff.as_millis()
+        )))
     }
 
     #[instrument(skip(self))]
@@ -153,14 +234,21 @@ impl HubSubscriber {
 
         let mut stream = self.connect_stream(last_id).await?;
         let mut batch_state = BatchState::new();
-        let mut consecutive_errors = 0;
+
+        // Use atomic counter for consistent error tracking
         let max_consecutive_errors = 3;
 
         while !*self.shutdown.read().await {
             match stream.next().await {
                 Some(Ok(event)) => {
                     // Reset error counter on successful event
-                    consecutive_errors = 0;
+                    self.consecutive_errors.store(0, std::sync::atomic::Ordering::SeqCst);
+
+                    // Update last successful operation timestamp
+                    self.last_success.store(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
 
                     // Update connection monitoring timestamp
                     *self.last_successful_flush.write().await = Some(Instant::now());
@@ -174,49 +262,151 @@ impl HubSubscriber {
                             Ok(_) => {
                                 // Update successful flush timestamp
                                 *self.last_successful_flush.write().await = Some(Instant::now());
+
+                                // Also update global success counter
+                                self.last_success.store(
+                                    SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                    std::sync::atomic::Ordering::SeqCst,
+                                );
                             },
                             Err(e) => {
                                 error!("Error flushing batch: {:?}", e);
-                                consecutive_errors += 1;
+                                let current_errors = self
+                                    .consecutive_errors
+                                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                                    + 1;
 
-                                if consecutive_errors >= max_consecutive_errors {
+                                if current_errors >= max_consecutive_errors {
                                     error!(
-                                        "Too many consecutive flush errors ({}), reconnecting stream",
-                                        consecutive_errors
+                                        "Too many consecutive flush errors ({}), reconnecting stream with exponential backoff",
+                                        current_errors
                                     );
-                                    // Force reconnection rather than failing
-                                    tokio::time::sleep(Duration::from_secs(5)).await;
-                                    stream = self.connect_stream(last_id).await?;
-                                    consecutive_errors = 0;
-                                    continue;
+
+                                    // Use configured backoff with jitter
+                                    let backoff_ms = Self::calculate_backoff_with_jitter(
+                                        current_errors,
+                                        self.hub_config.retry_base_delay_ms,
+                                        self.hub_config.retry_max_delay_ms,
+                                        self.hub_config.retry_jitter_factor,
+                                    );
+
+                                    info!(
+                                        "Waiting for {:?}ms before reconnection attempt",
+                                        backoff_ms
+                                    );
+                                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                                    // Try to reconnect - with specific error handling for connection errors
+                                    match self.connect_stream(last_id).await {
+                                        Ok(new_stream) => {
+                                            stream = new_stream;
+                                            self.consecutive_errors
+                                                .store(0, std::sync::atomic::Ordering::SeqCst);
+                                            continue;
+                                        },
+                                        Err(reconnect_error) => {
+                                            error!(
+                                                "Failed to reconnect: {:?}, will retry on next iteration",
+                                                reconnect_error
+                                            );
+                                            // We'll try again on the next iteration with increased backoff
+                                            tokio::time::sleep(Duration::from_millis(100)).await;
+                                        },
+                                    }
                                 }
                             },
                         }
                     }
                 },
                 Some(Err(e)) => {
-                    error!("Stream error: {:?}", e);
-                    consecutive_errors += 1;
+                    // Identify h2 protocol errors specifically
+                    let is_h2_error = e.message().contains("h2 protocol error")
+                        || e.message().contains("error reading a body from connection");
 
-                    if consecutive_errors >= max_consecutive_errors {
-                        error!(
-                            "Too many consecutive stream errors ({}), reconnecting",
-                            consecutive_errors
-                        );
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                        stream = self.connect_stream(last_id).await?;
-                        consecutive_errors = 0;
+                    if is_h2_error {
+                        error!("H2 protocol error in stream: {:?}", e);
                     } else {
-                        // For non-critical errors, continue without reconnecting
+                        error!("Stream error: {:?}", e);
+                    }
+
+                    let current_errors =
+                        self.consecutive_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                            + 1;
+
+                    if current_errors >= max_consecutive_errors || is_h2_error {
+                        // Always reconnect immediately for h2 protocol errors
+                        let reason = if is_h2_error {
+                            "H2 protocol error detected".to_string()
+                        } else {
+                            format!("Too many consecutive stream errors ({})", current_errors)
+                        };
+
+                        error!("{}, reconnecting with backoff", reason);
+
+                        // Use configured backoff with jitter
+                        let backoff_ms = Self::calculate_backoff_with_jitter(
+                            current_errors,
+                            self.hub_config.retry_base_delay_ms,
+                            self.hub_config.retry_max_delay_ms,
+                            self.hub_config.retry_jitter_factor,
+                        );
+
+                        info!("Waiting for {:?}ms before reconnection attempt", backoff_ms);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                        match self.connect_stream(last_id).await {
+                            Ok(new_stream) => {
+                                stream = new_stream;
+                                self.consecutive_errors
+                                    .store(0, std::sync::atomic::Ordering::SeqCst);
+                            },
+                            Err(reconnect_error) => {
+                                error!(
+                                    "Failed to reconnect: {:?}, will continue retrying",
+                                    reconnect_error
+                                );
+                                // Use longer backoff for failed reconnection
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                            },
+                        }
+                    } else {
+                        // For non-critical errors with low count, continue without reconnecting
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 },
                 None => {
-                    // Stream closed, try to reconnect after delay
-                    info!("Hub stream closed, reconnecting after delay");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                    stream = self.connect_stream(last_id).await?;
-                    consecutive_errors = 0;
+                    // Stream closed, try to reconnect after delay with proper backoff
+                    warn!("Hub stream closed unexpectedly, reconnecting after delay");
+
+                    let current_errors =
+                        self.consecutive_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                            + 1;
+                    let backoff_ms = Self::calculate_backoff_with_jitter(
+                        current_errors,
+                        self.hub_config.retry_base_delay_ms,
+                        self.hub_config.retry_max_delay_ms,
+                        self.hub_config.retry_jitter_factor,
+                    );
+
+                    info!("Waiting for {:?}ms before reconnection attempt", backoff_ms);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                    match self.connect_stream(last_id).await {
+                        Ok(new_stream) => {
+                            stream = new_stream;
+                            self.consecutive_errors.store(0, std::sync::atomic::Ordering::SeqCst);
+                        },
+                        Err(reconnect_error) => {
+                            error!(
+                                "Failed to reconnect after stream closure: {:?}, will retry",
+                                reconnect_error
+                            );
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        },
+                    }
                 },
             }
 
@@ -226,19 +416,85 @@ impl HubSubscriber {
                 None => false,
             };
 
-            if flush_timeout_exceeded {
-                error!(
-                    "No successful operations for {:?}, forcing reconnection",
-                    self.connection_timeout
+            // Also check the global success timestamp
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+            let last_success = self.last_success.load(std::sync::atomic::Ordering::SeqCst);
+            let global_timeout_exceeded =
+                now.saturating_sub(last_success) * 1000 > self.hub_config.conn_timeout_ms;
+
+            if flush_timeout_exceeded || global_timeout_exceeded {
+                let reason = if flush_timeout_exceeded {
+                    format!("No successful flush for {:?}", self.connection_timeout)
+                } else {
+                    format!("No successful operations for {:?}ms", self.hub_config.conn_timeout_ms)
+                };
+
+                error!("{}, forcing reconnection", reason);
+
+                // Use backoff for reconnection
+                let current_errors =
+                    self.consecutive_errors.load(std::sync::atomic::Ordering::SeqCst);
+                let backoff_ms = Self::calculate_backoff_with_jitter(
+                    current_errors,
+                    self.hub_config.retry_base_delay_ms,
+                    self.hub_config.retry_max_delay_ms,
+                    self.hub_config.retry_jitter_factor,
                 );
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                stream = self.connect_stream(last_id).await?;
-                *self.last_successful_flush.write().await = Some(Instant::now());
-                consecutive_errors = 0;
+
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                match self.connect_stream(last_id).await {
+                    Ok(new_stream) => {
+                        stream = new_stream;
+                        // Reset error tracking
+                        self.consecutive_errors.store(0, std::sync::atomic::Ordering::SeqCst);
+                        *self.last_successful_flush.write().await = Some(Instant::now());
+                        self.last_success.store(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                            std::sync::atomic::Ordering::SeqCst,
+                        );
+                    },
+                    Err(reconnect_error) => {
+                        error!(
+                            "Failed to reconnect after timeout: {:?}, will retry",
+                            reconnect_error
+                        );
+                        // Still set last flush time to avoid tight reconnection loops
+                        *self.last_successful_flush.write().await = Some(Instant::now());
+                    },
+                }
             }
         }
 
         Ok(())
+    }
+
+    // Helper function to calculate backoff with jitter
+    fn calculate_backoff_with_jitter(
+        attempt: u32,
+        base_delay_ms: u64,
+        max_delay_ms: u64,
+        jitter_factor: f32,
+    ) -> u64 {
+        // Calculate exponential backoff
+        let exponential_backoff =
+            std::cmp::min(base_delay_ms * 2u64.saturating_pow(attempt - 1), max_delay_ms);
+
+        // Apply jitter
+        if jitter_factor > 0.0 {
+            let jitter_range = (exponential_backoff as f32 * jitter_factor) as u64;
+            if jitter_range > 0 {
+                let jitter = rand::thread_rng().gen_range(0..jitter_range);
+                exponential_backoff.saturating_add(jitter)
+            } else {
+                exponential_backoff
+            }
+        } else {
+            exponential_backoff
+        }
     }
 
     pub async fn start(&self) -> Result<(), Error> {
@@ -258,16 +514,49 @@ impl HubSubscriber {
         });
 
         // Main processing loop with retries
-        let mut backoff = Duration::from_secs(5);
-        let max_backoff = Duration::from_secs(60);
+        // Use configured values for more consistent behavior
+        let hub_config = self.hub_config.clone();
+        let consecutive_errors = self.consecutive_errors.clone();
 
         while !*self.shutdown.read().await {
             match self.try_start().await {
                 Ok(_) => break,
                 Err(e) => {
-                    error!("Stream error, reconnecting in {:?}: {:?}", backoff, e);
-                    tokio::time::sleep(backoff).await;
-                    backoff = std::cmp::min(backoff * 2, max_backoff);
+                    // Increment error counter
+                    let current_errors =
+                        consecutive_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+
+                    // Check if error is related to H2 protocol
+                    let is_h2_error = match &e {
+                        Error::StatusError(status) => {
+                            status.message().contains("h2 protocol error")
+                                || status.message().contains("error reading a body from connection")
+                        },
+                        Error::ConnectionError(msg) => {
+                            msg.contains("h2 protocol error") || msg.contains("connection reset")
+                        },
+                        _ => false,
+                    };
+
+                    if is_h2_error {
+                        error!("H2 protocol error, applying specialized retry logic: {:?}", e);
+                    } else {
+                        error!("Stream error, reconnecting with exponential backoff: {:?}", e);
+                    }
+
+                    // Calculate backoff with jitter for more natural retry patterns
+                    let backoff_ms = Self::calculate_backoff_with_jitter(
+                        current_errors,
+                        hub_config.retry_base_delay_ms,
+                        hub_config.retry_max_delay_ms,
+                        hub_config.retry_jitter_factor,
+                    );
+
+                    info!(
+                        "Waiting for {:?}ms before retry attempt #{}",
+                        backoff_ms, current_errors
+                    );
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                 },
             }
         }
@@ -280,10 +569,11 @@ impl HubSubscriber {
         &self,
         last_id: Option<u64>,
     ) -> Result<tonic::Streaming<HubEvent>, Error> {
-        // Use a retry mechanism with exponential backoff for connection
-        let mut backoff = Duration::from_millis(100);
-        let max_backoff = Duration::from_secs(5);
-        let max_attempts = 3;
+        // Use enhanced retry mechanism with exponential backoff and jitter for connection
+        let mut backoff = Duration::from_millis(self.hub_config.retry_base_delay_ms);
+        let max_backoff = Duration::from_millis(self.hub_config.retry_max_delay_ms);
+        let max_attempts = self.hub_config.retry_max_attempts;
+        let jitter_factor = self.hub_config.retry_jitter_factor;
 
         for attempt in 1..=max_attempts {
             // Create a fresh request for each attempt
@@ -300,29 +590,94 @@ impl HubSubscriber {
             match hub_clone.subscribe(req).await {
                 Ok(response) => {
                     info!("Established gRPC stream connection");
+
+                    // Reset error tracking on success
+                    self.consecutive_errors.store(0, std::sync::atomic::Ordering::SeqCst);
+                    self.last_success.store(
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+
                     return Ok(response.into_inner());
                 },
                 Err(e) => {
+                    // Apply jitter to backoff to prevent thundering herd
+                    let jitter_ms = if jitter_factor > 0.0 {
+                        let jitter_range = (backoff.as_millis() as f32 * jitter_factor) as u64;
+                        if jitter_range > 0 {
+                            rand::thread_rng().gen_range(0..jitter_range)
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    let backoff_with_jitter = backoff + Duration::from_millis(jitter_ms);
+
+                    // Increment consecutive errors counter
+                    self.consecutive_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+                    // Check if error appears to be a connection failure
+                    let is_conn_error = e.code() == tonic::Code::Internal
+                        && (e.message().contains("h2 protocol error")
+                            || e.message().contains("error reading a body from connection")
+                            || e.message().contains("connection reset")
+                            || e.message().contains("connection closed"));
+
+                    // Log detailed error information for better diagnostics
                     if attempt == max_attempts {
                         error!(
                             "Failed to connect to gRPC stream after {} attempts: {:?}",
                             max_attempts, e
                         );
+
+                        if is_conn_error {
+                            error!(
+                                "This appears to be a connection error. Will try to establish new connection."
+                            );
+                            // Return specific error type for connection errors
+                            return Err(Error::ConnectionError(format!(
+                                "H2 protocol error: {}",
+                                e
+                            )));
+                        }
+
                         return Err(Error::from(e));
                     }
 
-                    error!(
-                        "Error connecting to gRPC stream (attempt {}/{}): {:?}, retrying in {:?}",
-                        attempt, max_attempts, e, backoff
-                    );
-                    tokio::time::sleep(backoff).await;
+                    // More detailed logging with additional context
+                    if is_conn_error {
+                        warn!(
+                            "H2 protocol error connecting to gRPC stream (attempt {}/{}): {}, retrying in {:?}ms",
+                            attempt,
+                            max_attempts,
+                            e,
+                            backoff_with_jitter.as_millis()
+                        );
+                    } else {
+                        warn!(
+                            "Error connecting to gRPC stream (attempt {}/{}): {:?}, retrying in {:?}ms",
+                            attempt,
+                            max_attempts,
+                            e,
+                            backoff_with_jitter.as_millis()
+                        );
+                    }
+
+                    tokio::time::sleep(backoff_with_jitter).await;
+                    // Exponential backoff
                     backoff = std::cmp::min(backoff * 2, max_backoff);
                 },
             }
         }
 
-        // This should never be reached due to the return in the loop above
-        Err(Error::ConnectionError("Failed to connect to gRPC stream".to_string()))
+        // This should never be reached due to the return in the loop above, but handle it anyway
+        Err(Error::ConnectionError(format!(
+            "Failed to connect to gRPC stream after {} attempts with max backoff of {}ms",
+            max_attempts,
+            max_backoff.as_millis()
+        )))
     }
 
     async fn should_flush(&self, batch: &BatchState) -> bool {
@@ -577,4 +932,5 @@ pub struct SubscriberOptions {
     pub shard_index: Option<u64>,
     pub before_process: Option<PreProcessHandler>,
     pub after_process: Option<PostProcessHandler>,
+    pub hub_config: Option<Arc<HubConfig>>,
 }
