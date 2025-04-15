@@ -65,8 +65,7 @@ impl HubRetryPolicy {
         let jitter_factor = self.jitter_factor;
 
         // Calculate exponential backoff
-        let exp_backoff =
-            std::cmp::min(base_delay * 2u64.saturating_pow(attempts), max_delay);
+        let exp_backoff = std::cmp::min(base_delay * 2u64.saturating_pow(attempts), max_delay);
 
         // Apply jitter
         let jitter_range = (exp_backoff as f32 * jitter_factor) as u64;
@@ -90,7 +89,7 @@ impl HubRetryPolicy {
             _ => false,
         }
     }
-    
+
     // This method determines if a retry should be attempted based on the error
     fn should_retry(&self, status: &Status) -> bool {
         if !Self::is_connection_error(status) {
@@ -108,7 +107,7 @@ impl HubRetryPolicy {
         // Connection error that should be retried
         true
     }
-    
+
     // Next backoff duration with jitter
     fn next_backoff(&self) -> Duration {
         self.calculate_backoff(self.current_retry)
@@ -303,39 +302,36 @@ impl Hub {
         // For streaming RPCs, we need to use the regular client
         // Tower's retry middleware is not designed for streaming responses
         // So we'll use a simplified retry approach for this specific method
-        
+
         // If not connected, connect first
         if self.client.is_none() {
             self.connect().await?;
         }
-        
+
         let mut attempts = 0;
         let max_attempts = self.config.retry_max_attempts;
-        
+
         loop {
             // Get a mutable reference to the client
             let client = self.client.as_mut().ok_or(Error::NotConnected)?;
-            
+
             // Create the request
             let request = tonic::Request::new(BlocksRequest {
                 shard_id,
                 start_block_number: start_block,
                 stop_block_number: end_block,
             });
-            
+
             // Try to execute the request
             match client.get_blocks(request).await {
                 Ok(response) => {
                     // Reset error count and update success timestamp
                     self.error_count.store(0, std::sync::atomic::Ordering::SeqCst);
                     self.last_success.store(
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
                         std::sync::atomic::Ordering::SeqCst,
                     );
-                    
+
                     // Extract inner stream and return
                     return Ok(response.into_inner());
                 },
@@ -346,30 +342,33 @@ impl Hub {
                         warn!("Non-connection error, not retrying: {}", status);
                         return Err(Error::StatusError(status));
                     }
-                    
+
                     // Increment attempt counter
                     attempts += 1;
                     self.error_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    
+
                     // Check if we've exceeded max attempts
                     if attempts >= max_attempts {
                         error!("Max retries ({}) exceeded, giving up: {}", max_attempts, status);
                         return Err(Error::StatusError(status));
                     }
-                    
+
                     // Calculate backoff with jitter
                     let retry_policy = HubRetryPolicy::from_config(&self.config);
                     let backoff = retry_policy.calculate_backoff(attempts);
-                    
+
                     // Log the retry attempt
                     warn!(
                         "Connection error detected (retry {}/{}), backing off for {:?}ms: {}",
-                        attempts, max_attempts, backoff.as_millis(), status
+                        attempts,
+                        max_attempts,
+                        backoff.as_millis(),
+                        status
                     );
-                    
+
                     // Wait before retrying
                     tokio::time::sleep(backoff).await;
-                }
+                },
             }
         }
     }
