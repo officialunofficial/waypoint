@@ -551,19 +551,67 @@ impl Worker {
                             }
 
                             // Set up a semaphore to limit concurrent Hub connections
-                            let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+                            // Use config values from config struct
+                            // Get backfill config from application
+                            let config = crate::config::Config::load().ok();
+                            
+                            // Use config values or fall back to environment variables
+                            let concurrency_limit = std::env::var("WAYPOINT_BACKFILL__CONCURRENT_FIDS")
+                                .ok()
+                                .and_then(|val| val.parse::<usize>().ok())
+                                .or_else(|| config.as_ref().map(|c| c.backfill.concurrent_fids))
+                                .unwrap_or(5); // Default to 5 if neither is available
+                                
+                            // Implement rate limiting with config or environment fallback
+                            let requests_per_second = std::env::var("WAYPOINT_BACKFILL__RATE_LIMIT")
+                                .ok()
+                                .and_then(|val| val.parse::<u64>().ok())
+                                .or_else(|| config.as_ref().map(|c| c.backfill.rate_limit))
+                                .unwrap_or(10); // Default to 10 req/sec
+                                
+                            let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit));
+                            let rate_limiter = Arc::new(tokio::sync::Mutex::new(
+                                std::time::Instant::now()
+                            ));
+                            
+                            info!("Using backfill concurrency limit: {} FIDs, rate limit: {} req/sec", 
+                                  concurrency_limit, requests_per_second);
+                                  
                             let mut tasks = Vec::new();
 
-                            // Process FIDs in parallel using Tokio tasks with semaphore
+                            // Process FIDs in parallel using Tokio tasks with semaphore and rate limiting
                             for fid in non_spam_fids {
                                 let reconciler_clone = Arc::clone(&reconciler);
                                 let processors_clone = processors.clone();
                                 let tx_clone2 = tx_clone.clone();
                                 let semaphore_clone = Arc::clone(&semaphore);
+                                let rate_limiter_clone = Arc::clone(&rate_limiter);
 
                                 let task = tokio::spawn(async move {
                                     // Acquire permit to limit concurrency of Hub calls
                                     let _permit = semaphore_clone.acquire().await.unwrap();
+
+                                    // Apply rate limiting - ensure minimum time between requests
+                                    let interval_ms = 1000 / requests_per_second;
+                                    let mut rate_limiter_guard = rate_limiter_clone.lock().await;
+                                    let time_since_last = rate_limiter_guard.elapsed().as_millis() as u64;
+                                    
+                                    if time_since_last < interval_ms {
+                                        // Need to wait to maintain rate limit
+                                        let wait_time = interval_ms - time_since_last;
+                                        debug!("Rate limiting: waiting {}ms before processing FID {}", wait_time, fid);
+                                        
+                                        // Drop the lock while waiting
+                                        drop(rate_limiter_guard);
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(wait_time)).await;
+                                        
+                                        // Reacquire the lock and update timestamp
+                                        rate_limiter_guard = rate_limiter_clone.lock().await;
+                                    }
+                                    
+                                    // Update the last request time
+                                    *rate_limiter_guard = std::time::Instant::now();
+                                    drop(rate_limiter_guard);
 
                                     let fid_start = std::time::Instant::now();
                                     info!("Starting processing FID {}", fid);

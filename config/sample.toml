@@ -23,6 +23,14 @@ pool_size = 5
 [hub]
 # Hub gRPC URL
 url = "snapchain.farcaster.xyz:3383"
+# Rate limit for Hub API requests (per second)
+rate_limit_per_second = 10
+# Maximum concurrent requests to Hub API
+max_concurrent_requests = 20
+# Maximum number of retry attempts for Hub API requests
+retry_max_attempts = 3
+# Base delay in milliseconds for retry backoff
+retry_base_delay_ms = 100
 
 # OpenTelemetry Configuration
 [otel]
@@ -53,3 +61,14 @@ addr = "127.0.0.1:8125"
 use_tags = false
 # Enable metrics collection
 enabled = false
+
+# Backfill Configuration
+[backfill]
+# Number of concurrent FIDs to process at once
+concurrent_fids = 5
+# Rate limit for processing FIDs (requests per second)
+rate_limit = 10
+# Number of concurrent batches to process at once
+concurrent_batches = 10 
+# Rate limit for batch processing (batches per second)
+batch_rate_limit = 20

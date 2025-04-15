@@ -272,6 +272,28 @@ pub fn set_backfill_fids_per_second(rate: f64) {
     }
 }
 
+// Rate limiting metrics
+pub fn gauge(key: &str, value: f64) -> Result<(), &'static str> {
+    if let Some(client) = get_client() {
+        client.gauge(key, value);
+        Ok(())
+    } else {
+        Err("Metrics client not initialized")
+    }
+}
+
+pub fn increment_rate_limited(component: &str) {
+    if let Some(client) = get_client() {
+        client.incr(&format!("{}.rate_limited", component));
+    }
+}
+
+pub fn set_rate_limit_usage(component: &str, percentage: f64) {
+    if let Some(client) = get_client() {
+        client.gauge(&format!("{}.rate_limit_usage", component), percentage);
+    }
+}
+
 // Stream metrics
 pub fn increment_events_received() {
     if let Some(client) = get_client() {

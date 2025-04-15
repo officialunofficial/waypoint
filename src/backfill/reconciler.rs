@@ -85,7 +85,29 @@ impl MessageReconciler {
         ];
 
         // Using a semaphore to limit concurrent processing
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        // Get config from application
+        let config = crate::config::Config::load().ok();
+        
+        // Use configurable concurrency from config or environment variables
+        let processing_concurrency = std::env::var("WAYPOINT_BACKFILL__CONCURRENT_BATCHES")
+            .ok()
+            .and_then(|val| val.parse::<usize>().ok())
+            .or_else(|| config.as_ref().map(|c| c.backfill.concurrent_batches))
+            .unwrap_or(10); // Default to 10 concurrent batches
+            
+        // Set up rate limiting from config or environment
+        let batch_rate_limit = std::env::var("WAYPOINT_BACKFILL__BATCH_RATE_LIMIT")
+            .ok()
+            .and_then(|val| val.parse::<u64>().ok())
+            .or_else(|| config.as_ref().map(|c| c.backfill.batch_rate_limit))
+            .unwrap_or(20); // Default to 20 batches/sec
+        let batch_interval_ms = 1000 / batch_rate_limit;
+        
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(processing_concurrency));
+        let rate_limiter = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));
+        
+        info!("Using batch concurrency: {}, rate limit: {} batches/sec", 
+              processing_concurrency, batch_rate_limit);
 
         // First process all non-user_data messages
         for (message_type, messages) in non_user_data_groups {
@@ -115,9 +137,33 @@ impl MessageReconciler {
                     events.push(self.message_to_hub_event(message));
                 }
 
+                // Clone the rate_limiter for each task
+                let rate_limiter_clone = Arc::clone(&rate_limiter);
+                
                 let handle = tokio::spawn(async move {
                     // Acquire permit to limit concurrency
                     let _permit = semaphore_clone.acquire().await.unwrap();
+                    
+                    // Apply rate limiting
+                    let mut rate_limiter_guard = rate_limiter_clone.lock().await;
+                    let time_since_last = rate_limiter_guard.elapsed().as_millis() as u64;
+                    
+                    if time_since_last < batch_interval_ms {
+                        // Need to wait to maintain rate limit
+                        let wait_time = batch_interval_ms - time_since_last;
+                        debug!("Rate limiting: waiting {}ms before processing batch", wait_time);
+                        
+                        // Drop the lock while waiting
+                        drop(rate_limiter_guard);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(wait_time)).await;
+                        
+                        // Reacquire lock and update time
+                        rate_limiter_guard = rate_limiter_clone.lock().await;
+                    }
+                    
+                    // Update the last request time
+                    *rate_limiter_guard = std::time::Instant::now();
+                    drop(rate_limiter_guard);
 
                     let mut chunk_success = 0;
                     let mut chunk_error = 0;
@@ -179,6 +225,7 @@ impl MessageReconciler {
                     let processor_clone = Arc::clone(&processor);
                     let chunk_vec = chunk.to_vec();
                     let semaphore_clone = Arc::clone(&semaphore);
+                    let rate_limiter_clone = Arc::clone(&rate_limiter);
 
                     // Create events before spawning the task to avoid self reference
                     let mut events = Vec::with_capacity(chunk_vec.len());
@@ -189,6 +236,27 @@ impl MessageReconciler {
                     let handle = tokio::spawn(async move {
                         // Acquire permit to limit concurrency
                         let _permit = semaphore_clone.acquire().await.unwrap();
+                        
+                        // Apply rate limiting
+                        let mut rate_limiter_guard = rate_limiter_clone.lock().await;
+                        let time_since_last = rate_limiter_guard.elapsed().as_millis() as u64;
+                        
+                        if time_since_last < batch_interval_ms {
+                            // Need to wait to maintain rate limit
+                            let wait_time = batch_interval_ms - time_since_last;
+                            debug!("Rate limiting: waiting {}ms before processing user data batch", wait_time);
+                            
+                            // Drop the lock while waiting
+                            drop(rate_limiter_guard);
+                            tokio::time::sleep(tokio::time::Duration::from_millis(wait_time)).await;
+                            
+                            // Reacquire lock and update time
+                            rate_limiter_guard = rate_limiter_clone.lock().await;
+                        }
+                        
+                        // Update the last request time
+                        *rate_limiter_guard = std::time::Instant::now();
+                        drop(rate_limiter_guard);
 
                         let mut chunk_success = 0;
                         let mut chunk_error = 0;

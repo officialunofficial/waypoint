@@ -66,6 +66,30 @@ fn default_metrics_collection_interval() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubConfig {
     pub url: String,
+    #[serde(default = "default_hub_rate_limit")]
+    pub rate_limit_per_second: u32,
+    #[serde(default = "default_hub_concurrent_requests")]
+    pub max_concurrent_requests: u32,
+    #[serde(default = "default_retry_max_attempts")]
+    pub retry_max_attempts: u32,
+    #[serde(default = "default_retry_base_delay_ms")]
+    pub retry_base_delay_ms: u64,
+}
+
+fn default_hub_rate_limit() -> u32 {
+    10 // Default to 10 requests per second
+}
+
+fn default_hub_concurrent_requests() -> u32 {
+    20 // Default to 20 concurrent requests
+}
+
+fn default_retry_max_attempts() -> u32 {
+    3 // Default to 3 retry attempts
+}
+
+fn default_retry_base_delay_ms() -> u64 {
+    100 // Default base delay of 100ms
 }
 
 /// Logging configuration
@@ -128,11 +152,42 @@ pub struct Config {
 pub struct BackfillConfig {
     pub concurrency: Option<usize>,
     pub batch_size: Option<usize>,
+    #[serde(default = "default_backfill_concurrent_fids")]
+    pub concurrent_fids: usize,
+    #[serde(default = "default_backfill_rate_limit")]
+    pub rate_limit: u64,
+    #[serde(default = "default_backfill_concurrent_batches")]
+    pub concurrent_batches: usize,
+    #[serde(default = "default_backfill_batch_rate_limit")]
+    pub batch_rate_limit: u64,
+}
+
+fn default_backfill_concurrent_fids() -> usize {
+    5 // Default to 5 concurrent FIDs
+}
+
+fn default_backfill_rate_limit() -> u64 {
+    10 // Default to 10 requests per second
+}
+
+fn default_backfill_concurrent_batches() -> usize {
+    10 // Default to 10 concurrent batches
+}
+
+fn default_backfill_batch_rate_limit() -> u64 {
+    20 // Default to 20 batches per second
 }
 
 impl Default for BackfillConfig {
     fn default() -> Self {
-        Self { concurrency: Some(50), batch_size: Some(50) }
+        Self { 
+            concurrency: Some(50), 
+            batch_size: Some(50),
+            concurrent_fids: default_backfill_concurrent_fids(),
+            rate_limit: default_backfill_rate_limit(),
+            concurrent_batches: default_backfill_concurrent_batches(),
+            batch_rate_limit: default_backfill_batch_rate_limit(),
+        }
     }
 }
 
@@ -161,7 +216,13 @@ impl Default for RedisConfig {
 
 impl Default for HubConfig {
     fn default() -> Self {
-        Self { url: "hub.farcaster.xyz:2283".to_string() }
+        Self {
+            url: "hub.farcaster.xyz:2283".to_string(),
+            rate_limit_per_second: default_hub_rate_limit(),
+            max_concurrent_requests: default_hub_concurrent_requests(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_delay_ms: default_retry_base_delay_ms(),
+        }
     }
 }
 
