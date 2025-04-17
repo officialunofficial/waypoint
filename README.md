@@ -25,6 +25,10 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 For detailed development instructions, see the [Development Guide](docs/development.md).
 
 ```bash
+# Create and configure your environment
+make env-setup
+# Edit the .env file to configure your settings
+
 # Build the project
 make build
 
@@ -45,6 +49,12 @@ make backfill-worker                   # Run backfill worker (50 concurrent jobs
 # Use Docker Compose for local development with PostgreSQL 17 + pgvector
 docker compose up
 
+# Either use the main services
+docker compose up -d
+
+# Or use the standalone backfill services (includes its own DB and Redis)
+docker compose -f docker-compose.backfill.yml up -d
+
 # Build Docker image
 make docker-build
 
@@ -52,14 +62,29 @@ make docker-build
 make docker-run
 ```
 
-## Environment Variables
+You can configure the backfill behavior using these environment variables:
+- `BACKFILL_MAX_FID`: Maximum FID to backfill up to (default: 20000)
+- `BACKFILL_BATCH_SIZE`: Number of FIDs per batch (default: 50)
+- `BACKFILL_CONCURRENCY`: Number of concurrent backfill workers (default: 50)
+
+## Configuration
+
+Waypoint can be configured using environment variables in a `.env` file. Use `make env-setup` to create a default `.env` file from the example.
+
+The main configuration options are:
 
 ```
-# Connection strings and database configuration
-WAYPOINT_DATABASE__URL=postgresql://postgres:postgres@postgres:5432/waypoint
-WAYPOINT_DATABASE__MAX_CONNECTIONS=20
-WAYPOINT_DATABASE__TIMEOUT_SECONDS=60
-WAYPOINT_REDIS__URL=redis://redis:6379
+# Database configuration
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=waypoint
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waypoint
+WAYPOINT_DATABASE__URL=${DATABASE_URL}
+
+# Redis configuration
+WAYPOINT_REDIS__URL=redis://localhost:6379
+
+# Farcaster Hub configuration
 WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383
 
 # Server configuration
@@ -74,15 +99,32 @@ BACKFILL_CONCURRENCY=50  # Number of concurrent FIDs to process
 WAYPOINT_STATSD__ENABLED=true
 WAYPOINT_STATSD__ADDR=localhost:8125
 WAYPOINT_STATSD__PREFIX=way_read
-WAYPOINT_STATSD__USE_TAGS=false
 ```
 
-You can also use a configuration file:
+See `.env.example` for a complete list of configuration options.
 
-```bash
-# Run with configuration file
-WAYPOINT_CONFIG=config/sample.toml make run
+### Configuration Prefixes
+
+Waypoint uses Figment for configuration, which requires specific prefixes:
+- `WAYPOINT_` prefix is used for application configuration (with double underscore for nesting)
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` are used by Docker Compose for PostgreSQL initialization
+- `DATABASE_URL` is used by SQLx for database schema management
+
+### Docker Configuration
+
+When using Docker or Docker Compose, the following connection strings are modified to use container hostnames:
+
 ```
+# For Docker Compose
+WAYPOINT_DATABASE__URL=postgresql://postgres:postgres@postgres:5432/waypoint
+WAYPOINT_REDIS__URL=redis://redis:6379
+
+# For standalone Docker (using host.docker.internal)
+WAYPOINT_DATABASE__URL=postgresql://postgres:postgres@host.docker.internal:5432/waypoint
+WAYPOINT_REDIS__URL=redis://host.docker.internal:6379
+```
+
+These settings are automatically set in the docker-compose.yml and Makefile.
 
 ## Metrics & Monitoring
 

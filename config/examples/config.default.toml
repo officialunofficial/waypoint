@@ -1,0 +1,43 @@
+# Default configuration for Waypoint
+# This file is used by the Makefile for development
+
+# Database Configuration
+[database]
+url = "postgresql://postgres:postgres@localhost:5432/waypoint"
+max_connections = 20
+timeout_seconds = 30
+
+# Redis Configuration
+[redis]
+url = "redis://localhost:6379"
+pool_size = 5
+
+# Farcaster Hub Configuration
+[hub]
+url = "snapchain.farcaster.xyz:3383"
+retry_max_attempts = 5
+retry_base_delay_ms = 100
+retry_max_delay_ms = 30000
+retry_jitter_factor = 0.25
+retry_timeout_ms = 60000
+conn_timeout_ms = 30000
+
+# OpenTelemetry Configuration
+[otel]
+enabled = false
+endpoint = "http://otel-collector:4317"
+service_name = "waypoint"
+timeout_seconds = 3
+
+# Logging Configuration
+log_format = "json"
+
+# Database Management
+clear_db = false
+
+# StatsD Metrics Configuration
+[statsd]
+prefix = "way_read"
+addr = "127.0.0.1:8125"
+use_tags = false
+enabled = false

@@ -44,19 +44,17 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     let max_fid_str = args.get_one::<String>("max_fid");
     let batch_size = args.get_one::<u64>("batch_size").copied().unwrap_or(50);
 
-    // Validate at least one option is provided
-    if fids_str.is_none() && max_fid_str.is_none() {
-        return Err(color_eyre::eyre::eyre!("Please specify either --fids or --max-fid"));
-    }
-
     let mut hub_guard = hub.lock().await;
     hub_guard.connect().await?;
 
     // Instead of using get_fids which is not supported, get max FID from hub info
     let hub_max_fid = match hub_guard.get_hub_info().await {
         Ok(info) => {
-            // Find the maximum FID from the hub info
-            // We'll use the highest num_fid_registrations value from all shards
+            // Calculate the sum of all fids across all shards
+            let sum_fids =
+                info.shard_infos.iter().map(|shard| shard.num_fid_registrations).sum::<u64>();
+
+            // Find the maximum FID from the hub info as fallback
             let max_fid = info
                 .shard_infos
                 .iter()
@@ -64,8 +62,9 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                 .max()
                 .unwrap_or(10000);
 
-            info!("Detected maximum FID registrations from hub: {}", max_fid);
-            max_fid
+            info!("Detected total FID registrations from hub: {}", sum_fids);
+            info!("Detected maximum FID per shard from hub: {}", max_fid);
+            sum_fids
         },
         Err(e) => {
             info!("Failed to get hub info: {}. Using default max FID instead.", e);
@@ -75,8 +74,38 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
         },
     };
 
+    // If no options provided, use the sum of FIDs from shards
+    if fids_str.is_none() && max_fid_str.is_none() {
+        info!("No FIDs or max FID specified, using sum of FIDs from hub: {}", hub_max_fid);
+
+        // Queue in batches up to the sum of FIDs from shards
+        let mut queued_batches = 0;
+        for start in (1..=hub_max_fid).step_by(batch_size as usize) {
+            let end = std::cmp::min(start + batch_size - 1, hub_max_fid);
+            let batch_fids = (start..=end).collect::<Vec<_>>();
+
+            fid_queue
+                .add_job(BackfillJob {
+                    fids: batch_fids,
+                    priority: JobPriority::Normal,
+                    state: JobState::Pending,
+                    visibility_timeout: None,
+                    attempts: 0,
+                    created_at: chrono::Utc::now(),
+                    id: String::new(),
+                })
+                .await?;
+
+            queued_batches += 1;
+            if queued_batches % 10 == 0 {
+                info!("Queued {} batches of FIDs up to {}", queued_batches, end);
+            }
+        }
+
+        info!("Queued all FIDs from 1 to {} in {} batches", hub_max_fid, queued_batches);
+    }
     // Process specific FIDs if provided
-    if let Some(fids) = fids_str {
+    else if let Some(fids) = fids_str {
         let fid_list =
             fids.split(',').filter_map(|f| f.trim().parse::<u64>().ok()).collect::<Vec<_>>();
 
