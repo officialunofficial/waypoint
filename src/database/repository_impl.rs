@@ -7,7 +7,7 @@ use crate::core::{
 use crate::database::client::Database;
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
-use sqlx::Row;
+use sqlx::{Acquire, Row};
 use std::sync::Arc;
 use tracing::error;
 
@@ -213,24 +213,38 @@ impl PostgresUserProfileRepository {
 #[async_trait]
 impl UserProfileRepository for PostgresUserProfileRepository {
     async fn get_profile(&self, fid: Fid) -> Result<Option<JsonValue>> {
-        // Query user_data table
-        let sql = "SELECT profile_data FROM user_profiles WHERE fid = $1";
+        // Query user_data table directly to construct profile
+        let sql = "SELECT type, value FROM user_data WHERE fid = $1 AND deleted_at IS NULL";
 
         // Execute query
         match self.db.pool.acquire().await {
             Ok(mut conn) => {
-                let maybe_row =
-                    sqlx::query(sql).bind(fid.value() as i64).fetch_optional(&mut *conn).await?;
+                let rows = sqlx::query(sql).bind(fid.value() as i64).fetch_all(&mut *conn).await?;
 
-                match maybe_row {
-                    Some(row) => {
-                        let profile_json: JsonValue =
-                            row.try_get("profile_data").map_err(RepositoryError::Database)?;
-
-                        Ok(Some(profile_json))
-                    },
-                    None => Ok(None),
+                if rows.is_empty() {
+                    return Ok(None);
                 }
+
+                // Build profile from individual fields
+                let mut profile = serde_json::json!({});
+
+                for row in rows {
+                    let data_type: i16 = row.try_get("type").map_err(RepositoryError::Database)?;
+                    let value: String = row.try_get("value").map_err(RepositoryError::Database)?;
+
+                    // Map user data types to profile field names
+                    let field_name: String = match data_type {
+                        1 => "displayName".to_string(),
+                        2 => "bio".to_string(),
+                        3 => "url".to_string(),
+                        4 => "avatar".to_string(),
+                        _ => format!("userData_{}", data_type),
+                    };
+
+                    profile[field_name] = serde_json::Value::String(value);
+                }
+
+                Ok(Some(profile))
             },
             Err(e) => {
                 error!("Failed to acquire database connection: {}", e);
@@ -240,26 +254,70 @@ impl UserProfileRepository for PostgresUserProfileRepository {
     }
 
     async fn update_profile(&self, fid: Fid, profile: JsonValue) -> Result<()> {
-        // Insert or update profile
-        let sql = r#"
-        INSERT INTO user_profiles (fid, profile_data, updated_at)
-        VALUES ($1, $2, NOW())
-        ON CONFLICT (fid) DO UPDATE
-        SET profile_data = $2, updated_at = NOW()
-        "#;
-
-        // Execute query
+        // Use a transaction to update multiple user_data entries
         match self.db.pool.acquire().await {
             Ok(mut conn) => {
-                match sqlx::query(sql)
-                    .bind(fid.value() as i64)
-                    .bind(&profile)
-                    .execute(&mut *conn)
-                    .await
-                {
+                // Start transaction
+                let mut tx = conn.begin().await.map_err(RepositoryError::Database)?;
+
+                // Convert profile object to individual user_data entries
+                if let Some(obj) = profile.as_object() {
+                    for (key, value) in obj {
+                        let data_type = match key.as_str() {
+                            "displayName" => 1,
+                            "bio" => 2,
+                            "url" => 3,
+                            "avatar" => 4,
+                            _ => {
+                                // Skip fields we don't recognize
+                                continue;
+                            },
+                        };
+
+                        // Only handle string values
+                        if let Some(value_str) = value.as_str() {
+                            // Insert/update user_data record
+                            let sql = r#"
+                            INSERT INTO user_data (fid, type, value, hash, timestamp, updated_at)
+                            VALUES ($1, $2, $3, $4, NOW(), NOW())
+                            ON CONFLICT (fid, type) DO UPDATE
+                            SET value = $3, updated_at = NOW()
+                            "#;
+
+                            // Generate a deterministic hash for this field
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+
+                            let mut hasher = DefaultHasher::new();
+                            fid.value().hash(&mut hasher);
+                            data_type.hash(&mut hasher);
+                            value_str.hash(&mut hasher);
+                            let hash_value = hasher.finish();
+                            let hash = hash_value.to_be_bytes().to_vec();
+
+                            match sqlx::query(sql)
+                                .bind(fid.value() as i64)
+                                .bind(data_type)
+                                .bind(value_str)
+                                .bind(&hash)
+                                .execute(&mut *tx)
+                                .await
+                            {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!("Failed to update user_data: {}", e);
+                                    return Err(RepositoryError::Database(e));
+                                },
+                            }
+                        }
+                    }
+                }
+
+                // Commit transaction
+                match tx.commit().await {
                     Ok(_) => Ok(()),
                     Err(e) => {
-                        error!("Failed to update profile: {}", e);
+                        error!("Failed to commit transaction: {}", e);
                         Err(RepositoryError::Database(e))
                     },
                 }
@@ -277,11 +335,17 @@ impl UserProfileRepository for PostgresUserProfileRepository {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<JsonValue>> {
-        // Full-text search query using PostgreSQL
+        // Full-text search query using PostgreSQL against user_data values
         let sql = r#"
-        SELECT profile_data FROM user_profiles
-        WHERE to_tsvector('english', profile_data::text) @@ plainto_tsquery('english', $1)
-        ORDER BY updated_at DESC
+        WITH user_matches AS (
+            SELECT DISTINCT fid
+            FROM user_data
+            WHERE value ILIKE $1
+            AND deleted_at IS NULL
+        )
+        SELECT um.fid
+        FROM user_matches um
+        ORDER BY um.fid
         LIMIT $2 OFFSET $3
         "#;
 
@@ -289,19 +353,19 @@ impl UserProfileRepository for PostgresUserProfileRepository {
         match self.db.pool.acquire().await {
             Ok(mut conn) => {
                 let rows = sqlx::query(sql)
-                    .bind(query)
+                    .bind(format!("%{}%", query)) // Simple pattern matching
                     .bind(limit as i64)
                     .bind(offset as i64)
                     .fetch_all(&mut *conn)
                     .await?;
 
-                // Process results
+                // For each matching FID, get the full profile
                 let mut profiles = Vec::with_capacity(rows.len());
                 for row in rows {
-                    let profile: JsonValue =
-                        row.try_get("profile_data").map_err(RepositoryError::Database)?;
-
-                    profiles.push(profile);
+                    let fid: i64 = row.try_get("fid").map_err(RepositoryError::Database)?;
+                    if let Some(profile) = self.get_profile(Fid::new(fid as u64)).await? {
+                        profiles.push(profile);
+                    }
                 }
 
                 Ok(profiles)

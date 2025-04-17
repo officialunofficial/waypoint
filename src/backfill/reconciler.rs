@@ -257,6 +257,8 @@ impl MessageReconciler {
                         body: Some(proto::hub_event::Body::MergeOnChainEventBody(
                             MergeOnChainEventBody { on_chain_event: Some(event) },
                         )),
+                        block_number: 0,
+                        shard_index: 0,
                     };
 
                     match processor_clone.process_event(onchain_event).await {
@@ -1007,6 +1009,8 @@ impl MessageReconciler {
             id: 0, // Will be set by the hub
             r#type: HubEventType::MergeMessage as i32,
             body: Some(proto::hub_event::Body::MergeMessageBody(merge_message_body)),
+            block_number: 0,
+            shard_index: 0,
         }
     }
 

@@ -45,8 +45,7 @@ pub struct HubSubscriber {
     stream_key: Arc<String>,
     redis_key: Arc<String>,
     event_types: Arc<Vec<i32>>,
-    // Kept for compatibility but no longer used with the new protos
-    total_shards: Option<u64>,
+    // The shard_index is used for SubscribeRequest
     shard_index: Option<u64>,
     batch_size: usize,
     max_batch_bytes: usize,
@@ -129,7 +128,6 @@ impl HubSubscriber {
             )),
             redis_key: Arc::new(format!("{}:{}", hub_host, shard_key)),
             event_types: Arc::new(event_types),
-            total_shards: opts.total_shards,
             shard_index: opts.shard_index,
             batch_size: 100,
             max_batch_bytes: 2_usize.pow(20), // 2 MiB
@@ -580,9 +578,7 @@ impl HubSubscriber {
             let req = tonic::Request::new(SubscribeRequest {
                 from_id: last_id,
                 event_types: self.event_types.as_ref().to_vec(),
-                fid_partitions: self.total_shards,
-                fid_partition_index: self.shard_index,
-                shard_index: None,
+                shard_index: self.shard_index.map(|s| s as u32),
             });
 
             // Clone hub client before making the call
@@ -928,7 +924,6 @@ impl HubSubscriber {
 
 #[derive(Default, Clone)]
 pub struct SubscriberOptions {
-    pub total_shards: Option<u64>,
     pub shard_index: Option<u64>,
     pub before_process: Option<PreProcessHandler>,
     pub after_process: Option<PostProcessHandler>,
