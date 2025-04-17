@@ -49,11 +49,11 @@ make backfill-worker                   # Run backfill worker (50 concurrent jobs
 # Use Docker Compose for local development with PostgreSQL 17 + pgvector
 docker compose up
 
-# Either use the main services
+# Start the main service
 docker compose up -d
 
-# Or use the standalone backfill services (includes its own DB and Redis)
-docker compose -f docker-compose.backfill.yml up -d
+# Start the backfill services (uses the same DB and Redis)
+docker compose --profile backfill up -d
 
 # Build Docker image
 make docker-build
@@ -63,7 +63,6 @@ make docker-run
 ```
 
 You can configure the backfill behavior using these environment variables:
-- `BACKFILL_MAX_FID`: Maximum FID to backfill up to (default: 20000)
 - `BACKFILL_BATCH_SIZE`: Number of FIDs per batch (default: 50)
 - `BACKFILL_CONCURRENCY`: Number of concurrent backfill workers (default: 50)
 
