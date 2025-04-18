@@ -276,6 +276,56 @@ pub struct GetVerificationsRequest {
     pub limit: usize,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastRequest {
+    #[schemars(description = "Farcaster user ID of the cast author")]
+    pub fid: u64,
+    #[schemars(description = "Hash of the cast in hex format")]
+    pub hash: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastMentionsRequest {
+    #[schemars(description = "Farcaster user ID being mentioned")]
+    pub fid: u64,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastRepliesRequest {
+    #[schemars(description = "Farcaster user ID of the parent cast author")]
+    pub parent_fid: u64,
+    #[schemars(description = "Hash of the parent cast in hex format")]
+    pub parent_hash: String,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastRepliesByUrlRequest {
+    #[schemars(description = "URL of the parent content")]
+    pub parent_url: String,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetAllCastsWithTimeRequest {
+    #[schemars(description = "Farcaster user ID")]
+    pub fid: u64,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[schemars(description = "Start timestamp (optional)")]
+    pub start_time: Option<u64>,
+    #[schemars(description = "End timestamp (optional)")]
+    pub end_time: Option<u64>,
+}
+
 fn default_limit() -> usize {
     10
 }
@@ -457,6 +507,367 @@ where
             Err(e) => format!("Error fetching verifications: {}", e),
         }
     }
+
+    /// Process a cast message to extract relevant data
+    fn process_cast_message(
+        &self,
+        message: &Message,
+        msg_data: &crate::proto::MessageData,
+    ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        if message.message_type != MessageType::Cast {
+            return None;
+        }
+
+        // Extract cast data
+        let cast_body = match &msg_data.body {
+            Some(crate::proto::message_data::Body::CastAddBody(cast_add)) => cast_add,
+            _ => return None,
+        };
+
+        // Create cast object
+        let mut cast_obj = serde_json::Map::new();
+
+        // Add cast metadata
+        cast_obj.insert(
+            "fid".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(msg_data.fid)),
+        );
+        cast_obj.insert(
+            "timestamp".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(msg_data.timestamp)),
+        );
+        cast_obj
+            .insert("hash".to_string(), serde_json::Value::String(message.id.value().to_string()));
+
+        // Add cast content
+        cast_obj.insert("text".to_string(), serde_json::Value::String(cast_body.text.clone()));
+
+        // Add mentions if present
+        if !cast_body.mentions.is_empty() {
+            let mentions: Vec<serde_json::Value> = cast_body
+                .mentions
+                .iter()
+                .map(|&fid| serde_json::Value::Number(serde_json::Number::from(fid)))
+                .collect();
+            cast_obj.insert("mentions".to_string(), serde_json::Value::Array(mentions));
+        }
+
+        // Add mention positions if present
+        if !cast_body.mentions_positions.is_empty() {
+            let positions: Vec<serde_json::Value> = cast_body
+                .mentions_positions
+                .iter()
+                .map(|&pos| serde_json::Value::Number(serde_json::Number::from(pos)))
+                .collect();
+            cast_obj.insert("mentions_positions".to_string(), serde_json::Value::Array(positions));
+        }
+
+        // Add embeds if present
+        if !cast_body.embeds.is_empty() {
+            let embeds: Vec<serde_json::Value> = cast_body
+                .embeds
+                .iter()
+                .map(|embed| match &embed.embed {
+                    Some(crate::proto::embed::Embed::Url(url)) => {
+                        serde_json::json!({ "type": "url", "url": url })
+                    },
+                    Some(crate::proto::embed::Embed::CastId(cast_id)) => {
+                        serde_json::json!({
+                            "type": "cast",
+                            "fid": cast_id.fid,
+                            "hash": hex::encode(&cast_id.hash)
+                        })
+                    },
+                    None => serde_json::json!(null),
+                })
+                .collect();
+            cast_obj.insert("embeds".to_string(), serde_json::Value::Array(embeds));
+        }
+
+        // Add parent if present
+        match &cast_body.parent {
+            Some(crate::proto::cast_add_body::Parent::ParentCastId(parent_cast_id)) => {
+                let parent = serde_json::json!({
+                    "type": "cast",
+                    "fid": parent_cast_id.fid,
+                    "hash": hex::encode(&parent_cast_id.hash)
+                });
+                cast_obj.insert("parent".to_string(), parent);
+            },
+            Some(crate::proto::cast_add_body::Parent::ParentUrl(url)) => {
+                let parent = serde_json::json!({
+                    "type": "url",
+                    "url": url
+                });
+                cast_obj.insert("parent".to_string(), parent);
+            },
+            None => {},
+        }
+
+        Some(cast_obj)
+    }
+
+    /// Format an array of cast messages into a JSON response
+    fn format_casts_response(&self, messages: Vec<Message>, fid: Option<Fid>) -> String {
+        if messages.is_empty() {
+            return match fid {
+                Some(fid) => format!("No casts found for FID {}", fid),
+                None => "No casts found".to_string(),
+            };
+        }
+
+        // Create a structured array of cast objects
+        let mut casts = Vec::new();
+
+        // Process each cast message
+        for message in messages {
+            // Try to decode the message payload as MessageData
+            if let Ok(data) = prost::Message::decode(&*message.payload) {
+                let msg_data: crate::proto::MessageData = data;
+
+                // Process the cast
+                if let Some(cast_obj) = self.process_cast_message(&message, &msg_data) {
+                    casts.push(serde_json::Value::Object(cast_obj));
+                }
+            }
+        }
+
+        // Wrap in a result object with metadata
+        let result = match fid {
+            Some(fid) => serde_json::json!({
+                "fid": fid.value(),
+                "count": casts.len(),
+                "casts": casts
+            }),
+            None => serde_json::json!({
+                "count": casts.len(),
+                "casts": casts
+            }),
+        };
+
+        // Convert to JSON string
+        serde_json::to_string_pretty(&result)
+            .unwrap_or_else(|_| "Error formatting casts".to_string())
+    }
+
+    /// Get a specific cast by ID
+    pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> String {
+        info!("MCP: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
+
+        // Convert hex hash to bytes
+        let hash_bytes = match hex::decode(hash_hex.trim_start_matches("0x")) {
+            Ok(bytes) => bytes,
+            Err(_) => return format!("Invalid hash format: {}", hash_hex),
+        };
+
+        // Use the data context to fetch the cast
+        match self.data_context.get_cast(fid, &hash_bytes).await {
+            Ok(Some(message)) => {
+                // Try to decode the message payload as MessageData
+                if let Ok(data) = prost::Message::decode(&*message.payload) {
+                    let msg_data: crate::proto::MessageData = data;
+
+                    // Process the cast
+                    if let Some(cast_obj) = self.process_cast_message(&message, &msg_data) {
+                        // Convert to JSON string
+                        return serde_json::to_string_pretty(&cast_obj).unwrap_or_else(|_| {
+                            format!("Error formatting cast for FID {} and hash {}", fid, hash_hex)
+                        });
+                    }
+                }
+
+                format!(
+                    "Cast found but could not be processed for FID {} and hash {}",
+                    fid, hash_hex
+                )
+            },
+            Ok(None) => format!("No cast found for FID {} and hash {}", fid, hash_hex),
+            Err(e) => format!("Error fetching cast: {}", e),
+        }
+    }
+
+    /// Get casts by FID
+    pub async fn do_get_casts_by_fid(&self, fid: Fid, limit: usize) -> String {
+        info!("MCP: Fetching casts for FID: {}", fid);
+
+        // Use the data context to fetch casts
+        match self.data_context.get_casts_by_fid(fid, limit).await {
+            Ok(messages) => self.format_casts_response(messages, Some(fid)),
+            Err(e) => format!("Error fetching casts: {}", e),
+        }
+    }
+
+    /// Get casts mentioning a user
+    pub async fn do_get_casts_by_mention(&self, fid: Fid, limit: usize) -> String {
+        info!("MCP: Fetching casts mentioning FID: {}", fid);
+
+        // Use the data context to fetch mentions
+        match self.data_context.get_casts_by_mention(fid, limit).await {
+            Ok(messages) => {
+                // Format the response with special metadata for mentions
+                let formatted = self.format_casts_response(messages, None);
+
+                if formatted.starts_with("No casts found") {
+                    return format!("No casts found mentioning FID {}", fid);
+                }
+
+                formatted
+            },
+            Err(e) => format!("Error fetching cast mentions: {}", e),
+        }
+    }
+
+    /// Get replies to a cast
+    pub async fn do_get_casts_by_parent(
+        &self,
+        parent_fid: Fid,
+        parent_hash_hex: &str,
+        limit: usize,
+    ) -> String {
+        info!(
+            "MCP: Fetching replies to cast with FID: {} and hash: {}",
+            parent_fid, parent_hash_hex
+        );
+
+        // Convert hex hash to bytes
+        let parent_hash_bytes = match hex::decode(parent_hash_hex.trim_start_matches("0x")) {
+            Ok(bytes) => bytes,
+            Err(_) => return format!("Invalid hash format: {}", parent_hash_hex),
+        };
+
+        // Use the data context to fetch replies
+        match self.data_context.get_casts_by_parent(parent_fid, &parent_hash_bytes, limit).await {
+            Ok(messages) => {
+                // Format the response with special metadata for replies
+                let result = if messages.is_empty() {
+                    serde_json::json!({
+                        "parent": {
+                            "fid": parent_fid.value(),
+                            "hash": parent_hash_hex
+                        },
+                        "count": 0,
+                        "replies": []
+                    })
+                } else {
+                    // Process messages into cast objects
+                    let replies: Vec<serde_json::Value> = messages
+                        .iter()
+                        .filter_map(|message| {
+                            if let Ok(data) = prost::Message::decode(&*message.payload) {
+                                let msg_data: crate::proto::MessageData = data;
+                                if let Some(cast_obj) =
+                                    self.process_cast_message(message, &msg_data)
+                                {
+                                    return Some(serde_json::Value::Object(cast_obj));
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+
+                    serde_json::json!({
+                        "parent": {
+                            "fid": parent_fid.value(),
+                            "hash": parent_hash_hex
+                        },
+                        "count": replies.len(),
+                        "replies": replies
+                    })
+                };
+
+                // Convert to JSON string
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    format!(
+                        "Error formatting replies for parent cast with FID {} and hash {}",
+                        parent_fid, parent_hash_hex
+                    )
+                })
+            },
+            Err(e) => format!("Error fetching cast replies: {}", e),
+        }
+    }
+
+    /// Get replies to a URL
+    pub async fn do_get_casts_by_parent_url(&self, parent_url: &str, limit: usize) -> String {
+        info!("MCP: Fetching replies to URL: {}", parent_url);
+
+        // Use the data context to fetch replies
+        match self.data_context.get_casts_by_parent_url(parent_url, limit).await {
+            Ok(messages) => {
+                // Format the response with special metadata for URL replies
+                let result = if messages.is_empty() {
+                    serde_json::json!({
+                        "parent_url": parent_url,
+                        "count": 0,
+                        "replies": []
+                    })
+                } else {
+                    // Process messages into cast objects
+                    let replies: Vec<serde_json::Value> = messages
+                        .iter()
+                        .filter_map(|message| {
+                            if let Ok(data) = prost::Message::decode(&*message.payload) {
+                                let msg_data: crate::proto::MessageData = data;
+                                if let Some(cast_obj) =
+                                    self.process_cast_message(message, &msg_data)
+                                {
+                                    return Some(serde_json::Value::Object(cast_obj));
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+
+                    serde_json::json!({
+                        "parent_url": parent_url,
+                        "count": replies.len(),
+                        "replies": replies
+                    })
+                };
+
+                // Convert to JSON string
+                serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| format!("Error formatting replies for URL: {}", parent_url))
+            },
+            Err(e) => format!("Error fetching URL replies: {}", e),
+        }
+    }
+
+    /// Get all casts by FID with timestamp filtering
+    pub async fn do_get_all_casts_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> String {
+        info!("MCP: Fetching all casts for FID: {} with time filtering", fid);
+
+        // Use the data context to fetch casts with time filtering
+        match self.data_context.get_all_casts_by_fid(fid, limit, start_time, end_time).await {
+            Ok(messages) => {
+                // Format the basic response
+                let base_response = self.format_casts_response(messages, Some(fid));
+
+                // If there are no casts, return a time-specific message
+                if base_response.starts_with("No casts found") {
+                    let time_range = match (start_time, end_time) {
+                        (Some(start), Some(end)) => {
+                            format!(" between timestamps {} and {}", start, end)
+                        },
+                        (Some(start), None) => format!(" after timestamp {}", start),
+                        (None, Some(end)) => format!(" before timestamp {}", end),
+                        (None, None) => "".to_string(),
+                    };
+
+                    return format!("No casts found for FID {}{}", fid, time_range);
+                }
+
+                base_response
+            },
+            Err(e) => format!("Error fetching casts with time filtering: {}", e),
+        }
+    }
 }
 
 // Non-generic wrapper for WaypointMcpService to use with RMCP macros
@@ -498,6 +909,66 @@ impl WaypointMcpTools {
         let result = self.service.do_get_verifications_by_fid(fid, limit).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
+
+    #[tool(description = "Get a specific cast by FID and hash")]
+    async fn get_cast(
+        &self,
+        #[tool(aggr)] GetCastRequest { fid, hash }: GetCastRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_cast(fid, &hash).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get casts by a specific Farcaster user")]
+    async fn get_casts_by_fid(
+        &self,
+        #[tool(aggr)] GetCastsRequest { fid, limit }: GetCastsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_casts_by_fid(fid, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get casts that mention a specific Farcaster user")]
+    async fn get_casts_by_mention(
+        &self,
+        #[tool(aggr)] GetCastMentionsRequest { fid, limit }: GetCastMentionsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_casts_by_mention(fid, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get cast replies to a specific parent cast")]
+    async fn get_casts_by_parent(
+        &self,
+        #[tool(aggr)]
+        GetCastRepliesRequest { parent_fid, parent_hash, limit }: GetCastRepliesRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let parent_fid = Fid::from(parent_fid);
+        let result = self.service.do_get_casts_by_parent(parent_fid, &parent_hash, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get cast replies to a specific URL")]
+    async fn get_casts_by_parent_url(
+        &self,
+        #[tool(aggr)] GetCastRepliesByUrlRequest { parent_url, limit }: GetCastRepliesByUrlRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let result = self.service.do_get_casts_by_parent_url(&parent_url, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get all casts from a user with optional timestamp filtering")]
+    async fn get_all_casts_by_fid(
+        &self,
+        #[tool(aggr)] GetAllCastsWithTimeRequest { fid, limit, start_time, end_time }: GetAllCastsWithTimeRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_all_casts_by_fid(fid, limit, start_time, end_time).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
 }
 
 const_string!(WaypointPrompt = "waypoint_prompt");
@@ -513,7 +984,7 @@ impl ServerHandler for WaypointMcpTools {
                 .enable_tools()
                 .build(),
             server_info: Implementation::from_build_env(),
-            instructions: Some("Waypoint MCP service with tools to query Farcaster data. Use the 'get_user_by_fid' tool to fetch user data, 'get_verifications' for verified addresses, and 'get_casts_by_user' for casts.".to_string()),
+            instructions: Some("Waypoint MCP service with tools to query Farcaster data. Use the 'get_user_by_fid' tool to fetch user data, 'get_verifications_by_fid' for verified addresses, 'get_casts_by_fid' for user casts, 'get_cast' for specific casts, 'get_casts_by_mention' for mentions, 'get_casts_by_parent' for replies, and 'get_all_casts_by_fid' for timestamp-filtered casts.".to_string()),
         }
     }
 

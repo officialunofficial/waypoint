@@ -157,10 +157,134 @@ Retrieve casts (posts) from a specific user.
 {
   "method": "callTool",
   "params": {
-    "name": "get_casts_by_user",
+    "name": "get_casts_by_fid",
     "input": {
       "fid": 12345,
       "limit": 10
+    }
+  }
+}
+```
+
+The response includes an array of casts with detailed information:
+
+```json
+{
+  "fid": 12345,
+  "count": 2,
+  "casts": [
+    {
+      "fid": 12345,
+      "hash": "0x1a2b3c4d5e6f...",
+      "timestamp": 1672531200,
+      "text": "This is a sample cast with #hashtags and @mentions",
+      "mentions": [456, 789],
+      "mentions_positions": [32, 42],
+      "embeds": [
+        {
+          "type": "url",
+          "url": "https://example.com/article"
+        }
+      ]
+    },
+    {
+      "fid": 12345,
+      "hash": "0xabcdef1234...",
+      "timestamp": 1672444800,
+      "text": "This is a reply to another cast",
+      "parent": {
+        "type": "cast",
+        "fid": 789,
+        "hash": "0x9876543210..."
+      }
+    }
+  ]
+}
+```
+
+#### Get Specific Cast
+
+Retrieve a specific cast by its author FID and hash.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_cast",
+    "input": {
+      "fid": 12345,
+      "hash": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12"
+    }
+  }
+}
+```
+
+#### Get Cast Mentions
+
+Retrieve casts that mention a specific user.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_casts_by_mention",
+    "input": {
+      "fid": 12345,
+      "limit": 10
+    }
+  }
+}
+```
+
+#### Get Cast Replies
+
+Retrieve replies to a specific cast.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_casts_by_parent",
+    "input": {
+      "parent_fid": 12345,
+      "parent_hash": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+      "limit": 10
+    }
+  }
+}
+```
+
+#### Get URL Replies
+
+Retrieve casts that reply to a specific URL.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_casts_by_parent_url",
+    "input": {
+      "parent_url": "https://example.com/article",
+      "limit": 10
+    }
+  }
+}
+```
+
+#### Get All Casts with Time Filtering
+
+Retrieve casts from a user with optional timestamp filtering.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_all_casts_by_fid",
+    "input": {
+      "fid": 12345,
+      "limit": 20,
+      "start_time": 1672531200,
+      "end_time": 1682531200
     }
   }
 }
@@ -215,12 +339,57 @@ The `get_verifications_by_fid` tool fetches verification messages from the Hub f
 User: "Show me the recent posts from user with FID 12345"
 
 AI: "Let me fetch the most recent casts from this Farcaster user."
-    [AI uses the get_casts_by_user tool with the FID]
+    [AI uses the get_casts_by_fid tool with the FID]
     
     "Here are the most recent posts from user 12345:
-     - 'Just discovered this amazing new DeFi protocol...'
-     - 'Anyone going to the ETH conference next month?'
-     - 'My thoughts on the latest crypto market trends...'
+     - 'Just discovered this amazing new DeFi protocol...' (posted Jan 1, 2023)
+     - 'Anyone going to the ETH conference next month?' (posted Dec 30, 2022)
+     - 'My thoughts on the latest crypto market trends...' (posted Dec 25, 2022)
+    "
+```
+
+### Finding Casts That Mention a User
+
+```
+User: "Who has mentioned FID 12345 recently?"
+
+AI: "Let me search for recent mentions of this Farcaster user."
+    [AI uses the get_casts_by_mention tool with the FID]
+    
+    "Here are recent mentions of user 12345:
+     - FID 789: 'Enjoying the conversation with @12345 about governance models' (posted Jan 5, 2023)
+     - FID 456: 'Great thread by @12345 on token economics' (posted Jan 3, 2023)
+     - FID 123: 'Agree with @12345's take on this topic' (posted Dec 28, 2022)
+    "
+```
+
+### Finding Replies to a Specific Cast
+
+```
+User: "Show me all the replies to the cast with FID 12345 and hash 0x1a2b3c4d..."
+
+AI: "Let me fetch the replies to this specific cast."
+    [AI uses the get_casts_by_parent tool with the parent FID and hash]
+    
+    "Here are the replies to that cast:
+     - FID 456: 'This is a really insightful point!'
+     - FID 789: 'I had a similar experience with this'
+     - FID 101: 'Could you elaborate more on the second part?'
+    "
+```
+
+### Finding Casts During a Specific Time Period
+
+```
+User: "What did FID 12345 post during the first week of January 2023?"
+
+AI: "Let me search for posts during that specific time period."
+    [AI uses the get_all_casts_by_fid tool with start_time and end_time parameters]
+    
+    "During the first week of January 2023, user 12345 posted:
+     - Jan 7: 'Wrapping up a productive week of building'
+     - Jan 5: 'Just pushed a major update to my project'
+     - Jan 3: 'Happy new year everyone! Looking forward to building in 2023'
     "
 ```
 

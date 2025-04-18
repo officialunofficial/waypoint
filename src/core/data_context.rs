@@ -70,6 +70,33 @@ pub trait HubClient: Send + Sync {
 
     /// Get casts by FID
     async fn get_casts_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>>;
+
+    /// Get a specific cast by ID
+    async fn get_cast(&self, fid: Fid, hash: &[u8]) -> Result<Option<Message>>;
+
+    /// Get casts mentioning an FID
+    async fn get_casts_by_mention(&self, fid: Fid, limit: usize) -> Result<Vec<Message>>;
+
+    /// Get casts by parent
+    async fn get_casts_by_parent(
+        &self,
+        parent_fid: Fid,
+        parent_hash: &[u8],
+        limit: usize,
+    ) -> Result<Vec<Message>>;
+
+    /// Get casts by parent URL
+    async fn get_casts_by_parent_url(&self, parent_url: &str, limit: usize)
+    -> Result<Vec<Message>>;
+
+    /// Get all casts by FID with timestamp filtering
+    async fn get_all_casts_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>>;
 }
 
 /// Generic data access context
@@ -142,6 +169,66 @@ where
         }
 
         Err(DataAccessError::Other("No data source available".to_string()))
+    }
+
+    /// Get a specific cast by ID
+    pub async fn get_cast(&self, fid: Fid, hash: &[u8]) -> Result<Option<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_cast(fid, hash).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get casts mentioning an FID
+    pub async fn get_casts_by_mention(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_casts_by_mention(fid, limit).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get casts by parent
+    pub async fn get_casts_by_parent(
+        &self,
+        parent_fid: Fid,
+        parent_hash: &[u8],
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_casts_by_parent(parent_fid, parent_hash, limit).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get casts by parent URL
+    pub async fn get_casts_by_parent_url(
+        &self,
+        parent_url: &str,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_casts_by_parent_url(parent_url, limit).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get all casts by FID with timestamp filtering
+    pub async fn get_all_casts_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_all_casts_by_fid(fid, limit, start_time, end_time).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
     }
 
     /// Generic database operation

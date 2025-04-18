@@ -269,4 +269,239 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
+
+    /// Get a specific cast by ID
+    async fn get_cast(&self, fid: Fid, hash: &[u8]) -> Result<Option<Message>> {
+        info!("Fetching specific cast with FID: {} and hash: {}", fid, hex::encode(hash));
+        let mut hub = self.hub.lock().await;
+
+        // Ensure hub is connected
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        // Create CastId object
+        let cast_id = crate::proto::CastId { fid: fid.value(), hash: hash.to_vec() };
+
+        // Make the RPC call
+        let result = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_cast(tonic::Request::new(cast_id))
+            .await;
+
+        match result {
+            Ok(response) => {
+                let proto_msg = response.into_inner();
+                Ok(Some(Message::new(
+                    Self::format_hex(&proto_msg.hash),
+                    MessageType::Cast,
+                    proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
+                )))
+            },
+            Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
+            Err(e) => Err(DataAccessError::HubClient(e.to_string())),
+        }
+    }
+
+    /// Get casts mentioning an FID
+    async fn get_casts_by_mention(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
+        info!("Fetching casts mentioning FID: {}", fid);
+        let mut hub = self.hub.lock().await;
+
+        // Ensure hub is connected
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        // Create FidRequest which is what the API expects
+        let request = FidRequest {
+            fid: fid.value(),
+            page_size: Some(limit as u32),
+            page_token: None,
+            reverse: Some(true), // Get newest mentions first
+        };
+
+        // Make the RPC call
+        let response = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_casts_by_mention(tonic::Request::new(request))
+            .await
+            .map_err(|e| DataAccessError::HubClient(e.to_string()))?
+            .into_inner();
+
+        // Convert the response to domain messages
+        let messages = response
+            .messages
+            .into_iter()
+            .map(|proto_msg| {
+                Message::new(
+                    Self::format_hex(&proto_msg.hash),
+                    MessageType::Cast,
+                    proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        Ok(messages)
+    }
+
+    /// Get casts by parent
+    async fn get_casts_by_parent(
+        &self,
+        parent_fid: Fid,
+        parent_hash: &[u8],
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        info!(
+            "Fetching casts with parent FID: {} and hash: {}",
+            parent_fid,
+            hex::encode(parent_hash)
+        );
+        let mut hub = self.hub.lock().await;
+
+        // Ensure hub is connected
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        // Create parent CastId
+        let parent_cast_id =
+            crate::proto::CastId { fid: parent_fid.value(), hash: parent_hash.to_vec() };
+
+        // Create CastsByParentRequest
+        let request = crate::proto::CastsByParentRequest {
+            parent: Some(crate::proto::casts_by_parent_request::Parent::ParentCastId(
+                parent_cast_id,
+            )),
+            page_size: Some(limit as u32),
+            page_token: None,
+            reverse: Some(true), // Get newest replies first
+        };
+
+        // Make the RPC call
+        let response = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_casts_by_parent(tonic::Request::new(request))
+            .await
+            .map_err(|e| DataAccessError::HubClient(e.to_string()))?
+            .into_inner();
+
+        // Convert the response to domain messages
+        let messages = response
+            .messages
+            .into_iter()
+            .map(|proto_msg| {
+                Message::new(
+                    Self::format_hex(&proto_msg.hash),
+                    MessageType::Cast,
+                    proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        Ok(messages)
+    }
+
+    /// Get casts by parent URL
+    async fn get_casts_by_parent_url(
+        &self,
+        parent_url: &str,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        info!("Fetching casts with parent URL: {}", parent_url);
+        let mut hub = self.hub.lock().await;
+
+        // Ensure hub is connected
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        // Create CastsByParentRequest with URL
+        let request = crate::proto::CastsByParentRequest {
+            parent: Some(crate::proto::casts_by_parent_request::Parent::ParentUrl(
+                parent_url.to_string(),
+            )),
+            page_size: Some(limit as u32),
+            page_token: None,
+            reverse: Some(true), // Get newest replies first
+        };
+
+        // Make the RPC call
+        let response = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_casts_by_parent(tonic::Request::new(request))
+            .await
+            .map_err(|e| DataAccessError::HubClient(e.to_string()))?
+            .into_inner();
+
+        // Convert the response to domain messages
+        let messages = response
+            .messages
+            .into_iter()
+            .map(|proto_msg| {
+                Message::new(
+                    Self::format_hex(&proto_msg.hash),
+                    MessageType::Cast,
+                    proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        Ok(messages)
+    }
+
+    /// Get all casts by FID with timestamp filtering
+    async fn get_all_casts_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>> {
+        info!("Fetching all casts for FID: {} with timestamp filtering", fid);
+        let mut hub = self.hub.lock().await;
+
+        // Ensure hub is connected
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        // Create FidTimestampRequest
+        let request = crate::proto::FidTimestampRequest {
+            fid: fid.value(),
+            page_size: Some(limit as u32),
+            page_token: None,
+            reverse: Some(true),         // Get newest casts first
+            start_timestamp: start_time, // Optional start time
+            stop_timestamp: end_time,    // Optional end time
+        };
+
+        // Make the RPC call
+        let response = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_all_cast_messages_by_fid(tonic::Request::new(request))
+            .await
+            .map_err(|e| DataAccessError::HubClient(e.to_string()))?
+            .into_inner();
+
+        // Convert the response to domain messages
+        let messages = response
+            .messages
+            .into_iter()
+            .map(|proto_msg| {
+                Message::new(
+                    Self::format_hex(&proto_msg.hash),
+                    MessageType::Cast,
+                    proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        Ok(messages)
+    }
 }
