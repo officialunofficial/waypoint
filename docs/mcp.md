@@ -102,13 +102,13 @@ The implementation fetches up to 20 UserData messages for the specified FID and 
 
 #### Get User Verifications
 
-Retrieve verified wallet addresses for a user.
+Retrieve verified wallet addresses for a user. This tool fetches verification messages from the Hub and provides detailed information about each verified address.
 
 ```json
 {
   "method": "callTool",
   "params": {
-    "name": "get_verifications",
+    "name": "get_verifications_by_fid",
     "input": {
       "fid": 12345,
       "limit": 10
@@ -116,6 +116,38 @@ Retrieve verified wallet addresses for a user.
   }
 }
 ```
+
+The response includes detailed information about each verification:
+
+```json
+{
+  "fid": 12345,
+  "count": 2,
+  "verifications": [
+    {
+      "fid": 12345,
+      "address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+      "protocol": "ethereum",
+      "type": "eoa",
+      "timestamp": 1672531200
+    },
+    {
+      "fid": 12345,
+      "address": "0xabcdef1234567890abcdef1234567890abcdef12",
+      "protocol": "ethereum",
+      "type": "contract",
+      "chain_id": 1,
+      "timestamp": 1672617600
+    }
+  ]
+}
+```
+
+The response includes:
+- Protocol type (ethereum, solana)
+- Verification type (eoa for personal wallets, contract for smart contracts)
+- Chain ID (for contract verifications)
+- Timestamp when the verification was created
 
 #### Get Casts by User
 
@@ -166,13 +198,16 @@ The `get_user_by_fid` tool fetches all UserData messages for the specified FID a
 User: "What wallets does the user with FID 12345 have verified?"
 
 AI: "Let me check which wallet addresses this user has verified on Farcaster."
-    [AI uses the get_verifications tool with the FID]
+    [AI uses the get_verifications_by_fid tool with the FID]
     
     "User 12345 has verified the following wallet addresses:
-     - Ethereum: 0x1a2b3c4d5e6f...
-     - Solana: AbCdEfGhIjK...
+     - Ethereum EOA wallet: 0x1a2b3c4d5e6f... (verified on Jan 1, 2023)
+     - Ethereum contract wallet: 0xabcdef1234... on chain ID 1 (verified on Jan 2, 2023)
+     - Solana wallet: AbCdEfGhIjK... (verified on Jan 3, 2023)
     "
 ```
+
+The `get_verifications_by_fid` tool fetches verification messages from the Hub for the specified FID and processes them to extract the address, protocol type, verification type, and other metadata. This gives AI assistants complete information about the user's verified addresses, letting them provide rich context about the user's blockchain presence.
 
 ### Getting a User's Recent Casts
 

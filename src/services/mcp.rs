@@ -351,6 +351,112 @@ where
             Err(e) => format!("Error fetching user data: {}", e),
         }
     }
+
+    /// Get user verifications by FID
+    pub async fn do_get_verifications_by_fid(&self, fid: Fid, limit: usize) -> String {
+        info!("MCP: Fetching verifications for FID: {}", fid);
+
+        // Use the data context to fetch verifications
+        match self.data_context.get_verifications_by_fid(fid, limit).await {
+            Ok(messages) => {
+                if messages.is_empty() {
+                    return format!("No verifications found for FID {}", fid);
+                }
+
+                // Create a structured array of verification objects
+                let mut verifications = Vec::new();
+
+                // Process each verification message
+                for message in messages {
+                    if message.message_type != MessageType::Verification {
+                        continue;
+                    }
+
+                    // Try to decode the message payload as MessageData
+                    if let Ok(data) = prost::Message::decode(&*message.payload) {
+                        let msg_data: crate::proto::MessageData = data;
+
+                        // Extract verification data
+                        if let Some(crate::proto::message_data::Body::VerificationAddAddressBody(
+                            verification,
+                        )) = msg_data.body
+                        {
+                            // Create verification object
+                            let mut verif_obj = serde_json::Map::new();
+
+                            // Format the address as hex
+                            let address_hex = format!("0x{}", hex::encode(&verification.address));
+
+                            // Add base verification info
+                            verif_obj.insert(
+                                "fid".to_string(),
+                                serde_json::Value::Number(serde_json::Number::from(fid.value())),
+                            );
+                            verif_obj.insert(
+                                "address".to_string(),
+                                serde_json::Value::String(address_hex),
+                            );
+
+                            // Add protocol info
+                            let protocol = match verification.protocol {
+                                0 => "ethereum",
+                                1 => "solana",
+                                _ => "unknown",
+                            };
+                            verif_obj.insert(
+                                "protocol".to_string(),
+                                serde_json::Value::String(protocol.to_string()),
+                            );
+
+                            // Add verification type
+                            let verif_type = match verification.verification_type {
+                                0 => "eoa",      // Externally Owned Account
+                                1 => "contract", // Smart Contract
+                                _ => "unknown",
+                            };
+                            verif_obj.insert(
+                                "type".to_string(),
+                                serde_json::Value::String(verif_type.to_string()),
+                            );
+
+                            // Add chain id if present (for contract verifications)
+                            if verification.chain_id > 0 {
+                                verif_obj.insert(
+                                    "chain_id".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        verification.chain_id,
+                                    )),
+                                );
+                            }
+
+                            // Add timestamp
+                            verif_obj.insert(
+                                "timestamp".to_string(),
+                                serde_json::Value::Number(serde_json::Number::from(
+                                    msg_data.timestamp,
+                                )),
+                            );
+
+                            // Add to the array
+                            verifications.push(serde_json::Value::Object(verif_obj));
+                        }
+                    }
+                }
+
+                // Wrap in a result object with metadata
+                let result = serde_json::json!({
+                    "fid": fid.value(),
+                    "count": verifications.len(),
+                    "verifications": verifications
+                });
+
+                // Convert to JSON string
+                serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| format!("Error formatting verifications for FID {}", fid))
+            },
+            Err(e) => format!("Error fetching verifications: {}", e),
+        }
+    }
 }
 
 // Non-generic wrapper for WaypointMcpService to use with RMCP macros
@@ -380,6 +486,16 @@ impl WaypointMcpTools {
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let result = self.service.do_get_user_by_fid(fid).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get verified addresses for a Farcaster user")]
+    async fn get_verifications_by_fid(
+        &self,
+        #[tool(aggr)] GetVerificationsRequest { fid, limit }: GetVerificationsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_verifications_by_fid(fid, limit).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 }
