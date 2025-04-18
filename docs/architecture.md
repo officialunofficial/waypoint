@@ -130,6 +130,80 @@ The PostgreSQL database is the final destination for processed events:
 - Supports vector extensions for similarity search
 - Maintains indexes for efficient querying
 
+### 6. Data Access Layer
+
+The Data Access Layer uses the Data Context pattern for accessing external resources:
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#f5f5f5' }}}%%
+classDiagram
+    class DataContext~DB, HC~ {
+        +database: Option~DB~
+        +hub_client: Option~HC~
+        +get_user_data_by_fid(fid, limit) 
+        +get_user_data(fid, data_type)
+        +get_username_proofs_by_fid(fid)
+        +get_verifications_by_fid(fid, limit)
+    }
+    
+    class Database {
+        <<trait>>
+        +get_message(id, message_type)
+        +get_messages_by_fid(fid, message_type, limit, cursor)
+        +store_message(message)
+        +delete_message(id, message_type)
+    }
+    
+    class HubClient {
+        <<trait>>
+        +get_user_data_by_fid(fid, limit)
+        +get_user_data(fid, data_type)
+        +get_username_proofs_by_fid(fid)
+        +get_verifications_by_fid(fid, limit)
+    }
+    
+    class PostgresDatabaseClient {
+        +db: Arc~DbPool~
+        +table_for_message_type(message_type)
+    }
+    
+    class FarcasterHubClient {
+        +hub: Arc~Mutex~Hub~~
+        +format_hex(bytes)
+    }
+    
+    class DataContextBuilder~DB, HC~ {
+        +database: Option~DB~
+        +hub_client: Option~HC~
+        +new()
+        +with_database(database)
+        +with_hub_client(hub_client)
+        +build()
+    }
+    
+    Database <|.. PostgresDatabaseClient : implements
+    HubClient <|.. FarcasterHubClient : implements
+    DataContext ..> Database : uses
+    DataContext ..> HubClient : uses
+    DataContextBuilder ..> DataContext : builds
+</mermaid>
+
+- **Data Context Pattern**: Provides a unified interface for accessing multiple data sources
+  - Uses generic traits for Database and HubClient interfaces
+  - Prioritizes Hub data with database fallback
+  - Supports dependency injection through builder pattern
+  - Enables swappable implementations for testing
+
+- **Database Access**: Read-only access to PostgreSQL
+  - Implements the Database trait
+  - Provides SQL query generation for different message types
+  - Returns domain objects from database records
+
+- **Hub Access**: Direct access to Snapchain Hub API
+  - Implements the HubClient trait
+  - Converts gRPC responses to domain objects
+  - Handles connection management and error handling
+
 ## Backfill System Architecture
 
 ### FID-based Backfill

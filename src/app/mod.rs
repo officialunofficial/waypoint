@@ -8,7 +8,7 @@ pub use processor::{EventProcessor, ProcessorError, ProcessorRegistry, Result as
 pub use service::{Service, ServiceBuilder, ServiceContext, ServiceError, ServiceHandle};
 pub use state::{AppState, StateProvider};
 
-use crate::{config::Config, core::RepositoryError, health::HealthServer};
+use crate::{config::Config, core::data_context::DataAccessError, health::HealthServer};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{error, info};
@@ -28,8 +28,8 @@ pub enum AppError {
     #[error("Hub error: {0}")]
     Hub(String),
 
-    #[error("Repository error: {0}")]
-    Repository(#[from] RepositoryError),
+    #[error("Data access error: {0}")]
+    DataAccess(#[from] DataAccessError),
 
     #[error("Service error: {0}")]
     Service(#[from] ServiceError),
@@ -46,6 +46,7 @@ pub struct App {
     state: Arc<AppState>,
     services: Vec<Box<dyn Service>>,
     health_server: Option<HealthServer>,
+    config: Config,
 }
 
 impl App {
@@ -58,7 +59,7 @@ impl App {
         let state_provider = StateProvider::new(&config).await?;
         let state = state_provider.provide().await?;
 
-        Ok(Self { state, services: Vec::new(), health_server: None })
+        Ok(Self { state, services: Vec::new(), health_server: None, config })
     }
 
     /// Register a service with the application
@@ -71,6 +72,11 @@ impl App {
     pub fn with_health_server(&mut self, port: u16) -> &mut Self {
         self.health_server = Some(HealthServer::new(port));
         self
+    }
+
+    /// Get a reference to the application configuration
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// Start the application and run until shutdown is requested
@@ -97,7 +103,8 @@ impl App {
         let mut service_handles = Vec::new();
 
         for service in self.services {
-            let context = ServiceContext::new(self.state.clone());
+            // Create context with reference to config and cloned Arc for state
+            let context = ServiceContext::with_config(Arc::clone(&self.state), &self.config);
             let handle = service.start(context).await?;
             service_handles.push(handle);
         }
