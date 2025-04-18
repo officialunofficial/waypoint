@@ -57,7 +57,7 @@ The MCP service uses the Data Context pattern for efficient and flexible data ac
 - **Efficient Resource Management**: Shares database and Hub client connections between requests
 - **Type-Safe Interfaces**: Uses Rust's trait system for clean abstractions
 
-The Data Context pattern is detailed in the [Architecture Documentation](architecture.md#6-data-access-layer).
+The Data Context pattern is detailed in the [Architecture Documentation](architecture.md#data-architecture).
 
 ## Available Tools
 

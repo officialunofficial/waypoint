@@ -17,6 +17,11 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
   - Workers: `make backfill-worker`
   - High-performance Workers: `make backfill-worker-highperf` (100x faster)
 
+### MCP Service
+- **Model Context Protocol**: Provides AI assistants with access to Farcaster data
+- **Available Tools**: Fetch user profiles, verifications, casts, and replies
+- **Documentation**: See [mcp.md](mcp.md) for details
+
 ## Docker Development
 
 ```bash
@@ -121,6 +126,12 @@ WAYPOINT_DATABASE__MAX_CONNECTIONS=20
 WAYPOINT_DATABASE__TIMEOUT_SECONDS=60
 WAYPOINT_REDIS__URL=redis://redis:6379
 WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383
+
+# MCP service configuration
+WAYPOINT_MCP__ENABLED=true
+WAYPOINT_MCP__BIND_ADDRESS=127.0.0.1  # Use 0.0.0.0 to allow external connections
+WAYPOINT_MCP__PORT=8000
+
 RUST_LOG=info
 
 # Backfill performance tuning
@@ -170,9 +181,11 @@ The backfill system has been optimized for high throughput with two complementar
 - `src/main.rs`: Main application entry point with unified CLI commands
 - `src/backfill/reconciler.rs`: FID-based reconciliation logic
 - `src/backfill/worker.rs`: FID-based worker implementation
+- `src/services/mcp.rs`: MCP service implementation for AI tools
 - `src/metrics.rs`: Metrics collection and monitoring
 - `Dockerfile`: Container build instructions
 - `docker-compose.yml`: Local development setup with PostgreSQL 17, pgvector, Graphite and Grafana
 - `METRICS.md`: Detailed metrics system documentation
+- `mcp.md`: MCP service documentation
 - `grafana/`: Grafana dashboards and configuration
 - `ARCHITECTURE.md`: Detailed system architecture documentation

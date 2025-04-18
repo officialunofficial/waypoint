@@ -20,6 +20,11 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
   - Queue: `make backfill-queue`
   - Workers: `make backfill-worker`
 
+### MCP Service
+- **Model Context Protocol**: Provides AI assistants with access to Farcaster data
+- **Available Tools**: Fetch user profiles, verifications, casts, and replies
+- **Documentation**: See [mcp.md](docs/mcp.md) for details
+
 ## Getting Started
 
 For detailed development instructions, see the [Development Guide](docs/development.md).
@@ -86,6 +91,11 @@ WAYPOINT_REDIS__URL=redis://localhost:6379
 
 # Farcaster Hub configuration
 WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383
+
+# MCP service configuration
+WAYPOINT_MCP__ENABLED=true
+WAYPOINT_MCP__BIND_ADDRESS=127.0.0.1  # Use 0.0.0.0 to allow external connections
+WAYPOINT_MCP__PORT=8000
 
 # Server configuration
 HOST=0.0.0.0
