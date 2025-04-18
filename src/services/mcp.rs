@@ -511,7 +511,7 @@ where
     /// Process a cast message to extract relevant data
     fn process_cast_message(
         &self,
-        message: &Message,
+        message: &FarcasterMessage,
         msg_data: &crate::proto::MessageData,
     ) -> Option<serde_json::Map<String, serde_json::Value>> {
         if message.message_type != MessageType::Cast {
@@ -608,7 +608,7 @@ where
     }
 
     /// Format an array of cast messages into a JSON response
-    fn format_casts_response(&self, messages: Vec<Message>, fid: Option<Fid>) -> String {
+    fn format_casts_response(&self, messages: Vec<FarcasterMessage>, fid: Option<Fid>) -> String {
         if messages.is_empty() {
             return match fid {
                 Some(fid) => format!("No casts found for FID {}", fid),
