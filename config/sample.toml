@@ -65,3 +65,20 @@ addr = "127.0.0.1:8125"
 use_tags = false
 # Enable metrics collection
 enabled = false
+
+# Model Context Protocol Integration
+[mcp]
+# Enable MCP integration
+enabled = true
+# Transport type: "process", "http", or "tcp"
+transport = "http"
+# Command to execute for the MCP server (only used with process transport)
+server_command = "npx"
+# Arguments for the MCP server command (only used with process transport)
+server_args = ["-y", "@modelcontextprotocol/server-everything"]
+# HTTP port for MCP server (only used with http transport)
+http_port = 3000
+# TCP port for MCP server (only used with tcp transport)
+tcp_port = 3001
+# Bind address for TCP and HTTP servers
+bind_address = "0.0.0.0"

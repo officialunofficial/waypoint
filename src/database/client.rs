@@ -32,6 +32,23 @@ impl Database {
         Ok(db)
     }
 
+    /// Creates an empty database instance for testing or mocks
+    /// This should not be used in production
+    pub fn empty() -> Self {
+        // Create a pool configuration that should never be used
+        let pool = PgPoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .test_before_acquire(true)
+            .connect_lazy_with(
+                "postgresql://postgres:postgres@localhost/postgres"
+                    .parse()
+                    .expect("Failed to parse dummy database URL"),
+            );
+
+        Self { pool }
+    }
+
     // Creates a new Database instance using environment variables
     pub async fn from_env() -> Result<Self, Error> {
         let config = Config::load().map_err(|e| Error::ConnectionError(e.to_string()))?;

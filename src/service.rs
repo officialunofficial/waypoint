@@ -4,7 +4,10 @@ use tracing::info;
 use waypoint::{
     app::App,
     config::Config,
-    services::streaming::{ProcessorType, StreamingService},
+    services::{
+        mcp::McpService,
+        streaming::{ProcessorType, StreamingService},
+    },
 };
 
 /// Run the main streaming service
@@ -40,6 +43,19 @@ pub async fn run_service(config: &Config) -> Result<()> {
     });
 
     app.register_service(streaming_service);
+
+    // Register MCP service if enabled
+    if config.mcp.enabled {
+        let mcp_service =
+            McpService::new().configure(config.mcp.bind_address.clone(), config.mcp.port);
+        app.register_service(mcp_service);
+        info!(
+            "MCP service registered with bind address {}:{}",
+            config.mcp.bind_address, config.mcp.port
+        );
+    } else {
+        info!("MCP service disabled in configuration");
+    }
 
     // Run the application
     info!("Starting Waypoint service");

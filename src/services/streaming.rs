@@ -573,7 +573,7 @@ impl Service for StreamingService {
         "streaming"
     }
 
-    async fn start(&self, context: ServiceContext) -> Result<ServiceHandle> {
+    async fn start<'a>(&'a self, context: ServiceContext<'a>) -> Result<ServiceHandle> {
         // Import necessary modules
         use crate::core::MessageType;
         use crate::processor::{AppResources, database::DatabaseProcessor, print::PrintProcessor};
@@ -715,26 +715,14 @@ impl Service for StreamingService {
             "default".to_string(),
         );
 
-        // Apply options
-        let consumer = match self.options.batch_size {
-            Some(size) => consumer.with_batch_size(size),
-            None => consumer,
-        };
-
-        let consumer = match self.options.concurrency {
-            Some(concurrency) => consumer.with_concurrency(concurrency),
-            None => consumer,
-        };
-
-        let consumer = match self.options.timeout {
-            Some(timeout) => consumer.with_timeout(timeout),
-            None => consumer,
-        };
-
-        let consumer = match self.options.retention {
-            Some(retention) => consumer.with_retention(retention),
-            None => consumer,
-        };
+        // Apply options from config
+        let consumer =
+            consumer.with_batch_size(self.options.batch_size.unwrap_or(DEFAULT_BATCH_SIZE));
+        let consumer =
+            consumer.with_concurrency(self.options.concurrency.unwrap_or(DEFAULT_CONCURRENCY));
+        let consumer = consumer.with_timeout(self.options.timeout.unwrap_or(DEFAULT_TIMEOUT));
+        let consumer =
+            consumer.with_retention(self.options.retention.unwrap_or(DEFAULT_EVENT_RETENTION));
 
         // Start consumer and subscriber
         let consumer_handle = consumer.start().await;

@@ -155,6 +155,38 @@ impl Default for StatsdConfig {
 }
 
 /// Application configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    #[serde(default = "default_mcp_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_mcp_bind_address")]
+    pub bind_address: String,
+    #[serde(default = "default_mcp_port")]
+    pub port: u16,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_mcp_enabled(),
+            bind_address: default_mcp_bind_address(),
+            port: default_mcp_port(),
+        }
+    }
+}
+
+fn default_mcp_enabled() -> bool {
+    true
+}
+
+fn default_mcp_bind_address() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_mcp_port() -> u16 {
+    8000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub database: DatabaseConfig,
@@ -163,6 +195,7 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub backfill: BackfillConfig,
     pub statsd: StatsdConfig,
+    pub mcp: McpConfig,
     pub clear_db: bool,
 }
 

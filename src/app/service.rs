@@ -1,6 +1,10 @@
 //! Service abstractions and lifecycle management
-use crate::app::{AppState, Result};
+use crate::{
+    app::{AppState, Result},
+    config::Config,
+};
 use async_trait::async_trait;
+use once_cell;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -18,16 +22,33 @@ pub enum ServiceError {
 }
 
 /// Service context provided to each service
-pub struct ServiceContext {
+pub struct ServiceContext<'a> {
     /// Application state
     pub state: Arc<AppState>,
+    /// Application configuration (reference)
+    pub config: &'a Config,
+    // DataContext replaced the repository factory pattern
 }
 
-impl ServiceContext {
-    /// Create a new service context
+impl<'a> ServiceContext<'a> {
+    /// Create a new service context with default config
     pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
+        // This is a workaround that creates a static Config - rarely used in practice
+        // as most code will use with_config instead
+        static DEFAULT_CONFIG: once_cell::sync::Lazy<Config> =
+            once_cell::sync::Lazy::new(Config::default);
+
+        Self { state, config: &DEFAULT_CONFIG }
     }
+
+    /// Create a new service context with configuration reference
+    pub fn with_config(state: Arc<AppState>, config: &'a Config) -> Self {
+        // DataContext has replaced the repository factory
+
+        Self { state, config }
+    }
+
+    // Repository factory was replaced with DataContext
 }
 
 /// Service handle for controlling a running service
@@ -68,7 +89,7 @@ pub trait Service: Send + Sync {
     fn name(&self) -> &str;
 
     /// Start the service
-    async fn start(&self, context: ServiceContext) -> Result<ServiceHandle>;
+    async fn start<'a>(&'a self, context: ServiceContext<'a>) -> Result<ServiceHandle>;
 }
 
 /// Builder for creating services

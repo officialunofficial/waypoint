@@ -41,3 +41,9 @@ prefix = "way_read"
 addr = "127.0.0.1:8125"
 use_tags = false
 enabled = false
+
+# MCP Service Configuration
+[mcp]
+enabled = true
+bind_address = "0.0.0.0"
+port = 8000
