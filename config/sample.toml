@@ -36,6 +36,15 @@ retry_timeout_ms = 60000
 # Connection timeout in milliseconds
 conn_timeout_ms = 30000
 
+# MCP Service Configuration
+[mcp]
+# Enable the MCP service
+enabled = true
+# Network address to bind the MCP service to (use 0.0.0.0 to allow external connections)
+bind_address = "127.0.0.1"
+# Port to listen on for MCP connections
+port = 8000
+
 # OpenTelemetry Configuration
 [otel]
 # Enable OpenTelemetry tracing

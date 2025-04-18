@@ -1,8 +1,11 @@
 # Waypoint Architecture
 
-This document provides an overview of Waypoint's architecture, which consists of two main components:
+This document provides an overview of Waypoint's architecture, which consists of three main components:
 1. A streaming service for processing real-time Snapchain events through Redis consumer groups
 2. A backfill system for historical data processing using a FID-based approach
+3. A Model Context Protocol (MCP) service for AI assistants to access Farcaster data
+
+For details on the data architecture and DataContext pattern, see [data-architecture.md](data-architecture.md).
 
 ## Streaming Service Architecture
 
@@ -165,10 +168,55 @@ sequenceDiagram
     Worker->>Queue: Mark job as completed
 ```
 
+## MCP Service Architecture
+
+The MCP (Model Context Protocol) service enables AI assistants to access Farcaster data through a standardized protocol.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#f5f5f5' }}}%%
+sequenceDiagram
+    participant AI as AI Assistant
+    participant MCP as MCP Service
+    participant DC as DataContext
+    participant Hub as Farcaster Hub
+    participant DB as PostgreSQL Database
+
+    AI->>MCP: Connect to MCP service
+    MCP->>AI: Provide available tools
+
+    rect rgb(191, 223, 255)
+    note right of AI: Tool Usage Flow
+    
+    AI->>MCP: Call tool (e.g., get_user_by_fid)
+    
+    MCP->>DC: Request data via DataContext
+    
+    alt Data in Database
+        DC->>DB: Query stored data
+        DB->>DC: Return stored data
+    else Data from Hub
+        DC->>Hub: Request from Farcaster Hub
+        Hub->>DC: Return data from Hub
+    end
+    
+    DC->>MCP: Process and format data
+    MCP->>AI: Return structured JSON response
+    
+    end
+```
+
+### MCP Service Components
+
+- **MCP Service Handler**: Implements the Model Context Protocol server
+- **Tool Implementations**: Methods for accessing different types of Farcaster data
+- **DataContext Integration**: Uses the DataContext pattern to access data
+- **Response Formatting**: Converts Farcaster data into structured JSON responses
+- **Protocol Support**: Implements SSE transport for server-sent events
+
 ## Key Features
 
 - **FID-based Backfill**: Optimized for targeted user data processing
-
+- **MCP Integration**: Provides AI assistants with structured access to Farcaster data
 - **Memory efficient**: Optimized Snapchain event processing
 - **Efficient Buffer Management**: Carefully managed memory allocations
 - **Batch Processing**: Processes events in batches for efficiency

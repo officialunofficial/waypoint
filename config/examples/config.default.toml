@@ -22,6 +22,12 @@ retry_jitter_factor = 0.25
 retry_timeout_ms = 60000
 conn_timeout_ms = 30000
 
+# MCP Service Configuration
+[mcp]
+enabled = true
+bind_address = "127.0.0.1"
+port = 8000
+
 # OpenTelemetry Configuration
 [otel]
 enabled = false
