@@ -47,6 +47,7 @@ services:
     command: ./waypoint start
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
+      - "${WAYPOINT_MCP__PORT:-8000}:${WAYPOINT_MCP__PORT:-8000}"
     environment:
       # Database
       WAYPOINT_DATABASE__URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-waypoint}
@@ -80,6 +81,11 @@ services:
       WAYPOINT_STATSD__ADDR: ${WAYPOINT_STATSD__ADDR:-statsd:8125}
       WAYPOINT_STATSD__USE_TAGS: ${WAYPOINT_STATSD__USE_TAGS:-false}
       WAYPOINT_STATSD__ENABLED: ${WAYPOINT_STATSD__ENABLED:-false}
+      
+      # MCP settings
+      WAYPOINT_MCP__ENABLED: ${WAYPOINT_MCP__ENABLED:-true}
+      WAYPOINT_MCP__BIND_ADDRESS: ${WAYPOINT_MCP__BIND_ADDRESS:-0.0.0.0}
+      WAYPOINT_MCP__PORT: ${WAYPOINT_MCP__PORT:-8000}
       
       # Backfill settings
       BACKFILL_CONCURRENCY: ${BACKFILL_CONCURRENCY:-50}

@@ -151,6 +151,36 @@ impl Hub {
         })
     }
 
+    /// Create an empty hub instance for testing or mock purposes
+    pub fn empty() -> Self {
+        // Create default config
+        let config = Arc::new(HubConfig {
+            url: "snapchain.farcaster.xyz:3383".to_string(),
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        });
+
+        // Create empty hub with default config
+        let config_clone = config.clone();
+        Hub {
+            channel: None,
+            client: None,
+            config,
+            host: config_clone.url.clone(),
+            error_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            last_success: Arc::new(std::sync::atomic::AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            )),
+        }
+    }
+
     pub fn host(&self) -> &str {
         &self.host
     }

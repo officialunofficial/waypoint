@@ -24,6 +24,16 @@ impl Redis {
         Ok(Self { pool, config: Some(config.clone()) })
     }
 
+    /// Create an empty Redis instance for testing/placeholder purposes
+    /// This should not be used in production code
+    pub fn empty() -> Self {
+        let url = "redis://localhost:6379".to_string();
+        let manager = RedisConnectionManager::new(url).expect("Failed to create Redis manager");
+        let pool = bb8::Pool::builder().max_size(1).build_unchecked(manager);
+
+        Self { pool, config: None }
+    }
+
     pub fn config(&self) -> Option<&RedisConfig> {
         self.config.as_ref()
     }

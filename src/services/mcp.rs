@@ -1,0 +1,1207 @@
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use rmcp::{
+    Error as McpError, ServerHandler, const_string,
+    model::*,
+    schemars,
+    service::RequestContext,
+    service::RoleServer,
+    tool,
+    transport::sse_server::{SseServer, SseServerConfig},
+};
+
+// Import types from core
+use crate::core::types::MessageType;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info, warn};
+
+use crate::app::{Service, ServiceContext, ServiceHandle};
+use crate::core::{
+    data_context::DataContext,
+    types::{Fid, Message as FarcasterMessage},
+};
+
+// NullDB implementation that satisfies the Database trait
+#[derive(Debug, Clone)]
+pub struct NullDb;
+
+#[async_trait]
+impl crate::core::data_context::Database for NullDb {
+    async fn get_message(
+        &self,
+        _id: &crate::core::types::MessageId,
+        _message_type: crate::core::types::MessageType,
+    ) -> crate::core::data_context::Result<FarcasterMessage> {
+        Err(crate::core::data_context::DataAccessError::NotFound(
+            "NullDb does not store messages".to_string(),
+        ))
+    }
+
+    async fn get_messages_by_fid(
+        &self,
+        _fid: Fid,
+        _message_type: crate::core::types::MessageType,
+        _limit: usize,
+        _cursor: Option<crate::core::types::MessageId>,
+    ) -> crate::core::data_context::Result<Vec<FarcasterMessage>> {
+        Ok(Vec::new())
+    }
+
+    async fn store_message(
+        &self,
+        _message: FarcasterMessage,
+    ) -> crate::core::data_context::Result<()> {
+        Ok(())
+    }
+
+    async fn delete_message(
+        &self,
+        _id: &crate::core::types::MessageId,
+        _message_type: crate::core::types::MessageType,
+    ) -> crate::core::data_context::Result<()> {
+        Ok(())
+    }
+}
+
+// Simple MooCow service to demonstrate MCP functionality
+#[derive(Clone)]
+pub struct MooCow {
+    moo_count: Arc<Mutex<i32>>,
+}
+
+impl Default for MooCow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct MooRequest {
+    pub times: i32,
+}
+
+#[tool(tool_box)]
+impl MooCow {
+    pub fn new() -> Self {
+        Self { moo_count: Arc::new(Mutex::new(0)) }
+    }
+
+    fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
+        RawResource::new(uri, name.to_string()).no_annotation()
+    }
+
+    #[tool(description = "Moo like a cow")]
+    async fn moo(&self) -> Result<CallToolResult, McpError> {
+        let mut count = self.moo_count.lock().await;
+        *count += 1;
+        Ok(CallToolResult::success(vec![Content::text("Mooooo!")]))
+    }
+
+    #[tool(description = "Moo like a cow multiple times")]
+    async fn moo_times(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Number of times to moo")]
+        times: i32,
+    ) -> Result<CallToolResult, McpError> {
+        let mut count = self.moo_count.lock().await;
+        *count += times;
+
+        let moo_text = "Mooooo! ".repeat(times as usize).trim().to_string();
+        Ok(CallToolResult::success(vec![Content::text(moo_text)]))
+    }
+
+    #[tool(description = "Get the current moo count")]
+    async fn get_moo_count(&self) -> Result<CallToolResult, McpError> {
+        let count = self.moo_count.lock().await;
+        let count_text = format!("This cow has moo'd {} times", count);
+        Ok(CallToolResult::success(vec![Content::text(count_text)]))
+    }
+
+    #[tool(description = "Aggregate moo")]
+    fn aggregate_moo(
+        &self,
+        #[tool(aggr)] MooRequest { times }: MooRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let moo_text = "Moo ".repeat(times as usize).trim().to_string();
+        Ok(CallToolResult::success(vec![Content::text(moo_text)]))
+    }
+}
+
+const_string!(MooPrompt = "moo_prompt");
+
+#[tool(tool_box)]
+impl ServerHandler for MooCow {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder()
+                .enable_prompts()
+                .enable_resources()
+                .enable_tools()
+                .build(),
+            server_info: Implementation::from_build_env(),
+            instructions: Some("This is a MooCow server. Use the 'moo' tool to make the cow moo, and 'get_moo_count' to see how many times the cow has moo'd.".to_string()),
+        }
+    }
+
+    async fn list_resources(
+        &self,
+        _request: PaginatedRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult {
+            resources: vec![
+                self._create_resource_text("str:///cow/info", "cow-info"),
+                self._create_resource_text("memo://moo-facts", "moo-facts"),
+            ],
+            next_cursor: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        ReadResourceRequestParam { uri }: ReadResourceRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        match uri.as_str() {
+            "str:///cow/info" => {
+                let info = "Cows are domesticated mammals that are raised for their meat, milk, and hides.";
+                Ok(ReadResourceResult { contents: vec![ResourceContents::text(info, uri)] })
+            },
+            "memo://moo-facts" => {
+                let facts = "Interesting Moo Facts:\n\n1. Cows can sleep standing up\n2. Cows have 32 teeth\n3. Cows can detect odors up to 5 miles away";
+                Ok(ReadResourceResult { contents: vec![ResourceContents::text(facts, uri)] })
+            },
+            _ => Err(McpError::resource_not_found(
+                "resource_not_found",
+                Some(serde_json::json!({
+                    "uri": uri
+                })),
+            )),
+        }
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: PaginatedRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult {
+            prompts: vec![Prompt::new(
+                MooPrompt::VALUE,
+                Some("A prompt about cows that takes an optional name parameter"),
+                Some(vec![PromptArgument {
+                    name: "name".to_string(),
+                    description: Some("The name of the cow".to_string()),
+                    required: Some(false),
+                }]),
+            )],
+            next_cursor: None,
+        })
+    }
+
+    async fn get_prompt(
+        &self,
+        GetPromptRequestParam { name, arguments }: GetPromptRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        match name.as_str() {
+            MooPrompt::VALUE => {
+                let cow_name = arguments
+                    .and_then(|json| json.get("name")?.as_str().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "Bessie".to_string());
+
+                let prompt = format!(
+                    "You are a helpful cow named {}. Answer questions with facts about cows and occasionally make 'moo' sounds.",
+                    cow_name
+                );
+
+                Ok(GetPromptResult {
+                    description: Some("A prompt about cows".to_string()),
+                    messages: vec![PromptMessage {
+                        role: PromptMessageRole::User,
+                        content: PromptMessageContent::text(prompt),
+                    }],
+                })
+            },
+            _ => Err(McpError::invalid_params(
+                "prompt not found",
+                Some(serde_json::json!({
+                    "name": name
+                })),
+            )),
+        }
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: PaginatedRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult { resource_templates: vec![], next_cursor: None })
+    }
+}
+
+// Waypoint MCP service with Snapchain data
+#[derive(Clone)]
+pub struct WaypointMcpService<DB, HC> {
+    data_context: DataContext<DB, HC>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct UserByFidRequest {
+    #[schemars(description = "Farcaster user ID")]
+    pub fid: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastsRequest {
+    #[schemars(description = "Farcaster user ID")]
+    pub fid: u64,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetVerificationsRequest {
+    #[schemars(description = "Farcaster user ID")]
+    pub fid: u64,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastRequest {
+    #[schemars(description = "Farcaster user ID of the cast author")]
+    pub fid: u64,
+    #[schemars(description = "Hash of the cast in hex format")]
+    pub hash: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastMentionsRequest {
+    #[schemars(description = "Farcaster user ID being mentioned")]
+    pub fid: u64,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastRepliesRequest {
+    #[schemars(description = "Farcaster user ID of the parent cast author")]
+    pub parent_fid: u64,
+    #[schemars(description = "Hash of the parent cast in hex format")]
+    pub parent_hash: String,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetCastRepliesByUrlRequest {
+    #[schemars(description = "URL of the parent content")]
+    pub parent_url: String,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetAllCastsWithTimeRequest {
+    #[schemars(description = "Farcaster user ID")]
+    pub fid: u64,
+    #[schemars(description = "Maximum number of results to return")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[schemars(description = "Start timestamp (optional)")]
+    pub start_time: Option<u64>,
+    #[schemars(description = "End timestamp (optional)")]
+    pub end_time: Option<u64>,
+}
+
+fn default_limit() -> usize {
+    10
+}
+
+// Helper trait to allow implementation of tool methods
+impl<DB, HC> WaypointMcpService<DB, HC>
+where
+    DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
+    HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
+{
+    pub fn new(data_context: DataContext<DB, HC>) -> Self {
+        Self { data_context }
+    }
+
+    /// Get user data by FID using Hub client
+    pub async fn do_get_user_by_fid(&self, fid: Fid) -> String {
+        // Use the data context to fetch user data
+        match self.data_context.get_user_data_by_fid(fid, 20).await {
+            Ok(messages) => {
+                if messages.is_empty() {
+                    return format!("No user data found for FID {}", fid);
+                }
+
+                // Create a structured user profile from the messages
+                let mut profile = serde_json::Map::new();
+
+                // Add the FID to the profile
+                profile.insert(
+                    "fid".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(fid.value())),
+                );
+
+                // Process each message to extract user data
+                for message in messages {
+                    if message.message_type != MessageType::UserData {
+                        continue;
+                    }
+
+                    // Try to decode the message payload as MessageData
+                    if let Ok(data) = prost::Message::decode(&*message.payload) {
+                        let msg_data: crate::proto::MessageData = data;
+
+                        // Extract the user_data_body if present
+                        if let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
+                            msg_data.body
+                        {
+                            // Map user data type to field name
+                            let field_name = match user_data.r#type {
+                                1 => "pfp",          // USER_DATA_TYPE_PFP
+                                2 => "display_name", // USER_DATA_TYPE_DISPLAY
+                                3 => "bio",          // USER_DATA_TYPE_BIO
+                                5 => "url",          // USER_DATA_TYPE_URL
+                                6 => "username",     // USER_DATA_TYPE_USERNAME
+                                7 => "location",     // USER_DATA_TYPE_LOCATION
+                                8 => "twitter",      // USER_DATA_TYPE_TWITTER
+                                9 => "github",       // USER_DATA_TYPE_GITHUB
+                                _ => continue,       // Unknown type
+                            };
+
+                            // Add to the profile
+                            profile.insert(
+                                field_name.to_string(),
+                                serde_json::Value::String(user_data.value),
+                            );
+                        }
+                    }
+                }
+
+                // Convert the profile to a JSON string
+                serde_json::to_string_pretty(&profile)
+                    .unwrap_or_else(|_| format!("Error formatting user data for FID {}", fid))
+            },
+            Err(e) => format!("Error fetching user data: {}", e),
+        }
+    }
+
+    /// Get user verifications by FID
+    pub async fn do_get_verifications_by_fid(&self, fid: Fid, limit: usize) -> String {
+        info!("MCP: Fetching verifications for FID: {}", fid);
+
+        // Use the data context to fetch verifications
+        match self.data_context.get_verifications_by_fid(fid, limit).await {
+            Ok(messages) => {
+                if messages.is_empty() {
+                    return format!("No verifications found for FID {}", fid);
+                }
+
+                // Create a structured array of verification objects
+                let mut verifications = Vec::new();
+
+                // Process each verification message
+                for message in messages {
+                    if message.message_type != MessageType::Verification {
+                        continue;
+                    }
+
+                    // Try to decode the message payload as MessageData
+                    if let Ok(data) = prost::Message::decode(&*message.payload) {
+                        let msg_data: crate::proto::MessageData = data;
+
+                        // Extract verification data
+                        if let Some(crate::proto::message_data::Body::VerificationAddAddressBody(
+                            verification,
+                        )) = msg_data.body
+                        {
+                            // Create verification object
+                            let mut verif_obj = serde_json::Map::new();
+
+                            // Format the address as hex
+                            let address_hex = format!("0x{}", hex::encode(&verification.address));
+
+                            // Add base verification info
+                            verif_obj.insert(
+                                "fid".to_string(),
+                                serde_json::Value::Number(serde_json::Number::from(fid.value())),
+                            );
+                            verif_obj.insert(
+                                "address".to_string(),
+                                serde_json::Value::String(address_hex),
+                            );
+
+                            // Add protocol info
+                            let protocol = match verification.protocol {
+                                0 => "ethereum",
+                                1 => "solana",
+                                _ => "unknown",
+                            };
+                            verif_obj.insert(
+                                "protocol".to_string(),
+                                serde_json::Value::String(protocol.to_string()),
+                            );
+
+                            // Add verification type
+                            let verif_type = match verification.verification_type {
+                                0 => "eoa",      // Externally Owned Account
+                                1 => "contract", // Smart Contract
+                                _ => "unknown",
+                            };
+                            verif_obj.insert(
+                                "type".to_string(),
+                                serde_json::Value::String(verif_type.to_string()),
+                            );
+
+                            // Add chain id if present (for contract verifications)
+                            if verification.chain_id > 0 {
+                                verif_obj.insert(
+                                    "chain_id".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        verification.chain_id,
+                                    )),
+                                );
+                            }
+
+                            // Add timestamp
+                            verif_obj.insert(
+                                "timestamp".to_string(),
+                                serde_json::Value::Number(serde_json::Number::from(
+                                    msg_data.timestamp,
+                                )),
+                            );
+
+                            // Add to the array
+                            verifications.push(serde_json::Value::Object(verif_obj));
+                        }
+                    }
+                }
+
+                // Wrap in a result object with metadata
+                let result = serde_json::json!({
+                    "fid": fid.value(),
+                    "count": verifications.len(),
+                    "verifications": verifications
+                });
+
+                // Convert to JSON string
+                serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| format!("Error formatting verifications for FID {}", fid))
+            },
+            Err(e) => format!("Error fetching verifications: {}", e),
+        }
+    }
+
+    /// Process a cast message to extract relevant data
+    fn process_cast_message(
+        &self,
+        message: &FarcasterMessage,
+        msg_data: &crate::proto::MessageData,
+    ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        if message.message_type != MessageType::Cast {
+            return None;
+        }
+
+        // Extract cast data
+        let cast_body = match &msg_data.body {
+            Some(crate::proto::message_data::Body::CastAddBody(cast_add)) => cast_add,
+            _ => return None,
+        };
+
+        // Create cast object
+        let mut cast_obj = serde_json::Map::new();
+
+        // Add cast metadata
+        cast_obj.insert(
+            "fid".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(msg_data.fid)),
+        );
+        cast_obj.insert(
+            "timestamp".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(msg_data.timestamp)),
+        );
+        cast_obj
+            .insert("hash".to_string(), serde_json::Value::String(message.id.value().to_string()));
+
+        // Add cast content
+        cast_obj.insert("text".to_string(), serde_json::Value::String(cast_body.text.clone()));
+
+        // Add mentions if present
+        if !cast_body.mentions.is_empty() {
+            let mentions: Vec<serde_json::Value> = cast_body
+                .mentions
+                .iter()
+                .map(|&fid| serde_json::Value::Number(serde_json::Number::from(fid)))
+                .collect();
+            cast_obj.insert("mentions".to_string(), serde_json::Value::Array(mentions));
+        }
+
+        // Add mention positions if present
+        if !cast_body.mentions_positions.is_empty() {
+            let positions: Vec<serde_json::Value> = cast_body
+                .mentions_positions
+                .iter()
+                .map(|&pos| serde_json::Value::Number(serde_json::Number::from(pos)))
+                .collect();
+            cast_obj.insert("mentions_positions".to_string(), serde_json::Value::Array(positions));
+        }
+
+        // Add embeds if present
+        if !cast_body.embeds.is_empty() {
+            let embeds: Vec<serde_json::Value> = cast_body
+                .embeds
+                .iter()
+                .map(|embed| match &embed.embed {
+                    Some(crate::proto::embed::Embed::Url(url)) => {
+                        serde_json::json!({ "type": "url", "url": url })
+                    },
+                    Some(crate::proto::embed::Embed::CastId(cast_id)) => {
+                        serde_json::json!({
+                            "type": "cast",
+                            "fid": cast_id.fid,
+                            "hash": hex::encode(&cast_id.hash)
+                        })
+                    },
+                    None => serde_json::json!(null),
+                })
+                .collect();
+            cast_obj.insert("embeds".to_string(), serde_json::Value::Array(embeds));
+        }
+
+        // Add parent if present
+        match &cast_body.parent {
+            Some(crate::proto::cast_add_body::Parent::ParentCastId(parent_cast_id)) => {
+                let parent = serde_json::json!({
+                    "type": "cast",
+                    "fid": parent_cast_id.fid,
+                    "hash": hex::encode(&parent_cast_id.hash)
+                });
+                cast_obj.insert("parent".to_string(), parent);
+            },
+            Some(crate::proto::cast_add_body::Parent::ParentUrl(url)) => {
+                let parent = serde_json::json!({
+                    "type": "url",
+                    "url": url
+                });
+                cast_obj.insert("parent".to_string(), parent);
+            },
+            None => {},
+        }
+
+        Some(cast_obj)
+    }
+
+    /// Format an array of cast messages into a JSON response
+    fn format_casts_response(&self, messages: Vec<FarcasterMessage>, fid: Option<Fid>) -> String {
+        if messages.is_empty() {
+            return match fid {
+                Some(fid) => format!("No casts found for FID {}", fid),
+                None => "No casts found".to_string(),
+            };
+        }
+
+        // Create a structured array of cast objects
+        let mut casts = Vec::new();
+
+        // Process each cast message
+        for message in messages {
+            // Try to decode the message payload as MessageData
+            if let Ok(data) = prost::Message::decode(&*message.payload) {
+                let msg_data: crate::proto::MessageData = data;
+
+                // Process the cast
+                if let Some(cast_obj) = self.process_cast_message(&message, &msg_data) {
+                    casts.push(serde_json::Value::Object(cast_obj));
+                }
+            }
+        }
+
+        // Wrap in a result object with metadata
+        let result = match fid {
+            Some(fid) => serde_json::json!({
+                "fid": fid.value(),
+                "count": casts.len(),
+                "casts": casts
+            }),
+            None => serde_json::json!({
+                "count": casts.len(),
+                "casts": casts
+            }),
+        };
+
+        // Convert to JSON string
+        serde_json::to_string_pretty(&result)
+            .unwrap_or_else(|_| "Error formatting casts".to_string())
+    }
+
+    /// Get a specific cast by ID
+    pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> String {
+        info!("MCP: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
+
+        // Convert hex hash to bytes
+        let hash_bytes = match hex::decode(hash_hex.trim_start_matches("0x")) {
+            Ok(bytes) => bytes,
+            Err(_) => return format!("Invalid hash format: {}", hash_hex),
+        };
+
+        // Use the data context to fetch the cast
+        match self.data_context.get_cast(fid, &hash_bytes).await {
+            Ok(Some(message)) => {
+                // Try to decode the message payload as MessageData
+                if let Ok(data) = prost::Message::decode(&*message.payload) {
+                    let msg_data: crate::proto::MessageData = data;
+
+                    // Process the cast
+                    if let Some(cast_obj) = self.process_cast_message(&message, &msg_data) {
+                        // Convert to JSON string
+                        return serde_json::to_string_pretty(&cast_obj).unwrap_or_else(|_| {
+                            format!("Error formatting cast for FID {} and hash {}", fid, hash_hex)
+                        });
+                    }
+                }
+
+                format!(
+                    "Cast found but could not be processed for FID {} and hash {}",
+                    fid, hash_hex
+                )
+            },
+            Ok(None) => format!("No cast found for FID {} and hash {}", fid, hash_hex),
+            Err(e) => format!("Error fetching cast: {}", e),
+        }
+    }
+
+    /// Get casts by FID
+    pub async fn do_get_casts_by_fid(&self, fid: Fid, limit: usize) -> String {
+        info!("MCP: Fetching casts for FID: {}", fid);
+
+        // Use the data context to fetch casts
+        match self.data_context.get_casts_by_fid(fid, limit).await {
+            Ok(messages) => self.format_casts_response(messages, Some(fid)),
+            Err(e) => format!("Error fetching casts: {}", e),
+        }
+    }
+
+    /// Get casts mentioning a user
+    pub async fn do_get_casts_by_mention(&self, fid: Fid, limit: usize) -> String {
+        info!("MCP: Fetching casts mentioning FID: {}", fid);
+
+        // Use the data context to fetch mentions
+        match self.data_context.get_casts_by_mention(fid, limit).await {
+            Ok(messages) => {
+                // Format the response with special metadata for mentions
+                let formatted = self.format_casts_response(messages, None);
+
+                if formatted.starts_with("No casts found") {
+                    return format!("No casts found mentioning FID {}", fid);
+                }
+
+                formatted
+            },
+            Err(e) => format!("Error fetching cast mentions: {}", e),
+        }
+    }
+
+    /// Get replies to a cast
+    pub async fn do_get_casts_by_parent(
+        &self,
+        parent_fid: Fid,
+        parent_hash_hex: &str,
+        limit: usize,
+    ) -> String {
+        info!(
+            "MCP: Fetching replies to cast with FID: {} and hash: {}",
+            parent_fid, parent_hash_hex
+        );
+
+        // Convert hex hash to bytes
+        let parent_hash_bytes = match hex::decode(parent_hash_hex.trim_start_matches("0x")) {
+            Ok(bytes) => bytes,
+            Err(_) => return format!("Invalid hash format: {}", parent_hash_hex),
+        };
+
+        // Use the data context to fetch replies
+        match self.data_context.get_casts_by_parent(parent_fid, &parent_hash_bytes, limit).await {
+            Ok(messages) => {
+                // Format the response with special metadata for replies
+                let result = if messages.is_empty() {
+                    serde_json::json!({
+                        "parent": {
+                            "fid": parent_fid.value(),
+                            "hash": parent_hash_hex
+                        },
+                        "count": 0,
+                        "replies": []
+                    })
+                } else {
+                    // Process messages into cast objects
+                    let replies: Vec<serde_json::Value> = messages
+                        .iter()
+                        .filter_map(|message| {
+                            if let Ok(data) = prost::Message::decode(&*message.payload) {
+                                let msg_data: crate::proto::MessageData = data;
+                                if let Some(cast_obj) =
+                                    self.process_cast_message(message, &msg_data)
+                                {
+                                    return Some(serde_json::Value::Object(cast_obj));
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+
+                    serde_json::json!({
+                        "parent": {
+                            "fid": parent_fid.value(),
+                            "hash": parent_hash_hex
+                        },
+                        "count": replies.len(),
+                        "replies": replies
+                    })
+                };
+
+                // Convert to JSON string
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    format!(
+                        "Error formatting replies for parent cast with FID {} and hash {}",
+                        parent_fid, parent_hash_hex
+                    )
+                })
+            },
+            Err(e) => format!("Error fetching cast replies: {}", e),
+        }
+    }
+
+    /// Get replies to a URL
+    pub async fn do_get_casts_by_parent_url(&self, parent_url: &str, limit: usize) -> String {
+        info!("MCP: Fetching replies to URL: {}", parent_url);
+
+        // Use the data context to fetch replies
+        match self.data_context.get_casts_by_parent_url(parent_url, limit).await {
+            Ok(messages) => {
+                // Format the response with special metadata for URL replies
+                let result = if messages.is_empty() {
+                    serde_json::json!({
+                        "parent_url": parent_url,
+                        "count": 0,
+                        "replies": []
+                    })
+                } else {
+                    // Process messages into cast objects
+                    let replies: Vec<serde_json::Value> = messages
+                        .iter()
+                        .filter_map(|message| {
+                            if let Ok(data) = prost::Message::decode(&*message.payload) {
+                                let msg_data: crate::proto::MessageData = data;
+                                if let Some(cast_obj) =
+                                    self.process_cast_message(message, &msg_data)
+                                {
+                                    return Some(serde_json::Value::Object(cast_obj));
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+
+                    serde_json::json!({
+                        "parent_url": parent_url,
+                        "count": replies.len(),
+                        "replies": replies
+                    })
+                };
+
+                // Convert to JSON string
+                serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| format!("Error formatting replies for URL: {}", parent_url))
+            },
+            Err(e) => format!("Error fetching URL replies: {}", e),
+        }
+    }
+
+    /// Get all casts by FID with timestamp filtering
+    pub async fn do_get_all_casts_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> String {
+        info!("MCP: Fetching all casts for FID: {} with time filtering", fid);
+
+        // Use the data context to fetch casts with time filtering
+        match self.data_context.get_all_casts_by_fid(fid, limit, start_time, end_time).await {
+            Ok(messages) => {
+                // Format the basic response
+                let base_response = self.format_casts_response(messages, Some(fid));
+
+                // If there are no casts, return a time-specific message
+                if base_response.starts_with("No casts found") {
+                    let time_range = match (start_time, end_time) {
+                        (Some(start), Some(end)) => {
+                            format!(" between timestamps {} and {}", start, end)
+                        },
+                        (Some(start), None) => format!(" after timestamp {}", start),
+                        (None, Some(end)) => format!(" before timestamp {}", end),
+                        (None, None) => "".to_string(),
+                    };
+
+                    return format!("No casts found for FID {}{}", fid, time_range);
+                }
+
+                base_response
+            },
+            Err(e) => format!("Error fetching casts with time filtering: {}", e),
+        }
+    }
+}
+
+// Non-generic wrapper for WaypointMcpService to use with RMCP macros
+#[derive(Clone)]
+pub struct WaypointMcpTools {
+    service: Arc<WaypointMcpService<NullDb, crate::hub::providers::FarcasterHubClient>>,
+}
+
+impl WaypointMcpTools {
+    pub fn new(
+        service: WaypointMcpService<NullDb, crate::hub::providers::FarcasterHubClient>,
+    ) -> Self {
+        Self { service: Arc::new(service) }
+    }
+}
+
+#[tool(tool_box)]
+impl WaypointMcpTools {
+    fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
+        RawResource::new(uri, name.to_string()).no_annotation()
+    }
+
+    #[tool(description = "Get Farcaster user data by FID")]
+    async fn get_user_by_fid(
+        &self,
+        #[tool(aggr)] UserByFidRequest { fid }: UserByFidRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_user_by_fid(fid).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get verified addresses for a Farcaster user")]
+    async fn get_verifications_by_fid(
+        &self,
+        #[tool(aggr)] GetVerificationsRequest { fid, limit }: GetVerificationsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_verifications_by_fid(fid, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get a specific cast by FID and hash")]
+    async fn get_cast(
+        &self,
+        #[tool(aggr)] GetCastRequest { fid, hash }: GetCastRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_cast(fid, &hash).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get casts by a specific Farcaster user")]
+    async fn get_casts_by_fid(
+        &self,
+        #[tool(aggr)] GetCastsRequest { fid, limit }: GetCastsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_casts_by_fid(fid, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get casts that mention a specific Farcaster user")]
+    async fn get_casts_by_mention(
+        &self,
+        #[tool(aggr)] GetCastMentionsRequest { fid, limit }: GetCastMentionsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_casts_by_mention(fid, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get cast replies to a specific parent cast")]
+    async fn get_casts_by_parent(
+        &self,
+        #[tool(aggr)]
+        GetCastRepliesRequest { parent_fid, parent_hash, limit }: GetCastRepliesRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let parent_fid = Fid::from(parent_fid);
+        let result = self.service.do_get_casts_by_parent(parent_fid, &parent_hash, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get cast replies to a specific URL")]
+    async fn get_casts_by_parent_url(
+        &self,
+        #[tool(aggr)] GetCastRepliesByUrlRequest { parent_url, limit }: GetCastRepliesByUrlRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let result = self.service.do_get_casts_by_parent_url(&parent_url, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get all casts from a user with optional timestamp filtering")]
+    async fn get_all_casts_by_fid(
+        &self,
+        #[tool(aggr)] GetAllCastsWithTimeRequest { fid, limit, start_time, end_time }: GetAllCastsWithTimeRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_all_casts_by_fid(fid, limit, start_time, end_time).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+}
+
+const_string!(WaypointPrompt = "waypoint_prompt");
+
+#[tool(tool_box)]
+impl ServerHandler for WaypointMcpTools {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder()
+                .enable_prompts()
+                .enable_resources()
+                .enable_tools()
+                .build(),
+            server_info: Implementation::from_build_env(),
+            instructions: Some("Waypoint MCP service with tools to query Farcaster data. Use the 'get_user_by_fid' tool to fetch user data, 'get_verifications_by_fid' for verified addresses, 'get_casts_by_fid' for user casts, 'get_cast' for specific casts, 'get_casts_by_mention' for mentions, 'get_casts_by_parent' for replies, and 'get_all_casts_by_fid' for timestamp-filtered casts.".to_string()),
+        }
+    }
+
+    async fn list_resources(
+        &self,
+        _request: PaginatedRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult {
+            resources: vec![
+                self._create_resource_text("str:///waypoint/docs", "waypoint-docs"),
+                self._create_resource_text("memo://farcaster-info", "farcaster-info"),
+            ],
+            next_cursor: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        ReadResourceRequestParam { uri }: ReadResourceRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        match uri.as_str() {
+            "str:///waypoint/docs" => {
+                let docs = "Waypoint is a Farcaster data indexer that streams data from the Farcaster network and allows querying by FID.";
+                Ok(ReadResourceResult { contents: vec![ResourceContents::text(docs, uri)] })
+            },
+            "memo://farcaster-info" => {
+                let info = "Farcaster is a decentralized social network built on Ethereum. Users have an FID (Farcaster ID) that identifies them on the network.";
+                Ok(ReadResourceResult { contents: vec![ResourceContents::text(info, uri)] })
+            },
+            _ => Err(McpError::resource_not_found(
+                format!("Resource not found: {}", uri),
+                Some(serde_json::json!({
+                    "uri": uri
+                })),
+            )),
+        }
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: PaginatedRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult {
+            prompts: vec![Prompt::new(
+                WaypointPrompt::VALUE,
+                Some("A prompt that helps with Farcaster data querying and takes an FID parameter"),
+                Some(vec![PromptArgument {
+                    name: "fid".to_string(),
+                    description: Some("The Farcaster ID to focus on".to_string()),
+                    required: Some(true),
+                }]),
+            )],
+            next_cursor: None,
+        })
+    }
+
+    async fn get_prompt(
+        &self,
+        GetPromptRequestParam { name, arguments }: GetPromptRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        match name.as_str() {
+            "waypoint_prompt" => {
+                let fid = arguments
+                    .and_then(|json| json.get("fid")?.as_u64().map(|n| n.to_string()))
+                    .ok_or_else(|| {
+                        McpError::invalid_params("No FID provided to waypoint_prompt", None)
+                    })?;
+
+                let prompt = format!(
+                    "You are a helpful assistant for exploring Farcaster data. You're currently focusing on FID {}. You can help fetch user data, verifications, and casts for this user using the appropriate tools.",
+                    fid
+                );
+
+                Ok(GetPromptResult {
+                    description: Some("A prompt for Farcaster data exploration".to_string()),
+                    messages: vec![PromptMessage {
+                        role: PromptMessageRole::Assistant,
+                        content: PromptMessageContent::text(prompt),
+                    }],
+                })
+            },
+            _ => Err(McpError::invalid_params(
+                format!("Prompt not found: {}", name),
+                Some(serde_json::json!({
+                    "name": name
+                })),
+            )),
+        }
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: PaginatedRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult { resource_templates: vec![], next_cursor: None })
+    }
+}
+
+/// MCP Service that integrates with the App's service lifecycle
+pub struct McpService {
+    bind_address: String,
+    port: u16,
+}
+
+impl Default for McpService {
+    fn default() -> Self {
+        Self { bind_address: "127.0.0.1".to_string(), port: 8000 }
+    }
+}
+
+impl McpService {
+    /// Create a new MCP service with default settings
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Configure the service with custom settings
+    pub fn configure(mut self, bind_address: String, port: u16) -> Self {
+        self.bind_address = bind_address;
+        self.port = port;
+        self
+    }
+}
+
+#[async_trait]
+impl Service for McpService {
+    fn name(&self) -> &str {
+        "mcp"
+    }
+
+    async fn start<'a>(&'a self, context: ServiceContext<'a>) -> crate::app::Result<ServiceHandle> {
+        // Create socket address from configuration
+        let socket_addr =
+            format!("{}:{}", self.bind_address, self.port).parse::<SocketAddr>().map_err(|e| {
+                crate::app::ServiceError::Initialization(format!("Invalid socket address: {}", e))
+            })?;
+
+        info!("Starting MCP service on {}", socket_addr);
+
+        // Create the required clients for the DataContext
+        let hub_config = context.config.hub.clone();
+
+        // Create Hub client
+        let mut hub = crate::hub::client::Hub::new(Arc::new(hub_config)).map_err(|e| {
+            crate::app::ServiceError::Initialization(format!("Failed to create Hub client: {}", e))
+        })?;
+
+        // Connect to the Hub
+        if let Err(err) = hub.connect().await {
+            warn!("Failed to connect to Hub: {}. Will retry automatically when needed.", err);
+        }
+
+        // Create Hub client for data context
+        let hub_client = crate::hub::providers::FarcasterHubClient::new(Arc::new(Mutex::new(hub)));
+
+        // Create a data context with a NullDb and the hub client
+        let data_context: DataContext<NullDb, _> =
+            crate::core::data_context::DataContextBuilder::new()
+                .with_database(NullDb)
+                .with_hub_client(hub_client)
+                .build();
+
+        // Create a cancellation token for the service
+        let cancellation_token = CancellationToken::new();
+
+        // Configure the server with a single endpoint
+        let server_config = SseServerConfig {
+            bind: socket_addr,
+            sse_path: "/sse".to_string(),
+            post_path: "/message".to_string(),
+            ct: cancellation_token.clone(),
+        };
+
+        let ct_clone = cancellation_token.clone();
+
+        // Launch the service
+        let server_handle = tokio::spawn(async move {
+            match SseServer::serve_with_config(server_config).await {
+                Ok(sse_server) => {
+                    // Create the waypoint service
+                    let waypoint_service = WaypointMcpService::new(data_context);
+
+                    // Create the tools wrapper
+                    let tools = WaypointMcpTools::new(waypoint_service);
+
+                    // Initialize the tools with the SSE server
+                    sse_server.with_service(move || tools.clone());
+
+                    info!("MCP service started on {} and ready to accept connections", socket_addr);
+
+                    // Wait for the service to be cancelled
+                    ct_clone.cancelled().await;
+                    info!("MCP service shutting down");
+                },
+                Err(e) => {
+                    error!("Failed to start MCP service: {}", e);
+                },
+            }
+        });
+
+        // Create stop channel to allow service to be cleanly shutdown
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+
+        // Handle the stop signal
+        let ct = cancellation_token.clone();
+        tokio::spawn(async move {
+            let _ = stop_rx.await;
+            // Cancel the server when stop is received
+            ct.cancel();
+        });
+
+        // Return the service handle
+        Ok(ServiceHandle::new(stop_tx, server_handle))
+    }
+}

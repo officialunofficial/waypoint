@@ -10,3 +10,4 @@ disallowed-methods = [
 # DRY/YAGNI principles
 too-many-arguments-threshold = 6
 cognitive-complexity-threshold = 20
+
