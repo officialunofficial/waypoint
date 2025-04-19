@@ -179,4 +179,145 @@ where
             Err(e) => format!("Error fetching verifications: {}", e),
         }
     }
+
+    /// Find FID by username
+    pub async fn do_get_fid_by_username(&self, username: &str) -> String {
+        match self.data_context.get_fid_by_username(username).await {
+            Ok(Some(fid)) => {
+                // Create a structured response with FID information
+                let result = serde_json::json!({
+                    "username": username,
+                    "fid": fid.value(),
+                    "found": true
+                });
+
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    format!("Error formatting response for username {}", username)
+                })
+            },
+            Ok(None) => {
+                // Return a JSON response indicating the username was not found
+                let result = serde_json::json!({
+                    "username": username,
+                    "found": false,
+                    "error": "Username not found"
+                });
+
+                serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| format!("Username not found: {}", username))
+            },
+            Err(e) => {
+                // Return a JSON response with the error
+                let result = serde_json::json!({
+                    "username": username,
+                    "found": false,
+                    "error": format!("Error: {}", e)
+                });
+
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    format!("Error fetching FID for username {}: {}", username, e)
+                })
+            },
+        }
+    }
+
+    /// Get user profile by username
+    pub async fn do_get_user_by_username(&self, username: &str) -> String {
+        // First find the FID for this username
+        match self.data_context.get_fid_by_username(username).await {
+            Ok(Some(fid)) => {
+                // Now fetch the user data for this FID
+                match self.data_context.get_user_data_by_fid(fid, 20).await {
+                    Ok(messages) => {
+                        if messages.is_empty() {
+                            return format!(
+                                "Username '{}' resolved to FID {}, but no user data found",
+                                username, fid
+                            );
+                        }
+
+                        // Create a structured user profile from the messages
+                        let mut profile = serde_json::Map::new();
+
+                        // Add the FID and username to the profile
+                        profile.insert(
+                            "fid".to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(fid.value())),
+                        );
+
+                        profile.insert(
+                            "username".to_string(),
+                            serde_json::Value::String(username.to_string()),
+                        );
+
+                        // Process each message to extract user data
+                        for message in messages {
+                            if message.message_type != crate::core::types::MessageType::UserData {
+                                continue;
+                            }
+
+                            // Try to decode the message payload as MessageData
+                            if let Ok(data) = prost::Message::decode(&*message.payload) {
+                                let msg_data: crate::proto::MessageData = data;
+
+                                // Extract the user_data_body if present
+                                if let Some(crate::proto::message_data::Body::UserDataBody(
+                                    user_data,
+                                )) = msg_data.body
+                                {
+                                    // Map user data type to field name
+                                    let field_name = match user_data.r#type {
+                                        1 => "pfp",          // USER_DATA_TYPE_PFP
+                                        2 => "display_name", // USER_DATA_TYPE_DISPLAY
+                                        3 => "bio",          // USER_DATA_TYPE_BIO
+                                        5 => "url",          // USER_DATA_TYPE_URL
+                                        6 => "username", // USER_DATA_TYPE_USERNAME (already set above, but include for completeness)
+                                        7 => "location", // USER_DATA_TYPE_LOCATION
+                                        8 => "twitter",  // USER_DATA_TYPE_TWITTER
+                                        9 => "github",   // USER_DATA_TYPE_GITHUB
+                                        _ => continue,   // Unknown type
+                                    };
+
+                                    // Add to the profile
+                                    profile.insert(
+                                        field_name.to_string(),
+                                        serde_json::Value::String(user_data.value),
+                                    );
+                                }
+                            }
+                        }
+
+                        // Convert the profile to a JSON string
+                        serde_json::to_string_pretty(&profile).unwrap_or_else(|_| {
+                            format!("Error formatting user data for username {}", username)
+                        })
+                    },
+                    Err(e) => format!("Error fetching user data: {}", e),
+                }
+            },
+            Ok(None) => {
+                // Return a JSON response indicating the username was not found
+                let result = serde_json::json!({
+                    "username": username,
+                    "found": false,
+                    "error": "Username not found"
+                });
+
+                serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| format!("Username not found: {}", username))
+            },
+            Err(e) => {
+                // Return a JSON response with the error
+                let result = serde_json::json!({
+                    "username": username,
+                    "found": false,
+                    "error": format!("Error: {}", e)
+                });
+
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    format!("Error fetching user by username {}: {}", username, e)
+                })
+            },
+        }
+    }
 }

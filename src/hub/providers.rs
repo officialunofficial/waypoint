@@ -183,6 +183,38 @@ impl HubClient for FarcasterHubClient {
         Ok(messages)
     }
 
+    async fn get_username_proof_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::proto::UserNameProof>> {
+        info!("Fetching username proof for name: {}", name);
+        let mut hub = self.hub.lock().await;
+
+        // Ensure hub is connected
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        // Create the request
+        let request = crate::proto::UsernameProofRequest { name: name.as_bytes().to_vec() };
+
+        // Make the RPC call
+        let response = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_username_proof(tonic::Request::new(request))
+            .await;
+
+        match response {
+            Ok(proto_proof) => {
+                let proof = proto_proof.into_inner();
+                Ok(Some(proof))
+            },
+            Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
+            Err(e) => Err(DataAccessError::HubClient(e.to_string())),
+        }
+    }
+
     async fn get_verifications_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
         info!("Fetching verifications for FID: {}", fid);
         let mut hub = self.hub.lock().await;

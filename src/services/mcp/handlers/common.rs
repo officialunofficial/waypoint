@@ -9,6 +9,11 @@ pub(crate) fn default_limit() -> usize {
     10
 }
 
+/// Default link type is "follow"
+pub(crate) fn default_link_type() -> String {
+    "follow".to_string()
+}
+
 /// Request for a user by FID
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UserByFidRequest {
@@ -144,6 +149,7 @@ pub struct LinkRequest {
     #[schemars(description = "Farcaster user ID of the link author")]
     pub fid: u64,
     #[schemars(description = "Link type (e.g., 'follow')")]
+    #[serde(default = "default_link_type")]
     pub link_type: String,
     #[schemars(description = "Target Farcaster user ID")]
     pub target_fid: u64,
@@ -154,7 +160,10 @@ pub struct LinkRequest {
 pub struct LinksByFidRequest {
     #[schemars(description = "Farcaster user ID")]
     pub fid: u64,
-    #[schemars(description = "Link type (e.g., 'follow', omit for all types)")]
+    #[schemars(
+        description = "Link type (defaults to 'follow' if not specified, use null for all types)"
+    )]
+    #[serde(default)]
     pub link_type: Option<String>,
     #[schemars(description = "Maximum number of results to return")]
     #[serde(default = "default_limit")]
@@ -166,7 +175,10 @@ pub struct LinksByFidRequest {
 pub struct LinksByTargetRequest {
     #[schemars(description = "Target Farcaster user ID")]
     pub target_fid: u64,
-    #[schemars(description = "Link type (e.g., 'follow', omit for all types)")]
+    #[schemars(
+        description = "Link type (defaults to 'follow' if not specified, use null for all types)"
+    )]
+    #[serde(default)]
     pub link_type: Option<String>,
     #[schemars(description = "Maximum number of results to return")]
     #[serde(default = "default_limit")]
@@ -192,4 +204,11 @@ pub struct FidTimestampRequest {
 pub struct FidRequest {
     #[schemars(description = "Farcaster user ID")]
     pub fid: u64,
+}
+
+/// Request to get FID by username
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetFidByUsernameRequest {
+    #[schemars(description = "Farcaster username (without the @ symbol)")]
+    pub username: String,
 }

@@ -81,6 +81,24 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
+    #[tool(description = "Find a Farcaster user's FID by their username")]
+    async fn get_fid_by_username(
+        &self,
+        #[tool(aggr)] common::GetFidByUsernameRequest { username }: common::GetFidByUsernameRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let result = self.service.do_get_fid_by_username(&username).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get a complete Farcaster user profile by username")]
+    async fn get_user_by_username(
+        &self,
+        #[tool(aggr)] common::GetFidByUsernameRequest { username }: common::GetFidByUsernameRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let result = self.service.do_get_user_by_username(&username).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
     // Cast APIs
     #[tool(description = "Get a specific cast by FID and hash")]
     async fn get_cast(
@@ -274,7 +292,12 @@ impl WaypointMcpTools {
         common::LinksByFidRequest { fid, link_type, limit }: common::LinksByFidRequest,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
-        let link_type_ref = link_type.as_deref();
+        // Use "follow" as default when None is explicitly provided
+        let link_type_ref = match link_type {
+            Some(ref lt) if lt.is_empty() => Some("follow"),
+            Some(ref lt) => Some(lt.as_str()),
+            None => Some("follow"),
+        };
         let result = self.service.do_get_links_by_fid(fid, link_type_ref, limit).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
@@ -285,7 +308,12 @@ impl WaypointMcpTools {
         #[tool(aggr)] common::LinksByTargetRequest { target_fid, link_type, limit }: common::LinksByTargetRequest,
     ) -> Result<CallToolResult, McpError> {
         let target_fid = Fid::from(target_fid);
-        let link_type_ref = link_type.as_deref();
+        // Use "follow" as default when None is explicitly provided
+        let link_type_ref = match link_type {
+            Some(ref lt) if lt.is_empty() => Some("follow"),
+            Some(ref lt) => Some(lt.as_str()),
+            None => Some("follow"),
+        };
         let result = self.service.do_get_links_by_target(target_fid, link_type_ref, limit).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
@@ -374,11 +402,18 @@ impl ServerHandler for WaypointMcpTools {
             prompts: vec![Prompt::new(
                 WaypointPrompt::VALUE,
                 Some("A prompt that helps with Farcaster data querying and takes an FID parameter"),
-                Some(vec![PromptArgument {
-                    name: "fid".to_string(),
-                    description: Some("The Farcaster ID to focus on".to_string()),
-                    required: Some(true),
-                }]),
+                Some(vec![
+                    PromptArgument {
+                        name: "fid".to_string(),
+                        description: Some("The Farcaster ID to focus on".to_string()),
+                        required: Some(true),
+                    },
+                    PromptArgument {
+                        name: "username".to_string(),
+                        description: Some("The Farcaster username (optional, will be included in the prompt if provided)".to_string()),
+                        required: Some(false),
+                    }
+                ]),
             )],
             next_cursor: None,
         })
@@ -430,9 +465,18 @@ impl ServerHandler for WaypointMcpTools {
                     ));
                 };
 
+                // Check if username is provided in the arguments, ensuring we preserve any .eth suffix
+                let username_context =
+                    if let Some(username) = arguments.get("username").and_then(|u| u.as_str()) {
+                        // Make sure to use the full username including .eth if present
+                        format!(" (username: {})", username)
+                    } else {
+                        "".to_string()
+                    };
+
                 let prompt = format!(
-                    "You are a helpful assistant for exploring Farcaster data. You're currently focusing on FID {}. You can help fetch user data, verifications, casts, reactions, and links for this user using the appropriate tools.",
-                    fid
+                    "You are a helpful assistant for exploring Farcaster data. You're currently focusing on FID {}{}. You can help fetch user data, verifications, casts, reactions, and links for this user using the appropriate tools.",
+                    fid, username_context
                 );
 
                 Ok(GetPromptResult {

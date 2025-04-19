@@ -65,6 +65,12 @@ pub trait HubClient: Send + Sync {
     /// Get username proofs
     async fn get_username_proofs_by_fid(&self, fid: Fid) -> Result<Vec<Message>>;
 
+    /// Get username proof by name
+    async fn get_username_proof_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::proto::UserNameProof>>;
+
     /// Get verifications
     async fn get_verifications_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>>;
 
@@ -209,6 +215,16 @@ where
     pub async fn get_username_proofs_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
         if let Some(hub) = &self.hub_client {
             return hub.get_username_proofs_by_fid(fid).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get FID by username
+    pub async fn get_fid_by_username(&self, username: &str) -> Result<Option<Fid>> {
+        if let Some(hub) = &self.hub_client {
+            let proof = hub.get_username_proof_by_name(username).await?;
+            return Ok(proof.map(|p| Fid::new(p.fid)));
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
