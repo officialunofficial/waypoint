@@ -38,7 +38,8 @@ pub async fn run_service(config: &Config) -> Result<()> {
             .with_retention(Duration::from_secs(24 * 60 * 60))
             .with_processors(vec![
                 ProcessorType::Database, // Enable database by default
-                ProcessorType::Print,    // Enable print processor by default for easier debugging
+                                         // PrintProcessor disabled by default to reduce log verbosity
+                                         // To enable for debugging, add ProcessorType::Print here
             ])
     });
 

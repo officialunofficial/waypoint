@@ -65,6 +65,12 @@ pub trait HubClient: Send + Sync {
     /// Get username proofs
     async fn get_username_proofs_by_fid(&self, fid: Fid) -> Result<Vec<Message>>;
 
+    /// Get username proof by name
+    async fn get_username_proof_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::proto::UserNameProof>>;
+
     /// Get verifications
     async fn get_verifications_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>>;
 
@@ -91,6 +97,75 @@ pub trait HubClient: Send + Sync {
 
     /// Get all casts by FID with timestamp filtering
     async fn get_all_casts_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>>;
+
+    /// Get a specific reaction by params
+    async fn get_reaction(
+        &self,
+        fid: Fid,
+        reaction_type: u8,
+        target_cast_fid: Option<Fid>,
+        target_cast_hash: Option<&[u8]>,
+        target_url: Option<&str>,
+    ) -> Result<Option<Message>>;
+
+    /// Get reactions by FID
+    async fn get_reactions_by_fid(
+        &self,
+        fid: Fid,
+        reaction_type: Option<u8>,
+        limit: usize,
+    ) -> Result<Vec<Message>>;
+
+    /// Get reactions by target (cast or URL)
+    async fn get_reactions_by_target(
+        &self,
+        target_cast_fid: Option<Fid>,
+        target_cast_hash: Option<&[u8]>,
+        target_url: Option<&str>,
+        reaction_type: Option<u8>,
+        limit: usize,
+    ) -> Result<Vec<Message>>;
+
+    /// Get all reactions by FID with timestamp filtering
+    async fn get_all_reactions_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>>;
+
+    /// Get a specific link by params
+    async fn get_link(&self, fid: Fid, link_type: &str, target_fid: Fid)
+    -> Result<Option<Message>>;
+
+    /// Get links by FID
+    async fn get_links_by_fid(
+        &self,
+        fid: Fid,
+        link_type: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Message>>;
+
+    /// Get links by target
+    async fn get_links_by_target(
+        &self,
+        target_fid: Fid,
+        link_type: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Message>>;
+
+    /// Get link compact state messages by FID
+    async fn get_link_compact_state_by_fid(&self, fid: Fid) -> Result<Vec<Message>>;
+
+    /// Get all links by FID with timestamp filtering
+    async fn get_all_links_by_fid(
         &self,
         fid: Fid,
         limit: usize,
@@ -140,6 +215,16 @@ where
     pub async fn get_username_proofs_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
         if let Some(hub) = &self.hub_client {
             return hub.get_username_proofs_by_fid(fid).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get FID by username
+    pub async fn get_fid_by_username(&self, username: &str) -> Result<Option<Fid>> {
+        if let Some(hub) = &self.hub_client {
+            let proof = hub.get_username_proof_by_name(username).await?;
+            return Ok(proof.map(|p| Fid::new(p.fid)));
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
@@ -226,6 +311,151 @@ where
     ) -> Result<Vec<Message>> {
         if let Some(hub) = &self.hub_client {
             return hub.get_all_casts_by_fid(fid, limit, start_time, end_time).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get a specific reaction
+    pub async fn get_reaction(
+        &self,
+        fid: Fid,
+        reaction_type: u8,
+        target_cast_fid: Option<Fid>,
+        target_cast_hash: Option<&[u8]>,
+        target_url: Option<&str>,
+    ) -> Result<Option<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub
+                .get_reaction(fid, reaction_type, target_cast_fid, target_cast_hash, target_url)
+                .await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get reactions by FID
+    pub async fn get_reactions_by_fid(
+        &self,
+        fid: Fid,
+        reaction_type: Option<u8>,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_reactions_by_fid(fid, reaction_type, limit).await;
+        }
+
+        if let Some(db) = &self.database {
+            return db.get_messages_by_fid(fid, MessageType::Reaction, limit, None).await;
+        }
+
+        Err(DataAccessError::Other("No data source available".to_string()))
+    }
+
+    /// Get reactions by target
+    pub async fn get_reactions_by_target(
+        &self,
+        target_cast_fid: Option<Fid>,
+        target_cast_hash: Option<&[u8]>,
+        target_url: Option<&str>,
+        reaction_type: Option<u8>,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub
+                .get_reactions_by_target(
+                    target_cast_fid,
+                    target_cast_hash,
+                    target_url,
+                    reaction_type,
+                    limit,
+                )
+                .await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get all reactions by FID with timestamp filtering
+    pub async fn get_all_reactions_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_all_reactions_by_fid(fid, limit, start_time, end_time).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get a specific link
+    pub async fn get_link(
+        &self,
+        fid: Fid,
+        link_type: &str,
+        target_fid: Fid,
+    ) -> Result<Option<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_link(fid, link_type, target_fid).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get links by FID
+    pub async fn get_links_by_fid(
+        &self,
+        fid: Fid,
+        link_type: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_links_by_fid(fid, link_type, limit).await;
+        }
+
+        if let Some(db) = &self.database {
+            return db.get_messages_by_fid(fid, MessageType::Link, limit, None).await;
+        }
+
+        Err(DataAccessError::Other("No data source available".to_string()))
+    }
+
+    /// Get links by target
+    pub async fn get_links_by_target(
+        &self,
+        target_fid: Fid,
+        link_type: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_links_by_target(target_fid, link_type, limit).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get link compact state messages by FID
+    pub async fn get_link_compact_state_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_link_compact_state_by_fid(fid).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get all links by FID with timestamp filtering
+    pub async fn get_all_links_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_all_links_by_fid(fid, limit, start_time, end_time).await;
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))

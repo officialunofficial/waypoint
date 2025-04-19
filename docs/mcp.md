@@ -6,6 +6,8 @@ Waypoint now supports the Model Context Protocol (MCP), allowing AI assistants t
 
 The Model Context Protocol (MCP) is a specification that allows AI assistants to communicate with external tools using a standardized JSON-RPC based protocol. This integration lets AI agents query real-time Snapchain data from your Waypoint instance.
 
+The Waypoint MCP integration includes a customizable prompt system that supports preserving Ethereum Name Service (ENS) domains (like "vitalik.eth") when working with Farcaster usernames.
+
 ## Configuration
 
 To enable MCP integration, configure the following settings in your `config.toml` file or through environment variables:
@@ -63,7 +65,7 @@ The Data Context pattern is detailed in the [Architecture Documentation](archite
 
 The Waypoint MCP integration provides the following tools to AI assistants:
 
-> **Note**: This implementation provides access to Farcaster user data, casts, and verifications via a simple interface that can be extended with additional tools.
+> **Note**: This implementation provides access to Farcaster user data, casts, reactions, links, and verifications via a comprehensive interface. It allows accessing users by FID or username and supports exploring the social graph through follow relationships.
 
 ### User Tools
 
@@ -290,6 +292,129 @@ Retrieve casts from a user with optional timestamp filtering.
 }
 ```
 
+#### Get User by Username
+
+Find a user's profile by their Farcaster username instead of FID.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_user_by_username",
+    "input": {
+      "username": "alice"
+    }
+  }
+}
+```
+
+The response includes the same comprehensive profile information as get_user_by_fid, but allows searching by username instead of requiring an FID.
+
+#### Get FID by Username
+
+Find a user's FID by their Farcaster username.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_fid_by_username",
+    "input": {
+      "username": "alice"
+    }
+  }
+}
+```
+
+Response:
+```json
+{
+  "username": "alice",
+  "fid": 12345,
+  "found": true
+}
+```
+
+#### Get Link (Follow Relationship)
+
+Check if a user follows another user (or any other link type relationship).
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_link",
+    "input": {
+      "fid": 12345,
+      "target_fid": 6789
+    }
+  }
+}
+```
+
+The `link_type` defaults to "follow" if not specified, making it easy to check follow relationships.
+
+#### Get Links by FID (Who a User Follows)
+
+Find users that a specific user follows.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_links_by_fid",
+    "input": {
+      "fid": 12345,
+      "limit": 20
+    }
+  }
+}
+```
+
+By default, this returns "follow" type links unless a different link_type is specified.
+
+#### Get Links by Target (Who Follows a User)
+
+Find users that follow a specific user.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_links_by_target",
+    "input": {
+      "target_fid": 12345,
+      "limit": 20
+    }
+  }
+}
+```
+
+By default, this returns "follow" type links unless a different link_type is specified.
+
+
+## Using the Waypoint Prompt
+
+The Waypoint MCP integration includes a customizable prompt for AI assistants:
+
+```json
+{
+  "method": "getPrompt",
+  "params": {
+    "name": "waypoint_prompt",
+    "arguments": {
+      "fid": 12345,
+      "username": "vitalik.eth"
+    }
+  }
+}
+```
+
+The prompt supports two parameters:
+- `fid` (required): The Farcaster ID to focus on
+- `username` (optional): The username associated with the FID, including full ENS domains
+
+This provides the assistant with a context-aware prompt for exploring Farcaster data about the specified user, preserving the complete username including any ".eth" domain.
 
 ## Example Usage
 
@@ -390,6 +515,52 @@ AI: "Let me search for posts during that specific time period."
      - Jan 7: 'Wrapping up a productive week of building'
      - Jan 5: 'Just pushed a major update to my project'
      - Jan 3: 'Happy new year everyone! Looking forward to building in 2023'
+    "
+```
+
+### Finding a User by Their Username
+
+```
+User: "Can you find information about the Farcaster user @alice?"
+
+AI: "Let me look up that username on Farcaster."
+    [AI uses the get_user_by_username tool with username "alice"]
+    
+    "Here's what I found for @alice on Farcaster:
+     - FID: 12345
+     - Display name: Alice Builder
+     - Bio: Building cool things with Farcaster
+     - Location: New York, NY
+     - Twitter: @alicebuilder
+     - Website: https://alice.dev
+    "
+```
+
+### Checking Follow Relationships
+
+```
+User: "Does user @alice follow user @bob on Farcaster?"
+
+AI: "Let me check if Alice follows Bob on Farcaster."
+    [AI first uses get_fid_by_username for "alice" and then for "bob"]
+    [Then AI uses get_link with Alice's FID as source and Bob's FID as target]
+    
+    "Yes, Alice (FID 12345) follows Bob (FID 6789) on Farcaster."
+```
+
+```
+User: "Who follows @alice on Farcaster?"
+
+AI: "Let me find who follows Alice on Farcaster."
+    [AI uses get_fid_by_username to get Alice's FID]
+    [Then AI uses get_links_by_target with Alice's FID]
+    
+    "Alice has 5 followers on Farcaster:
+     - Bob (FID 6789)
+     - Carol (FID 2468)
+     - Dave (FID 1357)
+     - Eve (FID 9876)
+     - Frank (FID 5432)
     "
 ```
 

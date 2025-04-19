@@ -22,7 +22,9 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 
 ### MCP Service
 - **Model Context Protocol**: Provides AI assistants with access to Farcaster data
-- **Available Tools**: Fetch user profiles, verifications, casts, and replies
+- **Available Tools**: Fetch user profiles (by FID or username), verifications, casts, reactions, and links
+- **Username Search**: Find users by their Farcaster username instead of requiring FID
+- **Social Graph**: Explore follow relationships with default "follow" link type
 - **Documentation**: See [mcp.md](docs/mcp.md) for details
 
 ## Getting Started
@@ -206,10 +208,10 @@ sequenceDiagram
             
             Consumer->>Processor: Process message batch
             
-            par Process with Multiple Processors
+            par Process with Processors
                 Processor->>Processor: DatabaseProcessor processes events
                 Processor->>DB: Store events in database
-                Processor->>Processor: PrintProcessor (debug logging)
+                Note over Processor: PrintProcessor disabled by default
             end
             
             Processor->>Consumer: Processing results

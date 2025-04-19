@@ -4,9 +4,22 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-04-19 (Released)
+
 ### Added
+- MCP tools for finding users by username
+- `get_fid_by_username`: Find FID by Farcaster username
+- `get_user_by_username`: Get complete user profile by username
+- Default "follow" link type for all Link APIs
+- Optional username parameter to waypoint_prompt for better ENS support
+
+### Changed
 - Improved data architecture documentation with UML diagrams
 - Documentation updates to correctly reflect DataContext pattern
+- Reduced log verbosity by moving frequent logs to trace level
+- Disabled PrintProcessor by default to reduce log noise
+- Fixed waypoint_prompt to handle string FIDs
+- Enhanced waypoint_prompt to preserve ENS domains (.eth) in usernames
 
 ## [0.2.1] - 2025-04-18 (Released)
 

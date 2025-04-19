@@ -13,7 +13,7 @@ use tokio::{
     sync::{Mutex, RwLock, oneshot},
     task::JoinHandle,
 };
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 const DEFAULT_BATCH_SIZE: u64 = 10;
 const DEFAULT_CONCURRENCY: usize = 200;
@@ -156,7 +156,7 @@ impl Consumer {
             while let Some(()) = startup_rx.recv().await {
                 count += 1;
                 // For debugging purposes
-                info!("Task initialization signal received ({}/{})", count, total_tasks);
+                trace!("Task initialization signal received ({}/{})", count, total_tasks);
             }
 
             info!("All {} tasks initialized. Marking startup as complete.", count);
@@ -230,7 +230,7 @@ impl Consumer {
             return Err(e);
         }
 
-        info!("Starting stream processor for {:?}", message_type);
+        trace!("Starting stream processor for {:?}", message_type);
 
         // Main processing loop
         while !self.should_shutdown().await {
@@ -303,7 +303,7 @@ impl Consumer {
                     .await
                 {
                     Ok(count) if !count.is_empty() => {
-                        info!("Processed {} stale events for {}", count.len(), stream_key);
+                        trace!("Processed {} stale events for {}", count.len(), stream_key);
                     },
                     Ok(_) => {
                         // No stale messages either, wait briefly before next poll
@@ -403,7 +403,7 @@ impl Consumer {
         let stream_key =
             crate::types::get_stream_key(clean_host, message_type.to_stream_key(), Some("evt"));
 
-        info!("Starting cleanup task for {:?}", message_type);
+        trace!("Starting cleanup task for {:?}", message_type);
 
         // Create an interval that will fire every minute
         let mut interval = tokio::time::interval(Duration::from_secs(60));
