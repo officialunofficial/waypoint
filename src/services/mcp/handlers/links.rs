@@ -13,13 +13,13 @@ where
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     /// Get a specific link
-    pub async fn do_get_link(
-        &self,
-        fid: Fid,
-        link_type: &str,
-        target_fid: Fid,
-    ) -> String {
-        tracing::info!("MCP: Fetching link with FID: {}, type: {}, target: {}", fid, link_type, target_fid);
+    pub async fn do_get_link(&self, fid: Fid, link_type: &str, target_fid: Fid) -> String {
+        tracing::info!(
+            "MCP: Fetching link with FID: {}, type: {}, target: {}",
+            fid,
+            link_type,
+            target_fid
+        );
 
         // Use the data context to fetch the link
         match self.data_context.get_link(fid, link_type, target_fid).await {
@@ -29,17 +29,20 @@ where
                     let msg_data: crate::proto::MessageData = data;
 
                     // Process the link
-                    if let Some(link_obj) = super::utils::process_link_message(&message, &msg_data) {
+                    if let Some(link_obj) = super::utils::process_link_message(&message, &msg_data)
+                    {
                         // Convert to JSON string
-                        return serde_json::to_string_pretty(&link_obj).unwrap_or_else(|_| {
-                            format!("Error formatting link for FID {}", fid)
-                        });
+                        return serde_json::to_string_pretty(&link_obj)
+                            .unwrap_or_else(|_| format!("Error formatting link for FID {}", fid));
                     }
                 }
 
                 format!("Link found but could not be processed for FID {}", fid)
             },
-            Ok(None) => format!("No link found for FID {} with type {} to target {}", fid, link_type, target_fid),
+            Ok(None) => format!(
+                "No link found for FID {} with type {} to target {}",
+                fid, link_type, target_fid
+            ),
             Err(e) => format!("Error fetching link: {}", e),
         }
     }
@@ -86,7 +89,9 @@ where
                         .filter_map(|message| {
                             if let Ok(data) = ProstMessage::decode(&*message.payload) {
                                 let msg_data: crate::proto::MessageData = data;
-                                if let Some(link_obj) = super::utils::process_link_message(message, &msg_data) {
+                                if let Some(link_obj) =
+                                    super::utils::process_link_message(message, &msg_data)
+                                {
                                     return Some(serde_json::Value::Object(link_obj));
                                 }
                             }
@@ -102,18 +107,16 @@ where
                 };
 
                 // Convert to JSON string
-                serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|_| format!("Error formatting links to target FID {}", target_fid))
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    format!("Error formatting links to target FID {}", target_fid)
+                })
             },
             Err(e) => format!("Error fetching links by target: {}", e),
         }
     }
 
     /// Get link compact state messages by FID
-    pub async fn do_get_link_compact_state_by_fid(
-        &self,
-        fid: Fid,
-    ) -> String {
+    pub async fn do_get_link_compact_state_by_fid(&self, fid: Fid) -> String {
         tracing::info!("MCP: Fetching link compact state for FID: {}", fid);
 
         // Use the data context to fetch compact state messages
@@ -129,7 +132,9 @@ where
                     .filter_map(|message| {
                         if let Ok(data) = ProstMessage::decode(&*message.payload) {
                             let msg_data: crate::proto::MessageData = data;
-                            if let Some(link_obj) = super::utils::process_link_message(message, &msg_data) {
+                            if let Some(link_obj) =
+                                super::utils::process_link_message(message, &msg_data)
+                            {
                                 return Some(serde_json::Value::Object(link_obj));
                             }
                         }
@@ -145,8 +150,9 @@ where
                 });
 
                 // Convert to JSON string
-                serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|_| format!("Error formatting link compact state for FID {}", fid))
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    format!("Error formatting link compact state for FID {}", fid)
+                })
             },
             Err(e) => format!("Error fetching link compact state: {}", e),
         }

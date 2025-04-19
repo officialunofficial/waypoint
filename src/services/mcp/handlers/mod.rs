@@ -13,13 +13,30 @@ use crate::core::types::Fid;
 use crate::services::mcp::base::{NullDb, WaypointMcpService};
 
 use rmcp::{
-    model::CallToolResult, const_string, 
-    Error as McpError, 
-    ServerHandler, 
+    Error as McpError, ServerHandler, const_string,
+    model::CallToolResult,
     model::*,
     service::{RequestContext, RoleServer},
     tool,
 };
+
+// Helper trait for debugging JSON value types
+trait JsonValueTypeInfo {
+    fn type_name(&self) -> &'static str;
+}
+
+impl JsonValueTypeInfo for serde_json::Value {
+    fn type_name(&self) -> &'static str {
+        match self {
+            serde_json::Value::Null => "null",
+            serde_json::Value::Bool(_) => "boolean",
+            serde_json::Value::Number(_) => "number",
+            serde_json::Value::String(_) => "string",
+            serde_json::Value::Array(_) => "array",
+            serde_json::Value::Object(_) => "object",
+        }
+    }
+}
 
 // Non-generic wrapper for WaypointMcpService to use with RMCP macros
 #[derive(Clone)]
@@ -56,7 +73,8 @@ impl WaypointMcpTools {
     #[tool(description = "Get verified addresses for a Farcaster user")]
     async fn get_verifications_by_fid(
         &self,
-        #[tool(aggr)] common::GetVerificationsRequest { fid, limit }: common::GetVerificationsRequest,
+        #[tool(aggr)]
+        common::GetVerificationsRequest { fid, limit }: common::GetVerificationsRequest,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let result = self.service.do_get_verifications_by_fid(fid, limit).await;
@@ -128,35 +146,46 @@ impl WaypointMcpTools {
     #[tool(description = "Get a specific reaction")]
     async fn get_reaction(
         &self,
-        #[tool(aggr)] common::ReactionRequest { fid, reaction_type, target_cast_fid, target_cast_hash, target_url }: common::ReactionRequest,
+        #[tool(aggr)] common::ReactionRequest {
+            fid,
+            reaction_type,
+            target_cast_fid,
+            target_cast_hash,
+            target_url,
+        }: common::ReactionRequest,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let target_cast_fid = target_cast_fid.map(Fid::from);
-        
+
         // Convert hex hash to bytes if provided
         let target_cast_hash_bytes = if let Some(hash) = &target_cast_hash {
             match hex::decode(hash.trim_start_matches("0x")) {
                 Ok(bytes) => Some(bytes),
-                Err(_) => return Err(McpError::invalid_params(
-                    "Invalid hash format",
-                    Some(serde_json::json!({ "hash": hash })),
-                )),
+                Err(_) => {
+                    return Err(McpError::invalid_params(
+                        "Invalid hash format",
+                        Some(serde_json::json!({ "hash": hash })),
+                    ));
+                },
             }
         } else {
             None
         };
-        
+
         let target_cast_hash_ref = target_cast_hash_bytes.as_deref();
         let target_url_ref = target_url.as_deref();
-        
-        let result = self.service.do_get_reaction(
-            fid, 
-            reaction_type, 
-            target_cast_fid, 
-            target_cast_hash_ref,
-            target_url_ref,
-        ).await;
-        
+
+        let result = self
+            .service
+            .do_get_reaction(
+                fid,
+                reaction_type,
+                target_cast_fid,
+                target_cast_hash_ref,
+                target_url_ref,
+            )
+            .await;
+
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
@@ -173,40 +202,45 @@ impl WaypointMcpTools {
     #[tool(description = "Get reactions for a target (cast or URL)")]
     async fn get_reactions_by_target(
         &self,
-        #[tool(aggr)] common::ReactionsByTargetRequest { 
-            target_cast_fid, 
-            target_cast_hash, 
-            target_url, 
-            reaction_type, 
-            limit 
+        #[tool(aggr)] common::ReactionsByTargetRequest {
+            target_cast_fid,
+            target_cast_hash,
+            target_url,
+            reaction_type,
+            limit,
         }: common::ReactionsByTargetRequest,
     ) -> Result<CallToolResult, McpError> {
         let target_cast_fid = target_cast_fid.map(Fid::from);
-        
+
         // Convert hex hash to bytes if provided
         let target_cast_hash_bytes = if let Some(hash) = &target_cast_hash {
             match hex::decode(hash.trim_start_matches("0x")) {
                 Ok(bytes) => Some(bytes),
-                Err(_) => return Err(McpError::invalid_params(
-                    "Invalid hash format",
-                    Some(serde_json::json!({ "hash": hash })),
-                )),
+                Err(_) => {
+                    return Err(McpError::invalid_params(
+                        "Invalid hash format",
+                        Some(serde_json::json!({ "hash": hash })),
+                    ));
+                },
             }
         } else {
             None
         };
-        
+
         let target_cast_hash_ref = target_cast_hash_bytes.as_deref();
         let target_url_ref = target_url.as_deref();
-        
-        let result = self.service.do_get_reactions_by_target(
-            target_cast_fid,
-            target_cast_hash_ref,
-            target_url_ref,
-            reaction_type,
-            limit,
-        ).await;
-        
+
+        let result = self
+            .service
+            .do_get_reactions_by_target(
+                target_cast_fid,
+                target_cast_hash_ref,
+                target_url_ref,
+                reaction_type,
+                limit,
+            )
+            .await;
+
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
@@ -216,7 +250,8 @@ impl WaypointMcpTools {
         #[tool(aggr)] common::FidTimestampRequest { fid, limit, start_time, end_time }: common::FidTimestampRequest,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
-        let result = self.service.do_get_all_reactions_by_fid(fid, limit, start_time, end_time).await;
+        let result =
+            self.service.do_get_all_reactions_by_fid(fid, limit, start_time, end_time).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
@@ -235,7 +270,8 @@ impl WaypointMcpTools {
     #[tool(description = "Get links by a specific Farcaster user")]
     async fn get_links_by_fid(
         &self,
-        #[tool(aggr)] common::LinksByFidRequest { fid, link_type, limit }: common::LinksByFidRequest,
+        #[tool(aggr)]
+        common::LinksByFidRequest { fid, link_type, limit }: common::LinksByFidRequest,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let link_type_ref = link_type.as_deref();
@@ -354,12 +390,45 @@ impl ServerHandler for WaypointMcpTools {
         _: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         match name.as_str() {
-            "waypoint_prompt" => {
-                let fid = arguments
-                    .and_then(|json| json.get("fid")?.as_u64().map(|n| n.to_string()))
-                    .ok_or_else(|| {
-                        McpError::invalid_params("No FID provided to waypoint_prompt", None)
-                    })?;
+            WaypointPrompt::VALUE => {
+                // Ensure arguments is not None
+                let arguments = arguments.ok_or_else(|| {
+                    McpError::invalid_params("No arguments provided to waypoint_prompt", None)
+                })?;
+
+                // Extract FID from arguments
+                let fid_value = arguments.get("fid").ok_or_else(|| {
+                    McpError::invalid_params("No FID provided to waypoint_prompt", None)
+                })?;
+
+                // Log the type of the FID value for debugging at trace level
+                tracing::trace!(
+                    "FID value type: {:?}, value: {:?}",
+                    fid_value.type_name(),
+                    fid_value
+                );
+
+                // Try to parse FID as different types
+                let fid = if let Some(num) = fid_value.as_u64() {
+                    num.to_string()
+                } else if let Some(num_str) = fid_value.as_str() {
+                    // Try to parse string as number
+                    match num_str.parse::<u64>() {
+                        Ok(n) => n.to_string(),
+                        Err(_) => {
+                            return Err(McpError::invalid_params(
+                                format!("FID must be a number, got string: '{}'", num_str),
+                                Some(serde_json::json!({"fid_value": fid_value})),
+                            ));
+                        },
+                    }
+                } else {
+                    // If it's neither u64 nor string, return detailed error
+                    return Err(McpError::invalid_params(
+                        format!("FID must be a number, got type: {}", fid_value.type_name()),
+                        Some(serde_json::json!({"fid_value": fid_value})),
+                    ));
+                };
 
                 let prompt = format!(
                     "You are a helpful assistant for exploring Farcaster data. You're currently focusing on FID {}. You can help fetch user data, verifications, casts, reactions, and links for this user using the appropriate tools.",

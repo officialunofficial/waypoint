@@ -348,7 +348,8 @@ impl Service for McpService {
                     let waypoint_service = WaypointMcpService::new(data_context);
 
                     // Create the tools wrapper
-                    let tools = crate::services::mcp::handlers::WaypointMcpTools::new(waypoint_service);
+                    let tools =
+                        crate::services::mcp::handlers::WaypointMcpTools::new(waypoint_service);
 
                     // Initialize the tools with the SSE server
                     sse_server.with_service(move || tools.clone());

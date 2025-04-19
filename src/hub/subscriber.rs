@@ -17,7 +17,7 @@ use std::{
 };
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, info, instrument, trace, warn};
 
 pub type PreProcessHandler = Arc<
     dyn Fn(&[HubEvent], &[Vec<u8>]) -> futures::future::BoxFuture<'static, Vec<bool>> + Send + Sync,
@@ -225,9 +225,9 @@ impl HubSubscriber {
 
         let last_id = self.get_last_event_id().await?;
         if last_id > Some(0) {
-            info!("Found last hub event ID: {}", last_id.unwrap());
+            trace!("Found last hub event ID: {}", last_id.unwrap());
         } else {
-            info!("No last hub event ID found, starting from beginning");
+            trace!("No last hub event ID found, starting from beginning");
         }
 
         let mut stream = self.connect_stream(last_id).await?;
@@ -703,7 +703,7 @@ impl HubSubscriber {
                         break;
                     }
 
-                    debug!("Retrying batch flush in {:?}...", backoff);
+                    trace!("Retrying batch flush in {:?}...", backoff);
                     tokio::time::sleep(backoff).await;
                     backoff = std::cmp::min(backoff * 2, max_backoff);
                 },
@@ -730,7 +730,7 @@ impl HubSubscriber {
         let start_time = Instant::now();
         let event_count = batch.events.len();
 
-        debug!("Flushing batch of {} events ({} bytes)", event_count, batch.current_bytes);
+        trace!("Flushing batch of {} events ({} bytes)", event_count, batch.current_bytes);
 
         // Filter spam events
         let keep_indices = self
@@ -740,7 +740,7 @@ impl HubSubscriber {
 
         let filtered_count = event_count - keep_indices.len();
         if filtered_count > 0 {
-            debug!("Filtered {} spam events from batch", filtered_count);
+            trace!("Filtered {} spam events from batch", filtered_count);
         }
 
         let event_groups: DashMap<&str, Vec<Vec<u8>>> = DashMap::new();
@@ -831,7 +831,7 @@ impl HubSubscriber {
 
         // Check if we have event groups to process
         if event_groups.is_empty() {
-            debug!("No valid events to process in batch after filtering");
+            trace!("No valid events to process in batch after filtering");
             batch.events.clear();
             batch.current_bytes = 0;
             batch.last_flush = Instant::now();
@@ -844,7 +844,7 @@ impl HubSubscriber {
         for (event_type, bytes) in event_groups {
             group_count += 1;
             let group_size = bytes.len();
-            debug!("Processing group {}: {} {} events", group_count, group_size, event_type);
+            trace!("Processing group {}: {} {} events", group_count, group_size, event_type);
 
             let parts: Vec<&str> = self.stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
@@ -857,7 +857,7 @@ impl HubSubscriber {
             handles.push(tokio::spawn(async move {
                 let result = redis_stream.add_batch_maxlen(&stream_key, stream_maxlen, bytes).await;
                 if result.is_ok() {
-                    debug!("Published {} events to {}", group_size, stream_key);
+                    trace!("Published {} events to {}", group_size, stream_key);
                 }
                 result
             }));
@@ -886,7 +886,7 @@ impl HubSubscriber {
             if let Some((last_event, _)) = batch.events.get(last_idx) {
                 match self.redis.set_last_processed_event(&self.redis_key, last_event.id).await {
                     Ok(_) => {
-                        debug!("Updated last processed event ID to {}", last_event.id);
+                        trace!("Updated last processed event ID to {}", last_event.id);
                     },
                     Err(e) => {
                         error!("Failed to update last processed event ID: {}", e);
@@ -902,7 +902,7 @@ impl HubSubscriber {
         batch.last_flush = Instant::now();
 
         let elapsed = start_time.elapsed();
-        debug!("Finished flushing batch in {:?}", elapsed);
+        trace!("Finished flushing batch in {:?}", elapsed);
 
         // Update the last successful flush timestamp
         *self.last_successful_flush.write().await = Some(Instant::now());

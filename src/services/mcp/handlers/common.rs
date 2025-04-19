@@ -1,8 +1,8 @@
 //! Common request types for MCP handlers
 
-use serde::Deserialize;
 use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
+use serde::Deserialize;
 
 /// Default limit for most requests
 pub(crate) fn default_limit() -> usize {
@@ -100,7 +100,9 @@ pub struct ReactionRequest {
     pub reaction_type: u8,
     #[schemars(description = "Target cast FID (required if target_cast_hash is provided)")]
     pub target_cast_fid: Option<u64>,
-    #[schemars(description = "Target cast hash in hex format (required if target_cast_fid is provided)")]
+    #[schemars(
+        description = "Target cast hash in hex format (required if target_cast_fid is provided)"
+    )]
     pub target_cast_hash: Option<String>,
     #[schemars(description = "Target URL (alternative to target_cast_fid and target_cast_hash)")]
     pub target_url: Option<String>,
@@ -123,7 +125,9 @@ pub struct ReactionsByFidRequest {
 pub struct ReactionsByTargetRequest {
     #[schemars(description = "Target cast FID (required if target_cast_hash is provided)")]
     pub target_cast_fid: Option<u64>,
-    #[schemars(description = "Target cast hash in hex format (required if target_cast_fid is provided)")]
+    #[schemars(
+        description = "Target cast hash in hex format (required if target_cast_fid is provided)"
+    )]
     pub target_cast_hash: Option<String>,
     #[schemars(description = "Target URL (alternative to target_cast_fid and target_cast_hash)")]
     pub target_url: Option<String>,

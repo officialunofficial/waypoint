@@ -127,7 +127,8 @@ pub fn process_reaction_message(
         "timestamp".to_string(),
         serde_json::Value::Number(serde_json::Number::from(msg_data.timestamp)),
     );
-    reaction_obj.insert("hash".to_string(), serde_json::Value::String(message.id.value().to_string()));
+    reaction_obj
+        .insert("hash".to_string(), serde_json::Value::String(message.id.value().to_string()));
 
     // Add reaction type
     let reaction_type_str = match reaction_body.r#type {
@@ -259,8 +260,7 @@ pub fn format_casts_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
     };
 
     // Convert to JSON string
-    serde_json::to_string_pretty(&result)
-        .unwrap_or_else(|_| "Error formatting casts".to_string())
+    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Error formatting casts".to_string())
 }
 
 /// Format an array of reaction messages into a JSON response
@@ -345,6 +345,5 @@ pub fn format_links_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
     };
 
     // Convert to JSON string
-    serde_json::to_string_pretty(&result)
-        .unwrap_or_else(|_| "Error formatting links".to_string())
+    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Error formatting links".to_string())
 }

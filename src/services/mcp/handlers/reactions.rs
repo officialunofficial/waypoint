@@ -24,14 +24,20 @@ where
         tracing::info!("MCP: Fetching reaction with FID: {} and type: {}", fid, reaction_type);
 
         // Use the data context to fetch the reaction
-        match self.data_context.get_reaction(fid, reaction_type, target_cast_fid, target_cast_hash, target_url).await {
+        match self
+            .data_context
+            .get_reaction(fid, reaction_type, target_cast_fid, target_cast_hash, target_url)
+            .await
+        {
             Ok(Some(message)) => {
                 // Try to decode the message payload as MessageData
                 if let Ok(data) = ProstMessage::decode(&*message.payload) {
                     let msg_data: crate::proto::MessageData = data;
 
                     // Process the reaction
-                    if let Some(reaction_obj) = super::utils::process_reaction_message(&message, &msg_data) {
+                    if let Some(reaction_obj) =
+                        super::utils::process_reaction_message(&message, &msg_data)
+                    {
                         // Convert to JSON string
                         return serde_json::to_string_pretty(&reaction_obj).unwrap_or_else(|_| {
                             format!("Error formatting reaction for FID {}", fid)
@@ -74,13 +80,17 @@ where
         tracing::info!("MCP: Fetching reactions by target");
 
         // Use the data context to fetch reactions
-        match self.data_context.get_reactions_by_target(
-            target_cast_fid,
-            target_cast_hash,
-            target_url,
-            reaction_type,
-            limit,
-        ).await {
+        match self
+            .data_context
+            .get_reactions_by_target(
+                target_cast_fid,
+                target_cast_hash,
+                target_url,
+                reaction_type,
+                limit,
+            )
+            .await
+        {
             Ok(messages) => {
                 // Format response based on target type
                 let result = if messages.is_empty() {
@@ -112,7 +122,9 @@ where
                         .filter_map(|message| {
                             if let Ok(data) = ProstMessage::decode(&*message.payload) {
                                 let msg_data: crate::proto::MessageData = data;
-                                if let Some(reaction_obj) = super::utils::process_reaction_message(message, &msg_data) {
+                                if let Some(reaction_obj) =
+                                    super::utils::process_reaction_message(message, &msg_data)
+                                {
                                     return Some(serde_json::Value::Object(reaction_obj));
                                 }
                             }

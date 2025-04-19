@@ -31,7 +31,8 @@ where
                     let msg_data: crate::proto::MessageData = data;
 
                     // Process the cast
-                    if let Some(cast_obj) = super::utils::process_cast_message(&message, &msg_data) {
+                    if let Some(cast_obj) = super::utils::process_cast_message(&message, &msg_data)
+                    {
                         // Convert to JSON string
                         return serde_json::to_string_pretty(&cast_obj).unwrap_or_else(|_| {
                             format!("Error formatting cast for FID {} and hash {}", fid, hash_hex)
@@ -89,7 +90,8 @@ where
     ) -> String {
         tracing::info!(
             "MCP: Fetching replies to cast with FID: {} and hash: {}",
-            parent_fid, parent_hash_hex
+            parent_fid,
+            parent_hash_hex
         );
 
         // Convert hex hash to bytes

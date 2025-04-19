@@ -504,15 +504,15 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
-    
+
     /// Get a specific reaction by params
     async fn get_reaction(
-        &self, 
-        fid: Fid, 
-        reaction_type: u8, 
-        target_cast_fid: Option<Fid>, 
+        &self,
+        fid: Fid,
+        reaction_type: u8,
+        target_cast_fid: Option<Fid>,
         target_cast_hash: Option<&[u8]>,
-        target_url: Option<&str>
+        target_url: Option<&str>,
     ) -> Result<Option<Message>> {
         info!("Fetching specific reaction for FID: {} with type: {}", fid, reaction_type);
         let mut hub = self.hub.lock().await;
@@ -525,22 +525,31 @@ impl HubClient for FarcasterHubClient {
         // Create the target (either cast ID or URL)
         let target = match (target_cast_fid, target_cast_hash, target_url) {
             (Some(target_fid), Some(hash), _) => {
-                Some(crate::proto::reaction_request::Target::TargetCastId(
-                    crate::proto::CastId {
-                        fid: target_fid.value(),
-                        hash: hash.to_vec(),
-                    }
-                ))
+                Some(crate::proto::reaction_request::Target::TargetCastId(crate::proto::CastId {
+                    fid: target_fid.value(),
+                    hash: hash.to_vec(),
+                }))
             },
-            (_, _, Some(url)) => Some(crate::proto::reaction_request::Target::TargetUrl(url.to_string())),
-            _ => return Err(DataAccessError::Other("Either target cast or URL must be provided".to_string())),
+            (_, _, Some(url)) => {
+                Some(crate::proto::reaction_request::Target::TargetUrl(url.to_string()))
+            },
+            _ => {
+                return Err(DataAccessError::Other(
+                    "Either target cast or URL must be provided".to_string(),
+                ));
+            },
         };
 
         // Create ReactionRequest
         let reaction_type_enum = match reaction_type {
             1 => crate::proto::ReactionType::Like,
             2 => crate::proto::ReactionType::Recast,
-            _ => return Err(DataAccessError::Other(format!("Invalid reaction type: {}", reaction_type))),
+            _ => {
+                return Err(DataAccessError::Other(format!(
+                    "Invalid reaction type: {}",
+                    reaction_type
+                )));
+            },
         };
 
         let request = crate::proto::ReactionRequest {
@@ -569,7 +578,7 @@ impl HubClient for FarcasterHubClient {
             Err(e) => Err(DataAccessError::HubClient(e.to_string())),
         }
     }
-    
+
     /// Get reactions by FID
     async fn get_reactions_by_fid(
         &self,
@@ -625,7 +634,7 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
-    
+
     /// Get reactions by target (cast or URL)
     async fn get_reactions_by_target(
         &self,
@@ -647,14 +656,17 @@ impl HubClient for FarcasterHubClient {
         let target = match (target_cast_fid, target_cast_hash, target_url) {
             (Some(target_fid), Some(hash), _) => {
                 Some(crate::proto::reactions_by_target_request::Target::TargetCastId(
-                    crate::proto::CastId {
-                        fid: target_fid.value(),
-                        hash: hash.to_vec(),
-                    }
+                    crate::proto::CastId { fid: target_fid.value(), hash: hash.to_vec() },
                 ))
             },
-            (_, _, Some(url)) => Some(crate::proto::reactions_by_target_request::Target::TargetUrl(url.to_string())),
-            _ => return Err(DataAccessError::Other("Either target cast or URL must be provided".to_string())),
+            (_, _, Some(url)) => {
+                Some(crate::proto::reactions_by_target_request::Target::TargetUrl(url.to_string()))
+            },
+            _ => {
+                return Err(DataAccessError::Other(
+                    "Either target cast or URL must be provided".to_string(),
+                ));
+            },
         };
 
         // Convert reaction type
@@ -697,7 +709,7 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
-    
+
     /// Get all reactions by FID with timestamp filtering
     async fn get_all_reactions_by_fid(
         &self,
@@ -748,7 +760,7 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
-    
+
     /// Get a specific link by params
     async fn get_link(
         &self,
@@ -756,7 +768,10 @@ impl HubClient for FarcasterHubClient {
         link_type: &str,
         target_fid: Fid,
     ) -> Result<Option<Message>> {
-        info!("Fetching specific link for FID: {} with type: {} and target: {}", fid, link_type, target_fid);
+        info!(
+            "Fetching specific link for FID: {} with type: {} and target: {}",
+            fid, link_type, target_fid
+        );
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -791,7 +806,7 @@ impl HubClient for FarcasterHubClient {
             Err(e) => Err(DataAccessError::HubClient(e.to_string())),
         }
     }
-    
+
     /// Get links by FID
     async fn get_links_by_fid(
         &self,
@@ -840,7 +855,7 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
-    
+
     /// Get links by target
     async fn get_links_by_target(
         &self,
@@ -858,7 +873,9 @@ impl HubClient for FarcasterHubClient {
 
         // Create LinksByTargetRequest
         let request = crate::proto::LinksByTargetRequest {
-            target: Some(crate::proto::links_by_target_request::Target::TargetFid(target_fid.value())),
+            target: Some(crate::proto::links_by_target_request::Target::TargetFid(
+                target_fid.value(),
+            )),
             link_type: link_type.map(|lt| lt.to_string()),
             page_size: Some(limit as u32),
             page_token: None,
@@ -889,12 +906,9 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
-    
+
     /// Get link compact state messages by FID
-    async fn get_link_compact_state_by_fid(
-        &self,
-        fid: Fid,
-    ) -> Result<Vec<Message>> {
+    async fn get_link_compact_state_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
         info!("Fetching link compact state for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
@@ -935,7 +949,7 @@ impl HubClient for FarcasterHubClient {
 
         Ok(messages)
     }
-    
+
     /// Get all links by FID with timestamp filtering
     async fn get_all_links_by_fid(
         &self,

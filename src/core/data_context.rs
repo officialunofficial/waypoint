@@ -100,14 +100,14 @@ pub trait HubClient: Send + Sync {
 
     /// Get a specific reaction by params
     async fn get_reaction(
-        &self, 
-        fid: Fid, 
-        reaction_type: u8, 
-        target_cast_fid: Option<Fid>, 
+        &self,
+        fid: Fid,
+        reaction_type: u8,
+        target_cast_fid: Option<Fid>,
         target_cast_hash: Option<&[u8]>,
-        target_url: Option<&str>
+        target_url: Option<&str>,
     ) -> Result<Option<Message>>;
-    
+
     /// Get reactions by FID
     async fn get_reactions_by_fid(
         &self,
@@ -115,7 +115,7 @@ pub trait HubClient: Send + Sync {
         reaction_type: Option<u8>,
         limit: usize,
     ) -> Result<Vec<Message>>;
-    
+
     /// Get reactions by target (cast or URL)
     async fn get_reactions_by_target(
         &self,
@@ -125,7 +125,7 @@ pub trait HubClient: Send + Sync {
         reaction_type: Option<u8>,
         limit: usize,
     ) -> Result<Vec<Message>>;
-    
+
     /// Get all reactions by FID with timestamp filtering
     async fn get_all_reactions_by_fid(
         &self,
@@ -134,15 +134,11 @@ pub trait HubClient: Send + Sync {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<Message>>;
-    
+
     /// Get a specific link by params
-    async fn get_link(
-        &self,
-        fid: Fid,
-        link_type: &str,
-        target_fid: Fid,
-    ) -> Result<Option<Message>>;
-    
+    async fn get_link(&self, fid: Fid, link_type: &str, target_fid: Fid)
+    -> Result<Option<Message>>;
+
     /// Get links by FID
     async fn get_links_by_fid(
         &self,
@@ -150,7 +146,7 @@ pub trait HubClient: Send + Sync {
         link_type: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Message>>;
-    
+
     /// Get links by target
     async fn get_links_by_target(
         &self,
@@ -158,13 +154,10 @@ pub trait HubClient: Send + Sync {
         link_type: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Message>>;
-    
+
     /// Get link compact state messages by FID
-    async fn get_link_compact_state_by_fid(
-        &self,
-        fid: Fid,
-    ) -> Result<Vec<Message>>;
-    
+    async fn get_link_compact_state_by_fid(&self, fid: Fid) -> Result<Vec<Message>>;
+
     /// Get all links by FID with timestamp filtering
     async fn get_all_links_by_fid(
         &self,
@@ -306,7 +299,7 @@ where
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
-    
+
     /// Get a specific reaction
     pub async fn get_reaction(
         &self,
@@ -317,12 +310,14 @@ where
         target_url: Option<&str>,
     ) -> Result<Option<Message>> {
         if let Some(hub) = &self.hub_client {
-            return hub.get_reaction(fid, reaction_type, target_cast_fid, target_cast_hash, target_url).await;
+            return hub
+                .get_reaction(fid, reaction_type, target_cast_fid, target_cast_hash, target_url)
+                .await;
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
-    
+
     /// Get reactions by FID
     pub async fn get_reactions_by_fid(
         &self,
@@ -340,7 +335,7 @@ where
 
         Err(DataAccessError::Other("No data source available".to_string()))
     }
-    
+
     /// Get reactions by target
     pub async fn get_reactions_by_target(
         &self,
@@ -351,12 +346,20 @@ where
         limit: usize,
     ) -> Result<Vec<Message>> {
         if let Some(hub) = &self.hub_client {
-            return hub.get_reactions_by_target(target_cast_fid, target_cast_hash, target_url, reaction_type, limit).await;
+            return hub
+                .get_reactions_by_target(
+                    target_cast_fid,
+                    target_cast_hash,
+                    target_url,
+                    reaction_type,
+                    limit,
+                )
+                .await;
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
-    
+
     /// Get all reactions by FID with timestamp filtering
     pub async fn get_all_reactions_by_fid(
         &self,
@@ -371,7 +374,7 @@ where
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
-    
+
     /// Get a specific link
     pub async fn get_link(
         &self,
@@ -385,7 +388,7 @@ where
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
-    
+
     /// Get links by FID
     pub async fn get_links_by_fid(
         &self,
@@ -403,7 +406,7 @@ where
 
         Err(DataAccessError::Other("No data source available".to_string()))
     }
-    
+
     /// Get links by target
     pub async fn get_links_by_target(
         &self,
@@ -417,19 +420,16 @@ where
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
-    
+
     /// Get link compact state messages by FID
-    pub async fn get_link_compact_state_by_fid(
-        &self,
-        fid: Fid,
-    ) -> Result<Vec<Message>> {
+    pub async fn get_link_compact_state_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
         if let Some(hub) = &self.hub_client {
             return hub.get_link_compact_state_by_fid(fid).await;
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
-    
+
     /// Get all links by FID with timestamp filtering
     pub async fn get_all_links_by_fid(
         &self,
