@@ -6,3 +6,6 @@ contact_links:
   - name: Contributing Guidelines
     url: https://github.com/officialunofficial/waypoint/blob/main/docs/contributing.md
     about: Please read the contributing guidelines before submitting a PR
+  - name: Discussions
+    url: https://github.com/officialunofficial/waypoint/discussions
+    about: For questions, ideas, or general discussion, please use GitHub Discussions
