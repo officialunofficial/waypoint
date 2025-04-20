@@ -189,7 +189,15 @@ impl Hub {
         info!("Connecting to Farcaster hub at {}", self.config.url);
 
         // Create channel with connection settings
-        let channel = Channel::from_shared(format!("https://{}", self.config.url))
+        // Check if URL already has a scheme (http:// or https://)
+        let url_str =
+            if self.config.url.starts_with("http://") || self.config.url.starts_with("https://") {
+                self.config.url.clone()
+            } else {
+                format!("https://{}", self.config.url)
+            };
+
+        let channel = Channel::from_shared(url_str)
             .map_err(|e| Error::ConnectionError(e.to_string()))?
             .tls_config(ClientTlsConfig::new().with_native_roots())?
             .http2_keep_alive_interval(Duration::from_secs(10))

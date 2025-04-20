@@ -3670,7 +3670,7 @@ dependencies = [
 
 [[package]]
 name = "waypoint"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
