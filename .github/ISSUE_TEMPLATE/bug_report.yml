@@ -1,0 +1,107 @@
+name: Bug Report
+description: Report a bug in Waypoint
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Waypoint Bug Report
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible to help us resolve the issue quickly.
+
+  - type: input
+    id: version
+    attributes:
+      label: Waypoint Version
+      description: What version of Waypoint are you running?
+      placeholder: e.g., 0.2.1 or git commit hash
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Method
+      description: How are you running Waypoint?
+      options:
+        - Docker
+        - Docker Compose
+        - Compiled from source
+        - Other (please specify in environment details)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: What operating system are you using?
+      placeholder: e.g., Ubuntu 22.04, macOS 14.4, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug - what actually happened vs. what you expected to happen.
+      placeholder: A clear and concise description of the issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1. Run `...`
+        2. Configure '...'
+        3. See error in '...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Please include any relevant logs, error messages, or stack traces.
+      placeholder: Paste any logs here, they will be automatically formatted.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: Additional configuration details about your environment.
+      placeholder: |
+        - Database: PostgreSQL 17.2
+        - Redis version: 7.2.4
+        - Rust version (if applicable): 1.75.0
+        - Hub URL: snapchain.farcaster.xyz:3383
+        - Any other relevant configuration
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Your configuration (with sensitive data removed)
+      placeholder: |
+        # Redacted configuration or relevant environment variables
+        WAYPOINT_HUB__URL=...
+        WAYPOINT_MCP__ENABLED=...
+      render: toml
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](../docs/contributing.md)
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Thank You!
+        Thanks for reporting this bug. We'll review it as soon as possible.
