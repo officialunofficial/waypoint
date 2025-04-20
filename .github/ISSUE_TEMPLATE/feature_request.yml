@@ -1,0 +1,99 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Waypoint
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Waypoint Feature Request
+        Thanks for taking the time to suggest a new feature! Please provide as much detail as possible to help us understand your idea.
+
+  - type: dropdown
+    id: feature_area
+    attributes:
+      label: Feature Area
+      description: Which area of Waypoint does this feature request relate to?
+      options:
+        - Main Service (Streaming)
+        - Backfill System
+        - MCP Service
+        - Database / Data Processing
+        - Metrics & Monitoring
+        - Configuration
+        - Documentation
+        - Other (please specify in description)
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: A clear and concise description of the problem. E.g., I'm always frustrated when [...]
+    validations:
+      required: false
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see implemented.
+      placeholder: A clear and concise description of what you want to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered.
+      placeholder: Are there any workarounds or other approaches that could solve the same problem?
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any additional information that would help explain the request.
+      placeholder: Add any other context, screenshots, or examples about the feature request here.
+    validations:
+      required: false
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Ideas
+      description: If you have specific ideas about how to implement this feature, please share them.
+      placeholder: |
+        - Technical approach
+        - API design
+        - Data model changes
+        - Performance considerations
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Are you interested in contributing this feature yourself?
+      options:
+        - label: I would like to work on implementing this feature
+          required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](../docs/contributing.md)
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Thank You!
+        Thanks for suggesting this feature. We'll review it as soon as possible.

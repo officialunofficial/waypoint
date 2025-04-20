@@ -1,0 +1,38 @@
+# These owners will be the default owners for everything in
+# the repo. Unless a later match takes precedence,
+# they will be requested for review when someone opens a pull request.
+* @officialunofficial/maintainers
+
+# Core service files
+/src/app/ @officialunofficial/maintainers
+/src/core/ @officialunofficial/maintainers
+/src/processor/ @officialunofficial/maintainers
+
+# Database and data handling
+/src/database/ @officialunofficial/maintainers
+/migrations/ @officialunofficial/maintainers
+
+# Backfill system
+/src/backfill/ @officialunofficial/maintainers
+
+# MCP service
+/src/services/mcp/ @officialunofficial/maintainers
+
+# Configuration
+/config/ @officialunofficial/maintainers
+/src/config.rs @officialunofficial/maintainers
+
+# Documentation
+/docs/ @officialunofficial/maintainers
+*.md @officialunofficial/maintainers
+
+# Infrastructure files
+/docker-* @officialunofficial/maintainers
+/Dockerfile @officialunofficial/maintainers
+/Makefile @officialunofficial/maintainers
+
+# Testing
+**/tests/ @officialunofficial/maintainers
+
+# GitHub Actions and workflows
+/.github/ @officialunofficial/maintainers

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/officialunofficial/waypoint/tree/main/docs
+    about: Please check the documentation before creating an issue
+  - name: Contributing Guidelines
+    url: https://github.com/officialunofficial/waypoint/blob/main/docs/contributing.md
+    about: Please read the contributing guidelines before submitting a PR
+  - name: Discussions
+    url: https://github.com/officialunofficial/waypoint/discussions
+    about: For questions, ideas, or general discussion, please use GitHub Discussions
