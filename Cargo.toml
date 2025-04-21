@@ -1,6 +1,6 @@
 [package]
 name = "waypoint"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 default-run = "waypoint"
 rust-version = "1.85.0"
@@ -12,17 +12,6 @@ license = "MIT"
 [lib]
 name = "waypoint"
 path = "src/lib.rs"
-
-[features]
-test-utils = []  # Feature flag for test utilities
-
-[[example]]
-name = "wallet_example"
-path = "examples/eth/wallet_example.rs"
-
-[[example]]
-name = "provider_example"
-path = "examples/eth/provider_example.rs"
 
 [dependencies]
 tokio = { version = "1.40.0", features = ["full", "io-std"] }
