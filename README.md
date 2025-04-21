@@ -27,6 +27,13 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 - **Social Graph**: Explore follow relationships with default "follow" link type
 - **Documentation**: See [mcp.md](docs/mcp.md) for details
 
+### Ethereum Module
+- **Wallet Management**: Create and manage Ethereum wallets using mnemonic phrases
+- **Provider Integration**: Connect to Ethereum networks via Alchemy API
+- **Network Support**: Built-in support for Base Chain, Ethereum mainnet, and testnets
+- **Secure Key Handling**: Zeroize-based secure mnemonic storage
+- **Examples**: Sample code for wallet operations and network interactions
+
 ## Getting Started
 
 For detailed development instructions, see the [Development Guide](docs/development.md).
@@ -111,6 +118,12 @@ BACKFILL_CONCURRENCY=50  # Number of concurrent FIDs to process
 WAYPOINT_STATSD__ENABLED=true
 WAYPOINT_STATSD__ADDR=localhost:8125
 WAYPOINT_STATSD__PREFIX=way_read
+
+# Ethereum configuration (optional)
+WAYPOINT_ETH__ALCHEMY_API_KEY=your_alchemy_api_key
+WAYPOINT_ETH__DEFAULT_NETWORK=base  # Options: mainnet, base, sepolia, base-sepolia, goerli
+WAYPOINT_ETH__MNEMONIC="your mnemonic phrase here"  # Recommended for secure mnemonic storage
+# WAYPOINT_ETH__DERIVATION_PATH=m/44'/60'/0'/0/0
 ```
 
 See `.env.example` for a complete list of configuration options.

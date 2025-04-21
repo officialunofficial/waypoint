@@ -53,3 +53,20 @@ enabled = false
 enabled = true
 bind_address = "0.0.0.0"
 port = 8000
+
+# Ethereum Configuration with Alchemy
+[eth]
+# Mnemonic for wallet generation
+# Set via environment variable:
+# export WAYPOINT_ETH__MNEMONIC="your mnemonic phrase"
+#
+# mnemonic = "test test test test test test test test test test test junk"
+
+# Alchemy API key for Ethereum RPC access
+# alchemy_api_key = "YOUR_ALCHEMY_API_KEY"
+
+# Default network to use (base is the default)
+default_network = "base"
+
+# Account derivation path
+derivation_path = "m/44'/60'/0'/0/0"

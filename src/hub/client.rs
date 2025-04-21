@@ -70,7 +70,7 @@ impl HubRetryPolicy {
         // Apply jitter
         let jitter_range = (exp_backoff as f32 * jitter_factor) as u64;
         let jitter =
-            if jitter_range > 0 { rand::thread_rng().gen_range(0..jitter_range) } else { 0 };
+            if jitter_range > 0 { rand::rng().random_range(0..=jitter_range - 1) } else { 0 };
 
         Duration::from_millis(exp_backoff.saturating_add(jitter))
     }
