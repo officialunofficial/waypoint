@@ -1,6 +1,6 @@
 # Version and Directory Configuration
-SNAPCHAIN_VER := v0.2.6
-SNAPCHAIN_DIR := snapchain-0.2.6
+SNAPCHAIN_VER := v0.2.7
+SNAPCHAIN_DIR := snapchain-0.2.7
 PROTO_DIR := src/proto
 REGISTRY ?= localhost
 IMAGE_NAME := waypoint
