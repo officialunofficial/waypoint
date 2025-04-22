@@ -213,9 +213,6 @@ impl Hub {
         let client = HubServiceClient::new(channel.clone());
         self.client = Some(client);
 
-        // We're not using Tower for retries anymore - since Tower doesn't handle streaming
-        // RPCs well for our use case. Instead we'll use our retry_with_backoff helper for retries.
-
         // Test connection with info request
         // Get hub info without middleware first time to avoid double retry
         let info_request = tonic::Request::new(GetInfoRequest {});

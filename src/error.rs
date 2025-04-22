@@ -37,7 +37,7 @@ pub enum WaypointError {
 pub type Result<T> = std::result::Result<T, WaypointError>;
 
 /// Initialize error handling for the application
-pub fn install_error_handlers() -> color_eyre::Result<()> {
+pub fn install_error_handlers() -> eyre::Result<()> {
     // Setup color-eyre for pretty error reporting
     color_eyre::install()?;
 
@@ -95,6 +95,18 @@ pub trait IntoWaypointError<T> {
 }
 
 impl<T, E: std::fmt::Display> IntoWaypointError<T> for std::result::Result<T, E> {
+    fn into_waypoint_err(self, context: &str) -> Result<T> {
+        self.map_err(|e| WaypointError::Unknown(format!("{}: {}", context, e)))
+    }
+}
+
+/// Extension trait for converting eyre::Result to WaypointResult
+pub trait IntoWaypointErrorFromEyre<T> {
+    /// Convert an eyre::Result into a WaypointError
+    fn into_waypoint_err(self, context: &str) -> Result<T>;
+}
+
+impl<T> IntoWaypointErrorFromEyre<T> for eyre::Result<T> {
     fn into_waypoint_err(self, context: &str) -> Result<T> {
         self.map_err(|e| WaypointError::Unknown(format!("{}: {}", context, e)))
     }
