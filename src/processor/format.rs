@@ -6,7 +6,6 @@ use crate::{
         VerificationRemoveBody, message_data::Body,
     },
 };
-use colored::Colorize;
 use std::convert::TryFrom;
 
 pub fn format_eth_hex(bytes: &[u8]) -> String {
@@ -71,7 +70,7 @@ fn format_verification_remove(verification: &VerificationRemoveBody) -> String {
 }
 
 pub fn format_message(msg: &Message) -> String {
-    let data = msg.data.as_ref().map_or("No data".red().to_string(), |data| {
+    let data = msg.data.as_ref().map_or("No data".to_string(), |data| {
         let body_str = match &data.body {
             Some(Body::CastAddBody(cast)) => format_cast_add(cast),
             Some(Body::CastRemoveBody(cast)) => format_cast_remove(cast),
@@ -84,14 +83,14 @@ pub fn format_message(msg: &Message) -> String {
                 format_verification_remove(verification)
             },
             Some(body) => format!("{:?}", body),
-            None => "Empty body".dimmed().to_string(),
+            None => "Empty body".to_string(),
         };
 
         format!(
             "{} | {} | {} | {}",
-            get_time_diff(from_farcaster_time(data.timestamp)).dimmed(),
-            format!("{}", data.fid).blue(),
-            format_message_type(data.r#type).to_string().yellow(),
+            get_time_diff(from_farcaster_time(data.timestamp)),
+            data.fid,
+            format_message_type(data.r#type),
             body_str,
         )
     });
@@ -99,7 +98,7 @@ pub fn format_message(msg: &Message) -> String {
     let hash = &format_eth_hex(&msg.hash)[..12];
     let signer = &format_eth_address(&msg.signer)[..12];
 
-    format!("{} [{}]", data, format!("hash: {}, signer: {}", hash, signer).dimmed())
+    format!("{} [hash: {}, signer: {}]", data, hash, signer)
 }
 fn format_message_type(msg_type: i32) -> &'static str {
     match MessageType::try_from(msg_type).unwrap_or(MessageType::None) {
