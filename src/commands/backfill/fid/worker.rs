@@ -55,8 +55,10 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
     let requested_concurrency = config.backfill.concurrency.unwrap_or(50);
     let concurrency = std::cmp::min(requested_concurrency, max_concurrency);
 
-    info!("Using worker concurrency: {} (requested: {}, max based on DB connections: {})", 
-          concurrency, requested_concurrency, max_concurrency);
+    info!(
+        "Using worker concurrency: {} (requested: {}, max based on DB connections: {})",
+        concurrency, requested_concurrency, max_concurrency
+    );
     let mut worker = Worker::new(reconciler, fid_queue, concurrency);
 
     // Add processors to worker
