@@ -18,9 +18,9 @@ impl Database {
             .min_connections(10)
             .max_connections(config.max_connections)
             .test_before_acquire(true)
-            .acquire_timeout(Duration::from_secs(10))
             .idle_timeout(Duration::from_secs(30))
             .max_lifetime(Duration::from_secs(1800))
+            .acquire_timeout(Duration::from_secs(config.timeout_seconds))
             .connect_lazy_with(config.url.clone().parse()?);
 
         // Validate pool on startup

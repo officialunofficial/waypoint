@@ -49,10 +49,14 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
         true,
     ));
 
-    // Create and run worker with increased concurrency
-    let concurrency = config.backfill.concurrency.unwrap_or(50);
+    // Set concurrency to match database connection pool capacity
+    // Use 70% of max database connections to avoid saturating the pool
+    let max_concurrency = (config.database.max_connections as f32 * 0.7) as usize;
+    let requested_concurrency = config.backfill.concurrency.unwrap_or(50);
+    let concurrency = std::cmp::min(requested_concurrency, max_concurrency);
 
-    info!("Using worker concurrency: {}", concurrency);
+    info!("Using worker concurrency: {} (requested: {}, max based on DB connections: {})", 
+          concurrency, requested_concurrency, max_concurrency);
     let mut worker = Worker::new(reconciler, fid_queue, concurrency);
 
     // Add processors to worker
