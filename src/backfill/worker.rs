@@ -551,7 +551,8 @@ impl Worker {
                             }
 
                             // Set up a semaphore to limit concurrent Hub connections
-                            let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+                            // Use a smaller value to prevent database connection pool saturation
+                            let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
                             let mut tasks = Vec::new();
 
                             // Process FIDs in parallel using Tokio tasks with semaphore

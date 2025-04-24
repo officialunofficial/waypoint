@@ -3677,7 +3677,7 @@ dependencies = [
 
 [[package]]
 name = "waypoint"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "async-trait",
  "axum 0.7.9",
