@@ -47,7 +47,7 @@ PORT=8080
 RUST_LOG=info
 
 # Backfill performance tuning
-BACKFILL_CONCURRENCY=50  # Number of concurrent FIDs to process
+BACKFILL_CONCURRENCY=4  # Number of concurrent FIDs to process (max: 8)
 ```
 
 ## Supported Tags

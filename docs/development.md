@@ -130,7 +130,7 @@ WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383
 RUST_LOG=info
 
 # Backfill performance
-BACKFILL_CONCURRENCY=50  # Number of concurrent FIDs to process
+BACKFILL_CONCURRENCY=4  # Number of concurrent FIDs to process (max: 8)
 ```
 
 ## Formatting and Linting
