@@ -477,9 +477,12 @@ impl HubSubscriber {
         max_delay_ms: u64,
         jitter_factor: f32,
     ) -> u64 {
+        // Ensure attempt is at least 1 to prevent underflow
+        let safe_attempt = std::cmp::max(1, attempt);
+
         // Calculate exponential backoff
         let exponential_backoff =
-            std::cmp::min(base_delay_ms * 2u64.saturating_pow(attempt - 1), max_delay_ms);
+            std::cmp::min(base_delay_ms * 2u64.saturating_pow(safe_attempt - 1), max_delay_ms);
 
         // Apply jitter
         if jitter_factor > 0.0 {

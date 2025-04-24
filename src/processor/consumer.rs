@@ -6,6 +6,8 @@ use tracing::error;
 const BASE_GROUP_NAME: &str = "hub_events";
 const MAX_EVENTS_PER_FETCH: u64 = 50; // Increased from 10 to 50 for better throughput
 const MESSAGE_PROCESSING_CONCURRENCY: usize = 250; // Increased from 200 to 250
+// Number of parallel consumers per stream type for higher throughput
+const CONSUMERS_PER_STREAM: usize = 3;
 const EVENT_PROCESSING_TIMEOUT: Duration = Duration::from_secs(120);
 const EVENT_DELETION_THRESHOLD: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -83,24 +85,52 @@ impl Consumer {
             let stream_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
             let group_name = format!("{}:{}", BASE_GROUP_NAME, group_suffix);
 
-            let processor = StreamProcessor {
-                stream: Arc::clone(&self.stream),
-                stream_key,
-                group_name,
-                processors: self.processors.clone(),
-                shutdown: Arc::clone(&self.shutdown),
-                max_events_per_fetch: MAX_EVENTS_PER_FETCH,
-                processing_concurrency: MESSAGE_PROCESSING_CONCURRENCY,
-                event_processing_timeout: EVENT_PROCESSING_TIMEOUT,
-            };
+            // Immediately start consumer rebalancing to claim pending messages from idle consumers
+            // This ensures we recover any messages that were in process during a previous shutdown
+            let consumer_id = crate::redis::stream::RedisStream::get_stable_consumer_id();
+            self.stream
+                .start_consumer_rebalancing(
+                    stream_key.clone(),
+                    group_name.clone(),
+                    consumer_id.clone(),
+                    Duration::from_secs(30), // Regular rebalance every 30 seconds
+                )
+                .await;
 
-            let handle = tokio::spawn(async move {
-                if let Err(e) = processor.process_stream().await {
-                    error!("Stream processor error: {}", e);
-                }
-            });
+            // Launch multiple parallel consumers for this stream type
+            for consumer_num in 0..CONSUMERS_PER_STREAM {
+                // Each parallel consumer has a unique ID suffix (waypoint-hostname-1, waypoint-hostname-2, etc.)
+                let consumer_instance_id = format!("{}-{}", consumer_id, consumer_num + 1);
 
-            tasks.push(handle);
+                let processor = StreamProcessor {
+                    stream: Arc::clone(&self.stream),
+                    stream_key: stream_key.clone(),
+                    group_name: group_name.clone(),
+                    processors: self.processors.clone(),
+                    shutdown: Arc::clone(&self.shutdown),
+                    max_events_per_fetch: MAX_EVENTS_PER_FETCH,
+                    processing_concurrency: MESSAGE_PROCESSING_CONCURRENCY,
+                    event_processing_timeout: EVENT_PROCESSING_TIMEOUT,
+                    consumer_id: consumer_instance_id.clone(),
+                };
+
+                let handle = tokio::spawn(async move {
+                    tracing::info!(
+                        "Starting stream processor {}/{} with consumer ID: {}",
+                        consumer_num + 1,
+                        CONSUMERS_PER_STREAM,
+                        consumer_instance_id
+                    );
+                    if let Err(e) = processor.process_stream().await {
+                        error!(
+                            "Stream processor error for consumer {}: {}",
+                            consumer_instance_id, e
+                        );
+                    }
+                });
+
+                tasks.push(handle);
+            }
         }
 
         self.stream_tasks = tasks;

@@ -55,6 +55,13 @@ impl RedisStream {
         }
     }
 
+    // Helper to get a Redis connection from the pool
+    pub async fn get_connection(
+        &self,
+    ) -> Result<bb8::PooledConnection<'_, bb8_redis::RedisConnectionManager>, Error> {
+        self.redis.pool.get().await.map_err(|e| Error::PoolError(e.to_string()))
+    }
+
     /// Set a dead letter queue policy for handling failed messages
     pub fn with_dead_letter_queue(mut self, queue_name: String) -> Self {
         self.dead_letter_policy =
@@ -441,14 +448,31 @@ impl RedisStream {
         Ok(all_ids)
     }
 
+    /// Gets a stable consumer ID that persists across restarts for the same host
+    /// Uses hostname + app name to ensure uniqueness across machines while remaining
+    /// stable for the same process across restarts
+    pub fn get_stable_consumer_id() -> String {
+        // Get hostname using hostname crate to avoid env vars
+        let hostname = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        // Waypoint-{hostname} forms a stable consumer ID that persists across restarts
+        format!("waypoint-{}", hostname)
+    }
+
     pub async fn reserve(
         &self,
         key: &str,
         group: &str,
         count: u64,
+        consumer_id: Option<&str>,
     ) -> Result<Vec<StreamEntry>, Error> {
-        let consumer_id = format!("consumer-{}", std::process::id());
-        let entries = self.redis.xreadgroup(group, &consumer_id, key, count).await?;
+        // Use provided consumer_id if given, otherwise use the stable default
+        let consumer =
+            consumer_id.map(|id| id.to_string()).unwrap_or_else(Self::get_stable_consumer_id);
+
+        let entries = self.redis.xreadgroup(group, &consumer, key, count).await?;
 
         Ok(entries.into_iter().map(|(id, data)| StreamEntry { id, data, attempts: 0 }).collect())
     }
@@ -502,6 +526,7 @@ impl RedisStream {
         group: &str,
         min_idle: Duration,
         count: u64,
+        consumer_id: Option<&str>,
     ) -> Result<Vec<StreamEntry>, Error> {
         let pending = self.pending(key, group, min_idle, count).await?;
         if pending.is_empty() {
@@ -605,7 +630,9 @@ impl RedisStream {
             return Ok(vec![]);
         }
 
-        let claimed = self.redis.xclaim(key, group, "consumer", min_idle, &regular_ids).await?;
+        // Use provided consumer ID or default
+        let consumer = consumer_id.unwrap_or("consumer");
+        let claimed = self.redis.xclaim(key, group, consumer, min_idle, &regular_ids).await?;
 
         Ok(claimed
             .into_iter()
