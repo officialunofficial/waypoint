@@ -42,17 +42,14 @@ impl MessageReconciler {
         info!("Starting reconciliation for FID {}", fid);
         let start_time = std::time::Instant::now();
 
-        // Fetch all message types concurrently using tokio::try_join!
-        let (casts, reactions, links, verifications, user_data, username_proofs, onchain_events) =
-            tokio::try_join!(
-                self.get_all_cast_messages(fid),
-                self.get_all_reaction_messages(fid),
-                self.get_all_link_messages(fid),
-                self.get_all_verification_messages(fid),
-                self.get_all_user_data_messages(fid),
-                self.get_all_username_proofs(fid),
-                self.get_all_onchain_events(fid)
-            )?;
+        // Fetch message types sequentially to avoid overwhelming the Hub
+        let casts = self.get_all_cast_messages(fid).await?;
+        let reactions = self.get_all_reaction_messages(fid).await?;
+        let links = self.get_all_link_messages(fid).await?;
+        let verifications = self.get_all_verification_messages(fid).await?;
+        let user_data = self.get_all_user_data_messages(fid).await?;
+        let username_proofs = self.get_all_username_proofs(fid).await?;
+        let onchain_events = self.get_all_onchain_events(fid).await?;
 
         // Process count for each message type
         let casts_count = casts.len();
@@ -581,7 +578,6 @@ impl MessageReconciler {
 
     async fn get_all_cast_messages(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
-        // Increase page size from 100 to 1000 to reduce round trips
         let page_size = 1000u32;
         let mut page_token = None;
         let mut page_count = 0;
@@ -630,7 +626,6 @@ impl MessageReconciler {
 
     async fn get_all_reaction_messages(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
-        // Increase page size from 100 to 1000 to reduce round trips
         let page_size = 1000u32;
         let mut page_token = None;
         let mut page_count = 0;
@@ -680,8 +675,7 @@ impl MessageReconciler {
 
     async fn get_all_link_messages(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
-        // Increase page size from 100 to 1000 to reduce round trips
-        let page_size = 1000u32;
+        let page_size = 500u32;
         let mut page_token = None;
         let mut page_count = 0;
 
@@ -730,7 +724,6 @@ impl MessageReconciler {
 
     async fn get_all_verification_messages(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
-        // Increase page size from 100 to 1000 to reduce round trips
         let page_size = 1000u32;
         let mut page_token = None;
         let mut page_count = 0;
@@ -782,7 +775,6 @@ impl MessageReconciler {
 
     pub async fn get_all_user_data_messages(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
-        // Increase page size from 100 to 1000 to reduce round trips
         let page_size = 1000u32;
         let mut page_token = None;
         let mut page_count = 0;
@@ -832,7 +824,6 @@ impl MessageReconciler {
     /// Get all username proofs for the given FID
     async fn get_all_username_proofs(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
-        // Increase page size from 100 to 1000 to reduce round trips
         let page_size = 1000u32;
         let mut page_token = None;
         let mut page_count = 0;
@@ -926,7 +917,6 @@ impl MessageReconciler {
     /// Get all onchain events for the given FID
     async fn get_all_onchain_events(&self, fid: u64) -> Result<Vec<proto::OnChainEvent>, Error> {
         let mut events = Vec::new();
-        // Increase page size from 100 to 1000 to reduce round trips
         let page_size = 1000u32;
 
         debug!("Fetching onchain events for FID {} with page size {}", fid, page_size);

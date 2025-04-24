@@ -50,10 +50,16 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
     ));
 
     // Set concurrency to match database connection pool capacity
-    // Use 70% of max database connections to avoid saturating the pool
-    let max_concurrency = (config.database.max_connections as f32 * 0.7) as usize;
-    let requested_concurrency = config.backfill.concurrency.unwrap_or(50);
-    let concurrency = std::cmp::min(requested_concurrency, max_concurrency);
+    // Use 40% of max database connections to avoid saturating the pool
+    // This is a more conservative value to prevent database timeouts
+    let max_concurrency = (config.database.max_connections as f32 * 0.4) as usize;
+
+    // Ensure there's a reasonable upper limit regardless of pool size
+    let absolute_max = 8;
+
+    let requested_concurrency = config.backfill.concurrency.unwrap_or(4);
+    let concurrency =
+        std::cmp::min(std::cmp::min(requested_concurrency, max_concurrency), absolute_max);
 
     info!(
         "Using worker concurrency: {} (requested: {}, max based on DB connections: {})",

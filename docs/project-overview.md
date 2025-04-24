@@ -51,7 +51,7 @@ make backfill-queue-fids FIDS=1,2,3    # Queue specific FIDs
 make backfill-queue-max MAX_FID=1000   # Queue FIDs up to 1000
 
 # Run a FID-based backfill worker
-make backfill-worker                   # Run backfill worker (50 concurrent jobs by default)
+make backfill-worker                   # Run backfill worker (4 concurrent jobs by default)
 
 # Update user_data
 make backfill-update-user-data         # Update user_data for all FIDs
@@ -135,7 +135,7 @@ WAYPOINT_MCP__PORT=8000
 RUST_LOG=info
 
 # Backfill performance tuning
-BACKFILL_CONCURRENCY=50  # Number of concurrent FIDs to process
+BACKFILL_CONCURRENCY=4  # Number of concurrent FIDs to process (max: 8)
 
 # Metrics configuration
 WAYPOINT_STATSD__ENABLED=true          # Enable/disable metrics collection
@@ -152,24 +152,25 @@ WAYPOINT_CONFIG=config/sample.toml make run
 
 ## Backfill Optimizations
 
-The backfill system has been optimized for high throughput with two complementary approaches:
+The backfill system has been optimized for stability and sustainable throughput:
 
 ### FID-based Backfill
 
-1. **Concurrency**:
-   - Configurable concurrency via `BACKFILL_CONCURRENCY` environment variable (default: 50)
-   - Each worker can process up to 100 concurrent FIDs
+1. **Controlled Concurrency**:
+   - Configurable concurrency via `BACKFILL_CONCURRENCY` environment variable (default: 4)
+   - Limited to 40% of database connection pool with absolute maximum of 8 concurrent jobs
    - Multiple workers can run in parallel across multiple containers
 
-2. **Batch Processing**:
-   - Increased job batch size from 10 to 50 FIDs per job
-   - Increased API page size from 100 to 1000 messages per request
-   - Message chunking with semaphore-controlled concurrency
+2. **Optimal Batch Processing**:
+   - Job chunking with 25 FIDs per job (from historical 50)
+   - Automatic job splitting for large jobs
+   - API page size of 500 items per request (reduced from 1000)
+   - Database connection limiting with semaphore-controlled concurrency
 
-3. **Parallel Processing**:
-   - Parallel fetching of different message types (casts, reactions, etc.)
-   - Concurrent processing of messages within a single FID
-   - Batched database operations for better throughput
+3. **Rate-limited Processing**:
+   - Sequential fetching of different message types (casts, reactions, etc.)
+   - Controlled concurrent processing within single FID
+   - Batched database operations with connection pool protection
 
 ### General Performance Tuning
 
