@@ -282,7 +282,7 @@ impl Consumer {
         }
 
         // Try to reserve messages from the stream
-        match self.stream.reserve(stream_key, group_name, self.batch_size).await {
+        match self.stream.reserve(stream_key, group_name, self.batch_size, None).await {
             Ok(entries) => {
                 if !entries.is_empty() {
                     return Ok(Some(entries));
@@ -299,7 +299,7 @@ impl Consumer {
 
                 match self
                     .stream
-                    .claim_stale(stream_key, group_name, self.timeout, self.batch_size)
+                    .claim_stale(stream_key, group_name, self.timeout, self.batch_size, None)
                     .await
                 {
                     Ok(count) if !count.is_empty() => {
