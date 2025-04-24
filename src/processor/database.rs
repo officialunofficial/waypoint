@@ -687,6 +687,12 @@ impl DatabaseProcessor {
                 // Create a vector to store processing tasks
                 let mut processing_tasks = Vec::with_capacity(events.len());
 
+                // Create a semaphore to limit concurrent database operations
+                // This prevents overwhelming the database connection pool
+                // The value is chosen to match approximately half of a typical PostgreSQL
+                // connection pool size, allowing other operations to proceed
+                let db_semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+
                 // Prepare processing tasks in parallel using rayon
                 let task_data: Vec<_> = events
                     .par_iter()
@@ -698,18 +704,26 @@ impl DatabaseProcessor {
                     })
                     .collect();
 
-                // Process the prepared tasks asynchronously
+                // Process the prepared tasks asynchronously with controlled concurrency
                 for (_, event_type, event_body) in task_data {
+                    // Clone the semaphore for each task
+                    let semaphore = Arc::clone(&db_semaphore);
                     match event_type {
                         1 => {
                             // MERGE_MESSAGE
                             if let Some(Body::MergeMessageBody(body)) = event_body {
                                 if let Some(msg) = body.message {
                                     let proc = processor.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        // This will block if too many tasks are already accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) = proc.process_message(&msg, "merge").await {
                                             error!("Error processing message: {}", e);
                                         }
+                                        // Permit is automatically dropped when this task completes
                                     });
                                     processing_tasks.push(task);
                                 }
@@ -717,7 +731,11 @@ impl DatabaseProcessor {
                                 for deleted_msg in body.deleted_messages {
                                     let proc = processor.clone();
                                     let msg = deleted_msg.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) = proc.process_message(&msg, "delete").await {
                                             error!("Error processing deleted message: {}", e);
                                         }
@@ -731,7 +749,11 @@ impl DatabaseProcessor {
                             if let Some(Body::PruneMessageBody(body)) = event_body {
                                 if let Some(msg) = body.message {
                                     let proc = processor.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) = proc.process_message(&msg, "prune").await {
                                             error!("Error processing message: {}", e);
                                         }
@@ -745,7 +767,11 @@ impl DatabaseProcessor {
                             if let Some(Body::RevokeMessageBody(body)) = event_body {
                                 if let Some(msg) = body.message {
                                     let proc = processor.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) = proc.process_message(&msg, "revoke").await {
                                             error!("Error processing message: {}", e);
                                         }
@@ -774,7 +800,11 @@ impl DatabaseProcessor {
                                 // Process deleted username proof message if available
                                 if let Some(msg) = body.deleted_username_proof_message {
                                     let proc = processor.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) = proc.process_message(&msg, "delete").await {
                                             error!(
                                                 "Error processing deleted username proof message: {}",
@@ -788,7 +818,11 @@ impl DatabaseProcessor {
                                 // Process the username proof directly
                                 if let Some(proof) = body.username_proof {
                                     let proc = processor.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) =
                                             proc.process_username_proof(&proof, false).await
                                         {
@@ -801,7 +835,11 @@ impl DatabaseProcessor {
                                 // Process deleted username proof
                                 if let Some(proof) = body.deleted_username_proof {
                                     let proc = processor.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) =
                                             proc.process_username_proof(&proof, true).await
                                         {
@@ -820,7 +858,11 @@ impl DatabaseProcessor {
                             if let Some(Body::MergeOnChainEventBody(body)) = event_body {
                                 if let Some(event) = body.on_chain_event {
                                     let proc = processor.clone();
+                                    let semaphore_clone = Arc::clone(&semaphore);
                                     let task = tokio::spawn(async move {
+                                        // Acquire a permit from the semaphore before accessing the database
+                                        let _permit = semaphore_clone.acquire().await.unwrap();
+
                                         if let Err(e) = proc.process_onchain_event(&event).await {
                                             error!("Error processing onchain event: {}", e);
                                         }

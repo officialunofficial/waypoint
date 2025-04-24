@@ -383,6 +383,8 @@ pub struct Worker {
     shutdown: Arc<RwLock<bool>>,
     stats: WorkerStats,
     spam_filter: Arc<SpamFilter>,
+    // Global semaphore to prevent overwhelming the database connection pool
+    db_connection_limiter: Arc<tokio::sync::Semaphore>,
 }
 
 impl Worker {
@@ -403,6 +405,12 @@ impl Worker {
             });
         }
 
+        // Create a database connection limiter
+        // Use a conservative value to ensure we don't overwhelm the database
+        // This should be significantly less than the database max_connections setting
+        // to leave room for other application operations
+        let db_connection_limiter = Arc::new(tokio::sync::Semaphore::new(8));
+
         Self {
             reconciler,
             queue,
@@ -414,6 +422,7 @@ impl Worker {
                 ..Default::default()
             },
             spam_filter,
+            db_connection_limiter,
         }
     }
 
@@ -457,10 +466,18 @@ impl Worker {
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // If configured concurrency is too high, reduce it to avoid overwhelming the Hub and database
+        // Make sure we don't have more concurrent jobs than database connections we can safely use
+        let db_limit = self.db_connection_limiter.available_permits();
+        let effective_concurrency = std::cmp::min(std::cmp::min(self.concurrency, 5), db_limit);
+
         info!(
-            "Starting backfill worker with concurrency {} and spam filtering enabled",
-            self.concurrency
+            "Starting backfill worker with concurrency {} (reduced from {}) and spam filtering enabled. DB connection limit: {}",
+            effective_concurrency, self.concurrency, db_limit
         );
+
+        // Update the concurrency value
+        self.concurrency = effective_concurrency;
 
         // Channel for stats updates from tasks
         let (tx, mut rx) = mpsc::channel::<StatsUpdate>(100);
@@ -523,13 +540,54 @@ impl Worker {
             // If we have capacity, try to get more jobs
             if active_tasks < self.concurrency {
                 match self.queue.get_job().await {
-                    Ok(Some(job)) => {
+                    Ok(Some(mut job)) => {
+                        // Limit the number of FIDs processed per job to avoid overwhelming the Hub and database
+                        // If there are too many FIDs in a job, split it into smaller chunks
+                        // Use a smaller batch size to reduce database connection pressure
+                        const MAX_FIDS_PER_JOB: usize = 25;
+                        let original_fid_count = job.fids.len();
+
+                        if original_fid_count > MAX_FIDS_PER_JOB {
+                            // Take the first MAX_FIDS_PER_JOB FIDs
+                            let remaining_fids = job.fids.split_off(MAX_FIDS_PER_JOB);
+
+                            // Create a new job with the remaining FIDs and add it back to the queue
+                            let mut remaining_job = job.clone();
+                            remaining_job.fids = remaining_fids;
+                            remaining_job.id = uuid::Uuid::new_v4().to_string();
+
+                            // Add the remaining job back to the queue with the same priority
+                            info!(
+                                "Splitting large job with {} FIDs into smaller chunks. Processing first {} FIDs, queuing remaining {} FIDs.",
+                                original_fid_count,
+                                MAX_FIDS_PER_JOB,
+                                remaining_job.fids.len()
+                            );
+
+                            // Remember the original job ID so we can mark it as completed
+                            let original_job_id = job.id.clone();
+
+                            // Asynchronously add the job back to the queue
+                            let queue_clone = Arc::clone(&self.queue);
+                            tokio::spawn(async move {
+                                if let Err(e) = queue_clone.add_job(remaining_job).await {
+                                    error!("Failed to requeue remaining FIDs: {:?}", e);
+                                }
+
+                                // Mark the original job as completed since we've now requeued the remaining FIDs
+                                if let Err(e) = queue_clone.complete_job(&original_job_id).await {
+                                    error!("Failed to mark split job as completed: {:?}", e);
+                                }
+                            });
+                        }
+
                         let reconciler = Arc::clone(&self.reconciler);
                         let processors = self.processors.clone();
                         let tx_clone = tx.clone();
                         let fids = job.fids.clone();
                         let fid_count = job.fids.len();
                         let spam_filter = Arc::clone(&self.spam_filter);
+                        let db_connection_limiter = Arc::clone(&self.db_connection_limiter);
 
                         info!("Starting backfill job with {} FIDs", fid_count);
 
@@ -551,7 +609,8 @@ impl Worker {
                             }
 
                             // Set up a semaphore to limit concurrent Hub connections
-                            // Use a smaller value to prevent database connection pool saturation
+                            // Use a reasonable value to prevent overwhelming the Hub API
+                            // while still maintaining good throughput
                             let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
                             let mut tasks = Vec::new();
 
@@ -561,10 +620,13 @@ impl Worker {
                                 let processors_clone = processors.clone();
                                 let tx_clone2 = tx_clone.clone();
                                 let semaphore_clone = Arc::clone(&semaphore);
+                                let db_limiter_clone = Arc::clone(&db_connection_limiter);
 
                                 let task = tokio::spawn(async move {
-                                    // Acquire permit to limit concurrency of Hub calls
-                                    let _permit = semaphore_clone.acquire().await.unwrap();
+                                    // Acquire permits to limit concurrency of Hub calls and database connections
+                                    let _hub_permit = semaphore_clone.acquire().await.unwrap();
+                                    // Also acquire a database connection permit to avoid overwhelming the DB
+                                    let _db_permit = db_limiter_clone.acquire().await.unwrap();
 
                                     let fid_start = std::time::Instant::now();
                                     info!("Starting processing FID {}", fid);
