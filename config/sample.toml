@@ -8,7 +8,7 @@
 # PostgreSQL connection URL
 url = "postgresql://postgres:postgres@localhost:5432/waypoint"
 # Maximum number of connections in the pool
-max_connections = 20
+max_connections = 60
 # Connection timeout in seconds
 timeout_seconds = 30
 

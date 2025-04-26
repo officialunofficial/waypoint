@@ -4,7 +4,7 @@
 # Database Configuration
 [database]
 url = "postgresql://postgres:postgres@localhost:5432/waypoint"
-max_connections = 20
+max_connections = 60
 timeout_seconds = 30
 
 # Redis Configuration

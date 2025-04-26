@@ -18,10 +18,21 @@ pub struct StreamProcessor {
     pub(crate) max_events_per_fetch: u64,
     pub(crate) processing_concurrency: usize,
     pub(crate) event_processing_timeout: Duration,
+    pub(crate) consumer_id: String,
 }
 
 impl StreamProcessor {
     pub async fn process_stream(&self) -> Result<(), crate::redis::error::Error> {
+        // First thing to do - try to recover any pending messages from our own consumer
+        if let Ok(count) = self.recover_pending_messages(&self.consumer_id).await {
+            if count > 0 {
+                info!(
+                    "Recovered {} pending messages for consumer {} in {}",
+                    count, self.consumer_id, self.stream_key
+                );
+            }
+        }
+
         while !*self.shutdown.read().await {
             if let Err(e) = self.stream.create_group(&self.stream_key, &self.group_name).await {
                 error!("Error creating group for {}: {}", self.stream_key, e);
@@ -51,7 +62,12 @@ impl StreamProcessor {
     async fn process_batch(&self) -> Result<bool, crate::redis::error::Error> {
         let entries = match self
             .stream
-            .reserve(&self.stream_key, &self.group_name, self.max_events_per_fetch)
+            .reserve(
+                &self.stream_key,
+                &self.group_name,
+                self.max_events_per_fetch,
+                Some(&self.consumer_id),
+            )
             .await
         {
             Ok(entries) => entries,
@@ -171,26 +187,77 @@ impl StreamProcessor {
         Ok(tasks)
     }
 
-    async fn process_stale_events(&self) -> Result<u64, crate::redis::error::Error> {
-        let stale_entries = self
-            .stream
-            .claim_stale(
-                &self.stream_key,
-                &self.group_name,
-                self.event_processing_timeout,
-                self.max_events_per_fetch,
-            )
-            .await?;
+    /// Recover messages that were pending for our specific consumer
+    /// This handles the case where the process restarted without properly acknowledging messages
+    async fn recover_pending_messages(
+        &self,
+        consumer_id: &str,
+    ) -> Result<u64, crate::redis::error::Error> {
+        // Get a Redis connection the proper way
+        let mut conn = match self.stream.get_connection().await {
+            Ok(conn) => conn,
+            Err(e) => return Err(e),
+        };
 
-        if stale_entries.is_empty() {
+        // Get pending messages for our specific consumer
+        type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
+
+        let pending_result: Result<PendingResult, bb8_redis::redis::RedisError> =
+            bb8_redis::redis::cmd("XPENDING")
+                .arg(&self.stream_key)
+                .arg(&self.group_name)
+                .arg("-")  // start ID
+                .arg("+")  // end ID
+                .arg(self.max_events_per_fetch)   // count
+                .arg(consumer_id)  // our consumer ID
+                .query_async(&mut *conn)
+                .await;
+
+        match pending_result {
+            Ok(pending_msgs) if !pending_msgs.is_empty() => {
+                // Get just the message IDs
+                let msg_ids: Vec<String> = pending_msgs.iter().map(|(id, ..)| id.clone()).collect();
+
+                // Process these messages
+                let entries = self
+                    .stream
+                    .claim_stale(
+                        &self.stream_key,
+                        &self.group_name,
+                        Duration::from_secs(0), // No idle time requirement, these are our messages
+                        msg_ids.len() as u64,
+                        Some(consumer_id), // Use our specific consumer ID
+                    )
+                    .await?;
+
+                if !entries.is_empty() {
+                    self.process_entries(entries).await?;
+                }
+
+                Ok(msg_ids.len() as u64)
+            },
+            Ok(_) => Ok(0), // No pending messages
+            Err(e) => {
+                error!("Error checking pending messages: {}", e);
+                Ok(0)
+            },
+        }
+    }
+
+    // Helper method to process entries with proper metrics and ack
+    async fn process_entries(
+        &self,
+        entries: Vec<StreamEntry>,
+    ) -> Result<u64, crate::redis::error::Error> {
+        if entries.is_empty() {
             return Ok(0);
         }
 
-        let total_entries = stale_entries.len();
+        let total_entries = entries.len();
         let mut tasks = Vec::new();
         let mut batch = Vec::new();
 
-        for entry in stale_entries {
+        for entry in entries {
             batch.push(entry);
             if batch.len() >= self.processing_concurrency {
                 let current_batch = std::mem::take(&mut batch);
@@ -208,9 +275,8 @@ impl StreamProcessor {
         let results = join_all(tasks).await;
         let processing_time = process_start_time.elapsed().as_millis() as u64;
 
-        // Update metrics for stale events
+        // Update metrics
         self.stream.update_success_metrics(processing_time).await;
-        self.stream.update_retry_metrics().await;
 
         let successful_ids: Vec<String> = results.into_iter().filter_map(|r| r.ok()).collect();
 
@@ -225,5 +291,28 @@ impl StreamProcessor {
         }
 
         Ok(total_entries as u64)
+    }
+
+    async fn process_stale_events(&self) -> Result<u64, crate::redis::error::Error> {
+        let stale_entries = self
+            .stream
+            .claim_stale(
+                &self.stream_key,
+                &self.group_name,
+                self.event_processing_timeout,
+                self.max_events_per_fetch,
+                Some(&self.consumer_id),
+            )
+            .await?;
+
+        if stale_entries.is_empty() {
+            return Ok(0);
+        }
+
+        // Update retry metrics for stale events
+        self.stream.update_retry_metrics().await;
+
+        // Process the entries using our shared helper
+        self.process_entries(stale_entries).await
     }
 }

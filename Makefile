@@ -1,6 +1,6 @@
 # Version and Directory Configuration
-SNAPCHAIN_VER := v0.2.6
-SNAPCHAIN_DIR := snapchain-0.2.6
+SNAPCHAIN_VER := v0.2.11
+SNAPCHAIN_DIR := snapchain-0.2.11
 PROTO_DIR := src/proto
 REGISTRY ?= localhost
 IMAGE_NAME := waypoint
@@ -77,7 +77,7 @@ backfill-update-user-data-max: proto build env-setup
 
 
 # Run the container with proper env vars and port mapping
-docker-run: docker-build env-setup
+docker-run: env-setup
 	docker run -it --rm \
 		-p ${PORT:-8080}:${PORT:-8080} \
 		--env-file .env \
@@ -88,11 +88,11 @@ docker-run: docker-build env-setup
 
 # Build Docker image using buildx
 docker-build:
-	docker buildx bake
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(REGISTRY)/$(IMAGE_NAME):$(DEFAULT_TAG) .
 
 # Push Docker image to registry
-docker-push: docker-build
-	docker buildx bake --push
+docker-push:
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(REGISTRY)/$(IMAGE_NAME):$(DEFAULT_TAG) . --push
 
 # Build and tag Docker image with specific tag
 docker-tag:
@@ -100,7 +100,7 @@ docker-tag:
 		echo "Please specify TAG=<version> to tag the image"; \
 		exit 1; \
 	fi
-	docker buildx bake --set "*.tags=$(REGISTRY)/$(IMAGE_NAME):$(TAG)" --push
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(REGISTRY)/$(IMAGE_NAME):$(TAG) . --push
 
 test: proto build env-setup
 	cargo test
