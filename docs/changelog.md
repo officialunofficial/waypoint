@@ -4,6 +4,11 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2025-04-26 (Released)
+
+### Fixed
+- Remove idle consumers in Redis stream
+
 ## [0.4.0] - 2025-04-20 (Released)
 
 ### Added
