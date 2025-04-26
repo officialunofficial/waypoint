@@ -20,7 +20,7 @@ RUN cargo build --release
 
 # Runtime stage - minimal image with only necessary runtime dependencies
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
     postgresql-client \
