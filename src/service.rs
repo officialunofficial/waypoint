@@ -1,4 +1,4 @@
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{self, Result};
 use std::time::Duration;
 use tracing::info;
 use waypoint::{
