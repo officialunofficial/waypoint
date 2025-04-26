@@ -10,6 +10,7 @@ pub mod config;
 pub mod core;
 pub mod database;
 pub mod error;
+pub mod eth;
 pub mod health;
 pub mod hub;
 pub mod metrics;

@@ -1,5 +1,6 @@
 //! Global error types and error handling utilities
 
+use color_eyre::eyre;
 use thiserror::Error;
 
 /// Main error type for the application

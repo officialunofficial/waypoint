@@ -177,7 +177,7 @@ impl HubSubscriber {
                     let jitter_ms = if jitter_factor > 0.0 {
                         let jitter_range = (backoff.as_millis() as f32 * jitter_factor) as u64;
                         if jitter_range > 0 {
-                            rand::thread_rng().gen_range(0..jitter_range)
+                            rand::rng().random_range(0..=jitter_range - 1)
                         } else {
                             0
                         }
@@ -488,7 +488,7 @@ impl HubSubscriber {
         if jitter_factor > 0.0 {
             let jitter_range = (exponential_backoff as f32 * jitter_factor) as u64;
             if jitter_range > 0 {
-                let jitter = rand::thread_rng().gen_range(0..jitter_range);
+                let jitter = rand::rng().random_range(0..=jitter_range - 1);
                 exponential_backoff.saturating_add(jitter)
             } else {
                 exponential_backoff
@@ -604,7 +604,7 @@ impl HubSubscriber {
                     let jitter_ms = if jitter_factor > 0.0 {
                         let jitter_range = (backoff.as_millis() as f32 * jitter_factor) as u64;
                         if jitter_range > 0 {
-                            rand::thread_rng().gen_range(0..jitter_range)
+                            rand::rng().random_range(0..=jitter_range - 1)
                         } else {
                             0
                         }

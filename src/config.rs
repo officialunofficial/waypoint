@@ -1,4 +1,5 @@
 //! Configuration management for the application
+use crate::eth::EthConfig;
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
@@ -187,15 +188,27 @@ fn default_mcp_port() -> u16 {
     8000
 }
 
+/// Default value for clear_db - default to false for safety
+fn default_clear_db() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub database: DatabaseConfig,
     pub redis: RedisConfig,
     pub hub: HubConfig,
+    #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
     pub backfill: BackfillConfig,
+    #[serde(default)]
     pub statsd: StatsdConfig,
+    #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub eth: EthConfig,
+    #[serde(default = "default_clear_db")]
     pub clear_db: bool,
 }
 

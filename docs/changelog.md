@@ -4,6 +4,16 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-04-20 (Released)
+
+### Added
+- Ethereum wallet implementation with keystore support
+- Support for Ethereum providers and interactions
+
+### Changed
+- Cleaned up unused dependencies
+- Removed example directory in favor of documentation
+
 ## [0.3.0] - 2025-04-19 (Released)
 
 ### Added

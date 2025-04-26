@@ -1,5 +1,5 @@
 use crate::proto::{HubEvent, hub_event};
-use eyre::{Context, Result};
+use color_eyre::eyre::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,7 +48,7 @@ impl SpamFilter {
     }
 
     /// Start the spam filter updater in background and wait for initial load
-    pub async fn start_updater(&self) -> Result<(), eyre::Error> {
+    pub async fn start_updater(&self) -> Result<()> {
         // First, do an immediate update to load the initial spam list
         let new_fids = Self::fetch_spam_list(&self.http_client).await?;
         {
