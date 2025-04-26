@@ -122,7 +122,7 @@ WAYPOINT_STATSD__PREFIX=way_read
 # Ethereum configuration (optional)
 WAYPOINT_ETH__ALCHEMY_API_KEY=your_alchemy_api_key
 WAYPOINT_ETH__DEFAULT_NETWORK=base  # Options: mainnet, base, sepolia, base-sepolia, goerli
-WAYPOINT_ETH__MNEMONIC="your mnemonic phrase here"  # Recommended for secure mnemonic storage
+WAYPOINT_ETH__MNEMONIC="your mnemonic phrase here"
 # WAYPOINT_ETH__DERIVATION_PATH=m/44'/60'/0'/0/0
 ```
 
