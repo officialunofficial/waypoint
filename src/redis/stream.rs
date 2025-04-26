@@ -167,22 +167,36 @@ impl RedisStream {
                 // Check consumer group health
                 match redis.get_consumer_group_health(&stream_key, &group_name).await {
                     Ok(health) => {
-                        // Identify idle consumers
+                        // Identify idle consumers (60s) and extremely idle consumers (10min)
                         let idle_threshold = Duration::from_secs(60).as_millis() as u64;
+                        let extremely_idle_threshold = Duration::from_secs(600).as_millis() as u64; // 10 minutes
+
                         let mut total_pending = 0;
                         let mut idle_consumers = Vec::new();
+                        let mut extremely_idle_consumers = Vec::new();
                         let mut active_consumers = Vec::new();
 
                         for consumer in &health.consumers {
                             total_pending += consumer.pending_count;
-                            if consumer.idle_time > idle_threshold && consumer.name != consumer_name
+                            // Extremely idle consumer check (>10min)
+                            if consumer.idle_time > extremely_idle_threshold
+                                && consumer.name != consumer_name
+                            {
+                                extremely_idle_consumers.push(consumer.name.clone());
+                                idle_consumers.push(consumer.name.clone());
+                            }
+                            // Regular idle consumer check (>60s)
+                            else if consumer.idle_time > idle_threshold
+                                && consumer.name != consumer_name
                             {
                                 idle_consumers.push(consumer.name.clone());
+                                active_consumers.push(consumer.name.clone());
                             } else {
                                 active_consumers.push(consumer.name.clone());
                             }
                         }
 
+                        // Handle pending message rebalancing
                         if !idle_consumers.is_empty() && total_pending > 0 {
                             tracing::info!(
                                 "Detected {} idle consumers with {} total pending messages in group {} for stream {}",
@@ -194,7 +208,6 @@ impl RedisStream {
 
                             // Only claim messages if we're an active consumer
                             if active_consumers.contains(&consumer_name) {
-                                // For each idle consumer, claim their pending messages
                                 let mut conn = match redis.pool.get().await {
                                     Ok(conn) => conn,
                                     Err(e) => {
@@ -210,7 +223,6 @@ impl RedisStream {
 
                                 for idle_consumer in &idle_consumers {
                                     // Get pending messages for the idle consumer
-                                    // Define the complex type once
                                     type PendingResult =
                                         Vec<(String, String, u64, Vec<(String, u64)>)>;
 
@@ -261,6 +273,68 @@ impl RedisStream {
                                             error!(
                                                 "Error getting pending messages for consumer {}: {}",
                                                 idle_consumer, e
+                                            );
+                                        },
+                                    }
+                                }
+                            }
+                        }
+
+                        // Delete extremely idle consumers (>10min)
+                        if !extremely_idle_consumers.is_empty() {
+                            let mut conn = match redis.pool.get().await {
+                                Ok(conn) => conn,
+                                Err(e) => {
+                                    error!("Failed to get Redis connection for cleanup: {}", e);
+                                    continue;
+                                },
+                            };
+
+                            for consumer_id in &extremely_idle_consumers {
+                                // Check if consumer has pending messages after claiming
+                                type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
+                                let pending_check: Result<
+                                    PendingResult,
+                                    bb8_redis::redis::RedisError,
+                                > = bb8_redis::redis::cmd("XPENDING")
+                                        .arg(&stream_key)
+                                        .arg(&group_name)
+                                        .arg("-")
+                                        .arg("+")
+                                        .arg(1) // Just check if any exist
+                                        .arg(consumer_id)
+                                        .query_async(&mut *conn)
+                                        .await;
+
+                                let has_pending = match pending_check {
+                                    Ok(msgs) => !msgs.is_empty(),
+                                    Err(_) => true, // Assume has pending on error to be safe
+                                };
+
+                                if !has_pending {
+                                    // Delete the extremely idle consumer
+                                    let del_result: Result<u64, bb8_redis::redis::RedisError> =
+                                        bb8_redis::redis::cmd("XGROUP")
+                                            .arg("DELCONSUMER")
+                                            .arg(&stream_key)
+                                            .arg(&group_name)
+                                            .arg(consumer_id)
+                                            .query_async(&mut *conn)
+                                            .await;
+
+                                    match del_result {
+                                        Ok(_) => {
+                                            tracing::info!(
+                                                "Deleted extremely idle consumer {} (>10min) from group {} for stream {}",
+                                                consumer_id,
+                                                group_name,
+                                                stream_key
+                                            );
+                                        },
+                                        Err(e) => {
+                                            error!(
+                                                "Error deleting consumer {}: {}",
+                                                consumer_id, e
                                             );
                                         },
                                     }
