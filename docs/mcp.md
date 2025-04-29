@@ -275,7 +275,7 @@ Retrieve casts that reply to a specific URL.
 
 #### Get Conversation
 
-Retrieve complete conversation details for a cast, including participants, nested replies, and parent context if the cast was a reply.
+Retrieve complete conversation details for a cast, including participants, nested replies, parent casts, and quoted casts.
 
 ```json
 {
@@ -315,6 +315,20 @@ The response includes:
       }
     ]
   },
+  "parent_casts": [
+    {
+      "fid": 9999,
+      "hash": "0xdeadbeef1234567890abcdef1234567890abcdef",
+      "text": "This is the parent cast that the root cast replies to",
+      "timestamp": 1672530000
+    },
+    {
+      "fid": 8888,
+      "hash": "0xaaabbbcccdddeeefffaaabbbcccdddeeefffaaab",
+      "text": "This is the grandparent cast in the conversation",
+      "timestamp": 1672529000
+    }
+  ],
   "quoted_casts": [
     {
       "fid": 5678,
@@ -364,7 +378,15 @@ The response includes:
             "fid": 1357,
             "hash": "0x0123456789abcdef0123456789abcdef01234567",
             "text": "This is a nested reply",
-            "timestamp": 1672534200
+            "timestamp": 1672534200,
+            "quoted_casts": [
+              {
+                "fid": 9876,
+                "hash": "0xfedcba9876543210fedcba9876543210fedcba98",
+                "text": "A quoted cast within a nested reply",
+                "timestamp": 1672533000
+              }
+            ]
           }
         ],
         "has_more_replies": false
@@ -376,18 +398,34 @@ The response includes:
 ```
 
 Additional parameters:
-- `recursive`: When true, fetches nested replies to create a complete conversation tree
+- `recursive`: When true, fetches nested replies to create a complete conversation tree (default: false)
 - `max_depth`: Controls how deep to traverse the reply tree (default: 5)
-- `limit`: Maximum number of replies to fetch per level (default: 50)
+- `limit`: Maximum number of replies to fetch per level (default: 10)
 
-The feature provides a comprehensive view of the conversation:
-- If the specified cast is a reply to another cast, the parent information is included in the `parent` field of the root cast
-- All replies to the specified cast are included in the `conversation.replies` array
-- With `recursive=true`, all nested replies (replies to replies) are also included
-- If the cast contains quote casts (embedded casts), these are fetched and included in the `quoted_casts` array
-- All participants, including authors of quoted casts, are tracked in the `participants` array
-- User data for all participants is included in the `participants.user_data` object, with FIDs as keys
-- The `summary` field includes human-readable usernames when available instead of just FIDs
+Key features of the conversation API:
+
+1. **Complete Thread Context:**
+   - `parent_casts`: Includes parent casts up to 5 levels, showing the full context thread the conversation belongs to
+   - `root_cast`: The specified cast itself with all its metadata
+   - `conversation`: All replies to the root cast, organized in a nested tree structure when recursive mode is enabled
+
+2. **Embedded Content:**
+   - `quoted_casts`: Quoted/embedded casts in the root cast are fully hydrated with their content
+   - Quotes within replies are also included, with consistent nesting throughout the conversation tree
+
+3. **Participant Information:**
+   - All participants in the conversation are tracked, including authors of parent casts, replies, and quoted casts
+   - User profiles for all participants with username, display name, and profile pictures when available
+   - The `summary` field includes human-readable usernames instead of just FIDs
+
+4. **Topic Extraction:**
+   - The API generates a `topic` field by using the first words of the root cast
+   - The `summary` field provides a human-readable summary of the conversation with participant count
+
+5. **Nested Reply Support:**
+   - With `recursive=true`, all nested replies (replies to replies) are included with proper threading
+   - Each level tracks whether there are more replies available with the `has_more_replies` field
+   - Replies at each level are ordered by timestamp
 
 #### Get All Casts with Time Filtering
 
@@ -631,10 +669,15 @@ AI: "Let me fetch the complete conversation including all replies and participan
     
     Original cast by Alice (@alice):
     'This is my thought on the latest protocol upgrade...'
-    (This cast was a reply to Dave (@dave): 'What do people think about the new changes?')
-    (This cast quotes a cast by Eve (@eve.eth): 'Here's some useful context about the upgrade')
     
-    Participants: 5 users (Alice, Bob, Carol, Dave, Eve)
+    This is part of a thread:
+    - Grandparent: Charlie (@charlie): 'Announcing a new protocol upgrade coming next week'
+    - Parent: Dave (@dave): 'What do people think about the new changes?'
+    - Current: Alice (@alice): 'This is my thought on the latest protocol upgrade...'
+    
+    Alice's cast quotes Eve (@eve.eth): 'Here's some useful context about the upgrade'
+    
+    Participants: 5 users (Alice, Bob, Carol, Dave, Eve, Charlie)
     
     Replies:
     - Bob (@bob): 'This is a really insightful point!'
