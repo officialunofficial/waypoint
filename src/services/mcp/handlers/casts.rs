@@ -7,6 +7,14 @@ use std::collections::HashSet;
 
 use prost::Message as ProstMessage;
 
+// Struct to hold parameters for conversation tree building
+#[derive(Clone, Copy)]
+struct ConversationParams {
+    recursive: bool,
+    max_depth: usize,
+    limit: usize,
+}
+
 /// Helper function to format a message as JSON
 fn format_message(message: &Message) -> serde_json::Map<String, serde_json::Value> {
     let mut json_obj = serde_json::Map::new();
@@ -308,7 +316,7 @@ where
         }
     }
 
-    /// Get conversation details for a cast
+    /// Get conversation details for a cast, including parent context
     pub async fn do_get_conversation_impl(
         &self,
         fid: Fid,
@@ -341,14 +349,27 @@ where
             participants.insert(Fid::from(msg_data.fid));
         }
 
-        // Fetch and build the conversation tree recursively
+        // NEW: First fetch parent casts to build the conversation thread above this cast
+        let mut parent_casts = Vec::new();
+        let parent_info = self.get_parent_cast_info(&root_cast).await;
+
+        // Recursively fetch parent casts to build the context thread (up to 5 levels)
+        if parent_info.0.is_some() && parent_info.1.is_some() {
+            tracing::info!("Found parent cast reference, fetching thread context");
+            self.fetch_parent_casts(&mut parent_casts, &mut participants, &parent_info, 0, 5).await;
+        } else {
+            tracing::info!("No parent cast reference found, this may be a root conversation");
+        }
+
+        // Create parameters struct for conversation tree building
+        let conversation_params = ConversationParams { recursive, max_depth, limit };
+
+        // Fetch and build the conversation tree recursively (replies)
         let conversation_tree = self
             .build_conversation_tree(
                 &root_cast,
                 &mut participants,
-                recursive,
-                max_depth,
-                limit,
+                conversation_params,
                 0, // current depth starts at 0
             )
             .await;
@@ -455,76 +476,221 @@ where
         // Generate the summary with user information
         let summary = self.generate_conversation_summary(&root_cast, &conversation_tree).await;
 
-        // Format the response
-        let response = if quoted_casts.is_empty() {
-            serde_json::json!({
-                "root_cast": format_message(&root_cast),
-                "participants": {
-                    "count": participants.len(),
-                    "fids": participants.iter().collect::<Vec<_>>(),
-                    "user_data": user_data_map
-                },
-                "topic": topic,
-                "summary": summary,
-                "conversation": conversation_tree
-            })
+        // Format the response with parent casts
+        let response = if parent_casts.is_empty() {
+            // No parent casts, use original format
+            if quoted_casts.is_empty() {
+                serde_json::json!({
+                    "root_cast": format_message(&root_cast),
+                    "participants": {
+                        "count": participants.len(),
+                        "fids": participants.iter().collect::<Vec<_>>(),
+                        "user_data": user_data_map
+                    },
+                    "topic": topic,
+                    "summary": summary,
+                    "conversation": conversation_tree
+                })
+            } else {
+                serde_json::json!({
+                    "root_cast": format_message(&root_cast),
+                    "participants": {
+                        "count": participants.len(),
+                        "fids": participants.iter().collect::<Vec<_>>(),
+                        "user_data": user_data_map
+                    },
+                    "topic": topic,
+                    "summary": summary,
+                    "quoted_casts": quoted_casts,
+                    "conversation": conversation_tree
+                })
+            }
         } else {
-            serde_json::json!({
-                "root_cast": format_message(&root_cast),
-                "participants": {
-                    "count": participants.len(),
-                    "fids": participants.iter().collect::<Vec<_>>(),
-                    "user_data": user_data_map
-                },
-                "topic": topic,
-                "summary": summary,
-                "quoted_casts": quoted_casts,
-                "conversation": conversation_tree
-            })
+            // Include parent casts in the response
+            if quoted_casts.is_empty() {
+                serde_json::json!({
+                    "root_cast": format_message(&root_cast),
+                    "participants": {
+                        "count": participants.len(),
+                        "fids": participants.iter().collect::<Vec<_>>(),
+                        "user_data": user_data_map
+                    },
+                    "topic": topic,
+                    "summary": summary,
+                    "parent_casts": parent_casts,
+                    "conversation": conversation_tree
+                })
+            } else {
+                serde_json::json!({
+                    "root_cast": format_message(&root_cast),
+                    "participants": {
+                        "count": participants.len(),
+                        "fids": participants.iter().collect::<Vec<_>>(),
+                        "user_data": user_data_map
+                    },
+                    "topic": topic,
+                    "summary": summary,
+                    "parent_casts": parent_casts,
+                    "quoted_casts": quoted_casts,
+                    "conversation": conversation_tree
+                })
+            }
         };
 
         serde_json::to_string_pretty(&response)
             .unwrap_or_else(|e| format!("Error formatting response: {}", e))
     }
 
+    // Get parent cast information from a cast
+    async fn get_parent_cast_info(&self, cast: &Message) -> (Option<Fid>, Option<Vec<u8>>) {
+        let mut parent_fid = None;
+        let mut parent_hash = None;
+
+        // Try to decode the message payload
+        if let Ok(data) = ProstMessage::decode(&*cast.payload) {
+            let msg_data: crate::proto::MessageData = data;
+
+            // Check if this is a cast that has a parent
+            if let Some(crate::proto::message_data::Body::CastAddBody(cast_body)) = &msg_data.body {
+                // Check if the cast has a parent cast reference
+                if let Some(crate::proto::cast_add_body::Parent::ParentCastId(parent)) =
+                    &cast_body.parent
+                {
+                    parent_fid = Some(Fid::from(parent.fid));
+                    parent_hash = Some(parent.hash.clone());
+                }
+                // Note: We're ignoring ParentUrl parents for now as they reference external content
+            }
+        }
+
+        (parent_fid, parent_hash)
+    }
+
+    // Recursively fetch parent casts
+    async fn fetch_parent_casts(
+        &self,
+        parent_casts: &mut Vec<serde_json::Map<String, serde_json::Value>>,
+        participants: &mut HashSet<Fid>,
+        parent_info: &(Option<Fid>, Option<Vec<u8>>),
+        current_depth: usize,
+        max_depth: usize,
+    ) {
+        // Stop recursion if we've reached max depth or there's no parent info
+        if current_depth >= max_depth || parent_info.0.is_none() || parent_info.1.is_none() {
+            return;
+        }
+
+        // We have both FID and hash, try to fetch the parent cast
+        let parent_fid = parent_info.0.unwrap();
+        let parent_hash = parent_info.1.as_ref().unwrap();
+
+        tracing::info!(
+            "Fetching specific cast with FID: {} and hash: {}",
+            parent_fid,
+            hex::encode(parent_hash)
+        );
+
+        // Fetch the parent cast
+        match self.data_context.get_cast(parent_fid, parent_hash).await {
+            Ok(Some(parent_cast)) => {
+                // Add the parent cast author to participants
+                if let Ok(data) = ProstMessage::decode(&*parent_cast.payload) {
+                    let msg_data: crate::proto::MessageData = data;
+                    participants.insert(Fid::from(msg_data.fid));
+                }
+
+                // Format and add this parent cast to the list
+                let formatted_cast = format_message(&parent_cast);
+                parent_casts.push(formatted_cast);
+
+                // Get the grandparent info and recurse
+                let grandparent_info = self.get_parent_cast_info(&parent_cast).await;
+                // Use Box::pin for recursion in async functions
+                let future = Box::pin(self.fetch_parent_casts(
+                    parent_casts,
+                    participants,
+                    &grandparent_info,
+                    current_depth + 1,
+                    max_depth,
+                ));
+                future.await;
+            },
+            Ok(None) => {
+                tracing::warn!(
+                    "Parent cast not found: FID {} hash {}",
+                    parent_fid,
+                    hex::encode(parent_hash)
+                );
+            },
+            Err(e) => {
+                tracing::error!("Error fetching parent cast: {}", e);
+            },
+        }
+    }
+
     // Helper function to recursively build the conversation tree
+    // We're using a struct to reduce the number of parameters and address the clippy warning
     async fn build_conversation_tree(
         &self,
         _parent_cast: &Message,
         participants: &mut HashSet<Fid>,
-        recursive: bool,
-        max_depth: usize,
-        limit: usize,
+        params: ConversationParams,
         current_depth: usize,
     ) -> serde_json::Value {
         // If we've reached max depth, stop recursion
-        if current_depth >= max_depth {
+        if current_depth >= params.max_depth {
             return serde_json::json!({
                 "replies": [],
                 "has_more": false
             });
         }
 
-        // Fetch direct replies to this cast by extracting FID and hash
+        // For a cast with hash X, we want to find all casts that have X as their parent
+        // To find replies to the current cast, we need:
+        // 1. The FID of the cast author (parent_fid)
+        // 2. The hash of the cast itself (parent_hash)
         let mut parent_fid = Fid::from(0);
 
-        // Use the actual message hash from the Message struct
-        let parent_hash = _parent_cast.id.value().as_bytes();
-
-        // Also get FID from protobuf data
-        if let Ok(data) = ProstMessage::decode(&*_parent_cast.payload) {
-            let msg_data: crate::proto::MessageData = data;
+        // Extract the FID from the MessageData
+        if let Ok(msg_data) = ProstMessage::decode(&*_parent_cast.payload) {
+            let msg_data: crate::proto::MessageData = msg_data;
             parent_fid = Fid::from(msg_data.fid);
         }
 
-        let replies =
-            match self.data_context.get_casts_by_parent(parent_fid, parent_hash, limit).await {
-                Ok(messages) => messages,
-                Err(e) => {
-                    tracing::error!("Error fetching replies: {}", e);
-                    vec![]
-                },
-            };
+        // The hash is stored in the Message's id field
+        // This is from the Message.hash property in the protobuf
+        let parent_hash = match hex::decode(_parent_cast.id.value().trim_start_matches("0x")) {
+            Ok(hash_bytes) => hash_bytes,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to decode cast hash from ID: {} - {}",
+                    _parent_cast.id.value(),
+                    e
+                );
+                // If we can't decode the hash, use the raw bytes as fallback
+                // This is a last resort and may not produce correct results
+                Vec::new()
+            },
+        };
+
+        // Log a warning if we have an empty hash, as this will likely cause issues
+        if parent_hash.is_empty() {
+            tracing::warn!("Empty hash for parent FID {} - replies won't be found", parent_fid);
+        }
+
+        // Fetch direct replies to this cast using the Hub's GetCastsByParent API
+        // This returns all casts that have the current cast as their parent
+        let replies = match self
+            .data_context
+            .get_casts_by_parent(parent_fid, &parent_hash, params.limit)
+            .await
+        {
+            Ok(messages) => messages,
+            Err(e) => {
+                tracing::error!("Error fetching replies: {}", e);
+                vec![]
+            },
+        };
 
         // Add reply authors to participants by decoding the protobuf
         for reply in &replies {
@@ -539,21 +705,71 @@ where
         for reply in replies {
             let mut formatted_reply = format_message(&reply);
 
+            // Process embedded casts (quotes) in the reply just like we do for the root cast
+            if let Ok(data) = ProstMessage::decode(&*reply.payload) {
+                let msg_data: crate::proto::MessageData = data;
+
+                if let Some(crate::proto::message_data::Body::CastAddBody(cast)) = &msg_data.body {
+                    // If there are embeds, check for cast embeds (quotes)
+                    if !cast.embeds.is_empty() {
+                        let mut quoted_casts = Vec::new();
+
+                        for embed in &cast.embeds {
+                            if let Some(crate::proto::embed::Embed::CastId(cast_id)) = &embed.embed
+                            {
+                                // Try to fetch the quoted cast
+                                let quoted_fid = Fid::from(cast_id.fid);
+                                if let Ok(Some(quoted_cast)) =
+                                    self.data_context.get_cast(quoted_fid, &cast_id.hash).await
+                                {
+                                    quoted_casts.push(format_message(&quoted_cast));
+
+                                    // Add the author of the quoted cast to participants
+                                    if let Ok(q_data) = ProstMessage::decode(&*quoted_cast.payload)
+                                    {
+                                        let q_msg_data: crate::proto::MessageData = q_data;
+                                        participants.insert(Fid::from(q_msg_data.fid));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Add quoted casts to the formatted reply if any were found
+                        if !quoted_casts.is_empty() {
+                            formatted_reply.insert(
+                                "quoted_casts".to_string(),
+                                serde_json::Value::Array(
+                                    quoted_casts
+                                        .into_iter()
+                                        .map(serde_json::Value::Object)
+                                        .collect(),
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+
             // If recursive, fetch replies to this reply
-            if recursive && current_depth < max_depth - 1 {
+            if params.recursive && current_depth < params.max_depth - 1 {
                 // Use Box::pin for recursion in async functions to avoid infinite size issues
                 let nested_replies_future = Box::pin(self.build_conversation_tree(
                     &reply,
                     participants,
-                    recursive,
-                    max_depth,
-                    limit,
+                    params,
                     current_depth + 1,
                 ));
 
                 let nested_replies = nested_replies_future.await;
-                formatted_reply["replies"] = nested_replies["replies"].clone();
-                formatted_reply["has_more_replies"] = nested_replies["has_more"].clone();
+                // Use get() which safely returns an Option rather than panicking
+                formatted_reply.insert(
+                    "replies".to_string(),
+                    nested_replies.get("replies").cloned().unwrap_or_else(|| serde_json::json!([])),
+                );
+                formatted_reply.insert(
+                    "has_more_replies".to_string(),
+                    nested_replies.get("has_more").cloned().unwrap_or(serde_json::json!(false)),
+                );
             }
 
             formatted_replies.push(formatted_reply);
@@ -561,7 +777,7 @@ where
 
         serde_json::json!({
             "replies": formatted_replies,
-            "has_more": formatted_replies.len() >= limit
+            "has_more": formatted_replies.len() >= params.limit
         })
     }
 
