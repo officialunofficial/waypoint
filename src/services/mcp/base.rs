@@ -261,6 +261,18 @@ where
     pub fn new(data_context: DataContext<DB, HC>) -> Self {
         Self { data_context }
     }
+
+    // Conversation API - new method
+    pub async fn do_get_conversation(
+        &self,
+        fid: Fid,
+        cast_hash: &str,
+        recursive: bool,
+        max_depth: usize,
+        limit: usize,
+    ) -> String {
+        self.do_get_conversation_impl(fid, cast_hash, recursive, max_depth, limit).await
+    }
 }
 
 /// MCP Service that integrates with the App's service lifecycle

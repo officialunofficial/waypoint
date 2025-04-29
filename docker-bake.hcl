@@ -3,7 +3,7 @@ variable "TAG" {
 }
 
 variable "REGISTRY" {
-    default = "officialunofficial"
+    default = "docker.io/officialunofficial"
 }
 
 // Define the platforms to build for

@@ -1,4 +1,4 @@
-ARG REGISTRY=localhost
+ARG REGISTRY=docker.io
 ARG TARGETARCH
 # Builder stage
 FROM rust:1.85 AS builder
