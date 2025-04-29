@@ -273,6 +273,122 @@ Retrieve casts that reply to a specific URL.
 }
 ```
 
+#### Get Conversation
+
+Retrieve complete conversation details for a cast, including participants, nested replies, and parent context if the cast was a reply.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_conversation",
+    "input": {
+      "fid": "12345",
+      "cast_hash": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+      "recursive": true,
+      "max_depth": 5,
+      "limit": 50
+    }
+  }
+}
+```
+
+The response includes:
+
+```json
+{
+  "root_cast": {
+    "fid": 12345,
+    "hash": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+    "text": "This is the original cast that started the conversation",
+    "timestamp": 1672531200,
+    "parent": {
+      "type": "cast",
+      "fid": 9999,
+      "hash": "0xdeadbeef1234567890abcdef1234567890abcdef"
+    },
+    "embeds": [
+      {
+        "type": "cast",
+        "fid": 5678,
+        "hash": "0xaabbccddeeff1122334455667788990011223344"
+      }
+    ]
+  },
+  "quoted_casts": [
+    {
+      "fid": 5678,
+      "hash": "0xaabbccddeeff1122334455667788990011223344",
+      "text": "This is a quoted cast embedded in the original cast",
+      "timestamp": 1672530000
+    }
+  ],
+  "participants": {
+    "count": 5,
+    "fids": [12345, 6789, 2468, 1357, 9876],
+    "user_data": {
+      "12345": {
+        "fid": 12345,
+        "username": "alice",
+        "display_name": "Alice",
+        "pfp": "https://example.com/alice.jpg"
+      },
+      "6789": {
+        "fid": 6789,
+        "username": "bob",
+        "display_name": "Bob",
+        "pfp": "https://example.com/bob.jpg"
+      }
+      // ... other participants
+    }
+  },
+  "topic": "This is the original cast...",
+  "summary": "Conversation started by Alice (@alice) with: \"This is the original cast...\". 8 replies in the thread.",
+  "conversation": {
+    "replies": [
+      {
+        "fid": 6789,
+        "hash": "0xabcdef1234567890abcdef1234567890abcdef12",
+        "text": "This is a reply to the original cast",
+        "timestamp": 1672532200,
+        "replies": [],
+        "has_more_replies": false
+      },
+      {
+        "fid": 2468,
+        "hash": "0x9876543210fedcba9876543210fedcba98765432",
+        "text": "Another reply with nested replies",
+        "timestamp": 1672533200,
+        "replies": [
+          {
+            "fid": 1357,
+            "hash": "0x0123456789abcdef0123456789abcdef01234567",
+            "text": "This is a nested reply",
+            "timestamp": 1672534200
+          }
+        ],
+        "has_more_replies": false
+      }
+    ],
+    "has_more": false
+  }
+}
+```
+
+Additional parameters:
+- `recursive`: When true, fetches nested replies to create a complete conversation tree
+- `max_depth`: Controls how deep to traverse the reply tree (default: 5)
+- `limit`: Maximum number of replies to fetch per level (default: 50)
+
+The feature provides a comprehensive view of the conversation:
+- If the specified cast is a reply to another cast, the parent information is included in the `parent` field of the root cast
+- All replies to the specified cast are included in the `conversation.replies` array
+- With `recursive=true`, all nested replies (replies to replies) are also included
+- If the cast contains quote casts (embedded casts), these are fetched and included in the `quoted_casts` array
+- All participants, including authors of quoted casts, are tracked in the `participants` array
+- User data for all participants is included in the `participants.user_data` object, with FIDs as keys
+- The `summary` field includes human-readable usernames when available instead of just FIDs
+
 #### Get All Casts with Time Filtering
 
 Retrieve casts from a user with optional timestamp filtering.
@@ -500,6 +616,37 @@ AI: "Let me fetch the replies to this specific cast."
      - FID 456: 'This is a really insightful point!'
      - FID 789: 'I had a similar experience with this'
      - FID 101: 'Could you elaborate more on the second part?'
+    "
+```
+
+### Getting a Complete Conversation Thread
+
+```
+User: "Show me the entire conversation for the cast by FID 12345 with hash 0x1a2b3c4d..."
+
+AI: "Let me fetch the complete conversation including all replies and participants."
+    [AI uses the get_conversation tool with the FID, hash, and recursive=true]
+    
+    "Here's the conversation:
+    
+    Original cast by Alice (@alice):
+    'This is my thought on the latest protocol upgrade...'
+    (This cast was a reply to Dave (@dave): 'What do people think about the new changes?')
+    (This cast quotes a cast by Eve (@eve.eth): 'Here's some useful context about the upgrade')
+    
+    Participants: 5 users (Alice, Bob, Carol, Dave, Eve)
+    
+    Replies:
+    - Bob (@bob): 'This is a really insightful point!'
+      └─ Carol (@carol): 'I agree, especially regarding the implementation details'
+         └─ Alice (@alice): 'Thanks! I've been working on these ideas for a while'
+    
+    - Dave (@dave): 'I had a similar experience with this'
+      └─ Eve (@eve.eth): 'Would you mind sharing more about your experience?'
+         └─ Dave (@dave): 'Sure, I worked on something similar last year...'
+    
+    Topic summary: 'This is my thought on the latest protocol upgrade...'
+    8 total replies in this conversation thread
     "
 ```
 

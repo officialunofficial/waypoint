@@ -1,7 +1,6 @@
 //! Common request types for MCP handlers
 
-use rmcp::schemars;
-use rmcp::schemars::JsonSchema;
+use rmcp::schemars::{self, JsonSchema};
 use serde::Deserialize;
 
 /// Default limit for most requests
@@ -211,4 +210,32 @@ pub struct FidRequest {
 pub struct GetFidByUsernameRequest {
     #[schemars(description = "Farcaster username (without the @ symbol)")]
     pub username: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetConversationRequest {
+    #[schemars(description = "Farcaster user ID of the cast author")]
+    pub fid: String,
+
+    #[schemars(description = "Cast hash in hexadecimal format")]
+    pub cast_hash: String,
+
+    #[schemars(description = "Whether to include the full conversation tree with nested replies")]
+    #[serde(default = "default_false")]
+    pub recursive: bool,
+
+    #[schemars(description = "Maximum depth of reply tree to traverse")]
+    #[serde(default = "default_max_depth")]
+    pub max_depth: usize,
+
+    #[schemars(description = "Maximum number of replies to fetch per level")]
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+fn default_false() -> bool {
+    false
+}
+fn default_max_depth() -> usize {
+    5
 }

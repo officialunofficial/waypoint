@@ -160,6 +160,28 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
+    #[tool(description = "Get conversation details for a cast, including participants and replies")]
+    async fn get_conversation(
+        &self,
+        #[tool(aggr)] common::GetConversationRequest {
+            fid,
+            cast_hash,
+            recursive,
+            max_depth,
+            limit
+        }: common::GetConversationRequest,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = match fid.parse::<u64>() {
+            Ok(fid) => Fid::from(fid),
+            Err(_) => return Err(McpError::invalid_params("Invalid FID format", None)),
+        };
+
+        let result =
+            self.service.do_get_conversation(fid, &cast_hash, recursive, max_depth, limit).await;
+
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
     // Reaction APIs
     #[tool(description = "Get a specific reaction")]
     async fn get_reaction(
