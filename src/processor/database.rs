@@ -602,52 +602,54 @@ impl DatabaseProcessor {
             let ts = Self::convert_timestamp(data.timestamp);
 
             // Store message in messages table with transaction
-            let result = sqlx::query!(
-                r#"
-        INSERT INTO messages (
-            fid, type, timestamp, hash, hash_scheme, signature_scheme, signer, body, raw,
-            deleted_at, pruned_at, revoked_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        ON CONFLICT (hash, fid, type) DO UPDATE SET
-            deleted_at = EXCLUDED.deleted_at,
-            pruned_at = EXCLUDED.pruned_at,
-            revoked_at = EXCLUDED.revoked_at
-        "#,
-                data.fid as i64,
-                data.r#type as i16,
-                ts,
-                &msg.hash,
-                msg.hash_scheme as i16,
-                msg.signature_scheme as i16,
-                &msg.signer,
-                serde_json::to_value(data)?,
-                msg.data_bytes.as_deref().unwrap_or_default(),
-                match operation {
-                    "delete" => Some(OffsetDateTime::now_utc()),
-                    _ => None,
-                },
-                match operation {
-                    "prune" => Some(OffsetDateTime::now_utc()),
-                    _ => None,
-                },
-                match operation {
-                    "revoke" => Some(OffsetDateTime::now_utc()),
-                    _ => None,
-                }
-            )
-            .execute(&self.resources.database.pool)
-            .await;
-
-            match result {
-                Ok(_) => {},
-                Err(e) => {
-                    if e.to_string().contains("EOF") || e.to_string().contains("timed out") {
-                        error!("Fatal database error in messages table: {}", e);
-                        std::process::exit(1);
+            if self.resources.config.database.store_raw_messages {
+                let result = sqlx::query!(
+                    r#"
+                INSERT INTO messages (
+                    fid, type, timestamp, hash, hash_scheme, signature_scheme, signer, body, raw,
+                    deleted_at, pruned_at, revoked_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (hash, fid, type) DO UPDATE SET
+                    deleted_at = EXCLUDED.deleted_at,
+                    pruned_at = EXCLUDED.pruned_at,
+                    revoked_at = EXCLUDED.revoked_at
+                "#,
+                    data.fid as i64,
+                    data.r#type as i16,
+                    ts,
+                    &msg.hash,
+                    msg.hash_scheme as i16,
+                    msg.signature_scheme as i16,
+                    &msg.signer,
+                    serde_json::to_value(data)?,
+                    msg.data_bytes.as_deref().unwrap_or_default(),
+                    match operation {
+                        "delete" => Some(OffsetDateTime::now_utc()),
+                        _ => None,
+                    },
+                    match operation {
+                        "prune" => Some(OffsetDateTime::now_utc()),
+                        _ => None,
+                    },
+                    match operation {
+                        "revoke" => Some(OffsetDateTime::now_utc()),
+                        _ => None,
                     }
-                    return Err(e.into());
-                },
+                )
+                .execute(&self.resources.database.pool)
+                .await;
+
+                match result {
+                    Ok(_) => {},
+                    Err(e) => {
+                        if e.to_string().contains("EOF") || e.to_string().contains("timed out") {
+                            error!("Fatal database error in messages table: {}", e);
+                            std::process::exit(1);
+                        }
+                        return Err(e.into());
+                    },
+                }
             }
 
             // Process message type-specific operations
