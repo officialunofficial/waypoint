@@ -471,7 +471,7 @@ pub struct StreamingService {
     /// Enabled spam filter
     enable_spam_filter: bool,
     /// Enabled print processor
-    enable_print_processor: bool, 
+    enable_print_processor: bool,
 }
 
 /// Processor type for selection
@@ -554,7 +554,7 @@ impl StreamingOptions {
 impl StreamingService {
     /// Create a new streaming service
     pub fn new() -> Self {
-        Self { 
+        Self {
             enable_spam_filter: true, // Enable spam filter by default
             ..Default::default()
         }
@@ -574,13 +574,13 @@ impl StreamingService {
         self.options = f(StreamingOptions::new());
         self
     }
-    
+
     /// Enable or disable the spam filter
     pub fn with_spam_filter(mut self, enabled: bool) -> Self {
         self.enable_spam_filter = enabled;
         self
     }
-    
+
     /// Enable or disable the print processor
     pub fn with_print_processor(mut self, enabled: bool) -> Self {
         self.enable_print_processor = enabled;
@@ -653,7 +653,7 @@ impl Service for StreamingService {
             let wrapper = DatabaseWrapper::new(&app_resources);
             processor_registry.register(wrapper);
         }
-        
+
         // Register print processor if enabled
         if self.enable_print_processor {
             info!("Registering print processor");
@@ -698,12 +698,12 @@ impl Service for StreamingService {
             let wrapper = PrintWrapper::new(&app_resources);
             processor_registry.register(wrapper);
         }
-        
+
         // Register any other processors from config for backward compatibility
         for processor_type in &self.options.processors {
             match processor_type {
-                ProcessorType::Database => {}, // Already registered
-                ProcessorType::Print => {},    // Handled by enable_print_processor
+                ProcessorType::Database => {},   // Already registered
+                ProcessorType::Print => {},      // Handled by enable_print_processor
                 ProcessorType::SpamFilter => {}, // Handled by enable_spam_filter
             }
         }
@@ -725,7 +725,7 @@ impl Service for StreamingService {
             })?;
 
             let mut options = self.options.subscriber.clone().unwrap_or_default();
-            
+
             // Configure the subscriber to use spam filter if enabled
             if !self.enable_spam_filter {
                 info!("Spam filter disabled - all messages will be processed");
@@ -734,7 +734,7 @@ impl Service for StreamingService {
                 info!("Spam filter enabled - spam messages will be filtered");
                 options.spam_filter_enabled = Some(true);
             }
-            
+
             HubSubscriber::new(
                 client.clone(),
                 Arc::clone(&context.state.redis),

@@ -85,10 +85,10 @@ impl HubSubscriber {
 
         // Create and initialize spam filter - this now blocks until initial load
         let spam_filter = Arc::new(SpamFilter::new());
-        
+
         // Check for spam filter enable/disable flag in options
         let spam_filter_enabled = opts.spam_filter_enabled.unwrap_or(true);
-        
+
         if spam_filter_enabled {
             info!("Loading spam filter list before starting Hub subscriber...");
             if let Err(e) = spam_filter.start_updater().await {

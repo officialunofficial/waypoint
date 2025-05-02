@@ -4,10 +4,7 @@ use tracing::info;
 use waypoint::{
     app::App,
     config::Config,
-    services::{
-        mcp::McpService,
-        streaming::StreamingService,
-    },
+    services::{mcp::McpService, streaming::StreamingService},
 };
 
 /// Run the main streaming service

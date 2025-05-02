@@ -603,11 +603,11 @@ impl DatabaseProcessor {
 
             // Determine if we should store messages in the messages table
             let store_messages = self.resources.config.database.store_messages;
-            
+
             // Store message in messages table only if configured to do so
             if store_messages {
                 let raw_data = msg.data_bytes.as_deref().unwrap_or_default();
-                
+
                 // Store message in messages table with transaction
                 let result = sqlx::query!(
                     r#"
