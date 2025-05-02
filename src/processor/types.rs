@@ -1,4 +1,9 @@
-use crate::{database::client::Database, hub::client::Hub, redis::client::Redis};
+use crate::{
+    config::Config,
+    database::client::Database, 
+    hub::client::Hub, 
+    redis::client::Redis
+};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -10,11 +15,22 @@ pub struct AppResources {
     pub hub: Arc<Mutex<Hub>>,
     pub redis: Arc<Redis>,
     pub database: Arc<Database>,
+    pub config: Config,
 }
 
 impl AppResources {
     pub fn new(hub: Arc<Mutex<Hub>>, redis: Arc<Redis>, database: Arc<Database>) -> Self {
-        Self { hub, redis, database }
+        // Create a default config for backward compatibility
+        Self { 
+            hub, 
+            redis, 
+            database, 
+            config: Config::default() 
+        }
+    }
+    
+    pub fn with_config(hub: Arc<Mutex<Hub>>, redis: Arc<Redis>, database: Arc<Database>, config: Config) -> Self {
+        Self { hub, redis, database, config }
     }
 }
 
@@ -25,6 +41,7 @@ impl Clone for AppResources {
             hub: Arc::clone(&self.hub),
             redis: Arc::clone(&self.redis),
             database: Arc::clone(&self.database),
+            config: self.config.clone(),
         }
     }
 }

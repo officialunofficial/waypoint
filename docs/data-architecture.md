@@ -160,6 +160,7 @@ Waypoint's data architecture follows the DataContext pattern to provide unified 
 2. Consistent interfaces for both database and hub operations
 3. Flexible composition through dependency injection
 4. Testability with mock implementations
+5. Configurable storage efficiency with optional raw message storage
 
 ### Key Components
 
@@ -202,3 +203,30 @@ Waypoint's data architecture follows the DataContext pattern to provide unified 
 5. Results are processed and returned to the service layer
 
 This architecture allows Waypoint to efficiently manage data access across multiple sources while maintaining a consistent interface for the rest of the application.
+
+### Storage Optimization
+
+Waypoint includes configurable storage options to optimize database usage:
+
+#### Message Storage
+
+By default, Waypoint stores all messages in the `messages` table for maximum data fidelity. However, this can be disabled to save storage space:
+
+```toml
+[database]
+store_messages = false
+```
+
+When `store_messages` is set to `false`, the system will:
+
+1. Skip storing any data in the `messages` table completely
+2. Still store the processed data in type-specific tables (casts, reactions, etc.)
+3. Significantly reduce database size for high-volume installations
+
+This is particularly useful for deployments that:
+- Have limited storage capacity
+- Process a high volume of messages
+- Don't require the messages table for compliance or recovery purposes
+- Only need the structured data in the type-specific tables
+
+The processed data (casts, reactions, etc.) remains fully available regardless of this setting.

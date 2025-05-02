@@ -6,7 +6,7 @@ use waypoint::{
     config::Config,
     services::{
         mcp::McpService,
-        streaming::{ProcessorType, StreamingService},
+        streaming::StreamingService,
     },
 };
 
@@ -36,12 +36,10 @@ pub async fn run_service(config: &Config) -> Result<()> {
             .with_concurrency(200)
             .with_timeout(Duration::from_secs(120))
             .with_retention(Duration::from_secs(24 * 60 * 60))
-            .with_processors(vec![
-                ProcessorType::Database, // Enable database by default
-                                         // PrintProcessor disabled by default to reduce log verbosity
-                                         // To enable for debugging, add ProcessorType::Print here
-            ])
-    });
+    })
+    // Use the new controls for enabling/disabling features
+    .with_spam_filter(true) // Enable spam filter by default
+    .with_print_processor(false); // Disable print processor by default for reduced verbosity
 
     app.register_service(streaming_service);
 
