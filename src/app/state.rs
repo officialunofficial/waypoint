@@ -17,6 +17,8 @@ pub struct AppState {
     pub redis: Arc<Redis>,
     /// Database client
     pub database: Arc<Database>,
+    /// Configuration
+    pub config: Arc<Config>,
 }
 
 /// State provider that initializes application components
@@ -56,7 +58,7 @@ impl StateProvider {
         }
 
         // Create the state
-        let state = AppState { hub, redis, database };
+        let state = AppState { hub, redis, database, config: Arc::new(self.config.clone()) };
 
         Ok(Arc::new(state))
     }

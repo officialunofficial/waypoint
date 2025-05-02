@@ -30,6 +30,12 @@ pub struct DatabaseConfig {
     pub url: String,
     pub max_connections: u32,
     pub timeout_seconds: u64,
+    #[serde(default = "default_store_raw_messages")]
+    pub store_raw_messages: bool,
+}
+
+fn default_store_raw_messages() -> bool {
+    true
 }
 
 /// Redis configuration
@@ -231,6 +237,7 @@ impl Default for DatabaseConfig {
             url: "postgresql://localhost/waypoint".to_string(),
             max_connections: 20,
             timeout_seconds: 30,
+            store_raw_messages: default_store_raw_messages(),
         }
     }
 }
