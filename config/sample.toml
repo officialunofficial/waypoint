@@ -11,6 +11,8 @@ url = "postgresql://postgres:postgres@localhost:5432/waypoint"
 max_connections = 60
 # Connection timeout in seconds
 timeout_seconds = 30
+# Whether to store messages in the messages table (set to false to skip messages table completely)
+store_messages = true
 
 # Redis Configuration
 [redis]

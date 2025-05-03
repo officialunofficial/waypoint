@@ -7,3 +7,5 @@
 
 grafana/data
 graphite
+
+**/.claude/settings.local.json

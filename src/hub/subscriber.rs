@@ -57,6 +57,7 @@ pub struct HubSubscriber {
     shutdown: Arc<RwLock<bool>>,
     connection_timeout: Duration,
     spam_filter: Arc<SpamFilter>,
+    spam_filter_enabled: bool,
     // Track last successful Redis publish time for better connection monitoring
     last_successful_flush: Arc<RwLock<Option<Instant>>>,
     // Enhanced connection tracking and retry configuration
@@ -84,15 +85,23 @@ impl HubSubscriber {
 
         // Create and initialize spam filter - this now blocks until initial load
         let spam_filter = Arc::new(SpamFilter::new());
-        info!("Loading spam filter list before starting Hub subscriber...");
-        if let Err(e) = spam_filter.start_updater().await {
-            error!(
-                "Failed to load initial spam filter list: {}. Hub subscription may include spam messages until filter loads.",
-                e
-            );
-            // We'll continue anyway since the background task will retry
+
+        // Check for spam filter enable/disable flag in options
+        let spam_filter_enabled = opts.spam_filter_enabled.unwrap_or(true);
+
+        if spam_filter_enabled {
+            info!("Loading spam filter list before starting Hub subscriber...");
+            if let Err(e) = spam_filter.start_updater().await {
+                error!(
+                    "Failed to load initial spam filter list: {}. Hub subscription may include spam messages until filter loads.",
+                    e
+                );
+                // We'll continue anyway since the background task will retry
+            } else {
+                info!("Spam filter loaded - Hub subscription will filter spam messages");
+            }
         } else {
-            info!("Spam filter loaded - Hub subscription will filter spam messages");
+            info!("Spam filter disabled - all messages will be processed including spam");
         }
 
         // Get the current time in seconds since epoch for tracking the last successful operation
@@ -139,6 +148,7 @@ impl HubSubscriber {
             shutdown: Arc::new(RwLock::new(false)),
             connection_timeout,
             spam_filter,
+            spam_filter_enabled,
             last_successful_flush: Arc::new(RwLock::new(Some(Instant::now()))),
             consecutive_errors: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             last_success: Arc::new(std::sync::atomic::AtomicU64::new(current_time)),
@@ -735,11 +745,15 @@ impl HubSubscriber {
 
         trace!("Flushing batch of {} events ({} bytes)", event_count, batch.current_bytes);
 
-        // Filter spam events
-        let keep_indices = self
-            .spam_filter
-            .filter_events(&batch.events.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>())
-            .await;
+        // Filter spam events if enabled
+        let keep_indices = if self.spam_filter_enabled {
+            self.spam_filter
+                .filter_events(&batch.events.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>())
+                .await
+        } else {
+            // If spam filter is disabled, keep all events
+            (0..batch.events.len()).collect()
+        };
 
         let filtered_count = event_count - keep_indices.len();
         if filtered_count > 0 {
@@ -931,4 +945,5 @@ pub struct SubscriberOptions {
     pub before_process: Option<PreProcessHandler>,
     pub after_process: Option<PostProcessHandler>,
     pub hub_config: Option<Arc<HubConfig>>,
+    pub spam_filter_enabled: Option<bool>,
 }

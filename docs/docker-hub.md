@@ -20,6 +20,7 @@ docker compose up
 docker run -e WAYPOINT_DATABASE__URL=postgresql://user:pass@host:5432/waypoint \
   -e WAYPOINT_DATABASE__MAX_CONNECTIONS=20 \
   -e WAYPOINT_DATABASE__TIMEOUT_SECONDS=60 \
+  -e WAYPOINT_DATABASE__STORE_RAW_MESSAGES=true \
   -e WAYPOINT_REDIS__URL=redis://host:6379 \
   -e WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383 \
   -e HOST=0.0.0.0 \

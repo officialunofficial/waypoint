@@ -6,6 +6,7 @@
 url = "postgresql://postgres:postgres@localhost:5432/waypoint"
 max_connections = 60
 timeout_seconds = 30
+store_messages = true
 
 # Redis Configuration
 [redis]

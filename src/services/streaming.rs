@@ -468,6 +468,10 @@ impl Consumer {
 pub struct StreamingService {
     /// Service options
     options: StreamingOptions,
+    /// Enabled spam filter
+    enable_spam_filter: bool,
+    /// Enabled print processor
+    enable_print_processor: bool,
 }
 
 /// Processor type for selection
@@ -477,6 +481,8 @@ pub enum ProcessorType {
     Database,
     /// Print processor (for debugging)
     Print,
+    /// Spam filter
+    SpamFilter,
 }
 
 /// Options for the streaming service
@@ -548,7 +554,10 @@ impl StreamingOptions {
 impl StreamingService {
     /// Create a new streaming service
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            enable_spam_filter: true, // Enable spam filter by default
+            ..Default::default()
+        }
     }
 
     /// Set options for the service
@@ -565,6 +574,18 @@ impl StreamingService {
         self.options = f(StreamingOptions::new());
         self
     }
+
+    /// Enable or disable the spam filter
+    pub fn with_spam_filter(mut self, enabled: bool) -> Self {
+        self.enable_spam_filter = enabled;
+        self
+    }
+
+    /// Enable or disable the print processor
+    pub fn with_print_processor(mut self, enabled: bool) -> Self {
+        self.enable_print_processor = enabled;
+        self
+    }
 }
 
 #[async_trait]
@@ -578,105 +599,112 @@ impl Service for StreamingService {
         use crate::core::MessageType;
         use crate::processor::{AppResources, database::DatabaseProcessor, print::PrintProcessor};
 
-        // Create a single set of app resources - this will be wrapped in Arc only once
+        // Create a single set of app resources with config - this will be wrapped in Arc only once
         // when needed by processor implementations
-        let app_resources = AppResources::new(
+        let app_resources = AppResources::with_config(
             Arc::clone(&context.state.hub),
             Arc::clone(&context.state.redis),
             Arc::clone(&context.state.database),
+            context.config.clone(),
         );
 
         // Create processor registry
         let mut processor_registry = ProcessorRegistry::new(Arc::clone(&context.state));
 
-        // Register processors based on configuration
+        // Always register the database processor since it's core functionality
+        {
+            info!("Registering database processor");
+
+            // Create a wrapper that implements the app's EventProcessor trait
+            struct DatabaseWrapper {
+                processor: DatabaseProcessor,
+            }
+
+            impl DatabaseWrapper {
+                fn new(resources: &AppResources) -> Self {
+                    // Only wrap in Arc at the point of creation - no unnecessary Arcs
+                    let resources_arc = Arc::new(resources.clone());
+                    Self { processor: DatabaseProcessor::new(resources_arc) }
+                }
+            }
+
+            #[async_trait::async_trait]
+            impl crate::app::EventProcessor for DatabaseWrapper {
+                fn name(&self) -> &str {
+                    "database"
+                }
+
+                async fn process(
+                    &self,
+                    event: crate::proto::HubEvent,
+                ) -> crate::app::ProcessorResult<()> {
+                    use crate::processor::consumer::EventProcessor;
+                    self.processor
+                        .process_event(event)
+                        .await
+                        .map_err(|e| crate::app::ProcessorError::Processing(e.to_string()))
+                }
+
+                fn supported_types(&self) -> Vec<MessageType> {
+                    MessageType::all().collect()
+                }
+            }
+
+            let wrapper = DatabaseWrapper::new(&app_resources);
+            processor_registry.register(wrapper);
+        }
+
+        // Register print processor if enabled
+        if self.enable_print_processor {
+            info!("Registering print processor");
+
+            // Create a wrapper that implements the app's EventProcessor trait
+            struct PrintWrapper {
+                processor: PrintProcessor,
+            }
+
+            impl PrintWrapper {
+                fn new(resources: &AppResources) -> Self {
+                    // Only wrap in Arc at the point of creation
+                    let resources_arc = Arc::new(resources.clone());
+                    Self { processor: PrintProcessor::new(resources_arc) }
+                }
+            }
+
+            #[async_trait::async_trait]
+            impl crate::app::EventProcessor for PrintWrapper {
+                fn name(&self) -> &str {
+                    "print"
+                }
+
+                async fn process(
+                    &self,
+                    event: crate::proto::HubEvent,
+                ) -> crate::app::ProcessorResult<()> {
+                    // Use the processor trait directly
+                    use crate::processor::consumer::EventProcessor;
+                    self.processor
+                        .process_event(event)
+                        .await
+                        .map_err(|e| crate::app::ProcessorError::Processing(e.to_string()))
+                }
+
+                fn supported_types(&self) -> Vec<MessageType> {
+                    // Support all message types
+                    MessageType::all().collect()
+                }
+            }
+
+            let wrapper = PrintWrapper::new(&app_resources);
+            processor_registry.register(wrapper);
+        }
+
+        // Register any other processors from config for backward compatibility
         for processor_type in &self.options.processors {
             match processor_type {
-                ProcessorType::Database => {
-                    info!("Registering database processor");
-
-                    // Create a wrapper that implements the app's EventProcessor trait
-                    struct DatabaseWrapper {
-                        processor: DatabaseProcessor,
-                    }
-
-                    impl DatabaseWrapper {
-                        fn new(resources: &AppResources) -> Self {
-                            // Only wrap in Arc at the point of creation - no unnecessary Arcs
-                            let resources_arc = Arc::new(resources.clone());
-                            Self { processor: DatabaseProcessor::new(resources_arc) }
-                        }
-                    }
-
-                    #[async_trait::async_trait]
-                    impl crate::app::EventProcessor for DatabaseWrapper {
-                        fn name(&self) -> &str {
-                            "database"
-                        }
-
-                        async fn process(
-                            &self,
-                            event: crate::proto::HubEvent,
-                        ) -> crate::app::ProcessorResult<()> {
-                            use crate::processor::consumer::EventProcessor;
-                            self.processor
-                                .process_event(event)
-                                .await
-                                .map_err(|e| crate::app::ProcessorError::Processing(e.to_string()))
-                        }
-
-                        fn supported_types(&self) -> Vec<MessageType> {
-                            MessageType::all().collect()
-                        }
-                    }
-
-                    let wrapper = DatabaseWrapper::new(&app_resources);
-                    processor_registry.register(wrapper);
-                },
-
-                ProcessorType::Print => {
-                    info!("Registering print processor");
-
-                    // Create a wrapper that implements the app's EventProcessor trait
-                    struct PrintWrapper {
-                        processor: PrintProcessor,
-                    }
-
-                    impl PrintWrapper {
-                        fn new(resources: &AppResources) -> Self {
-                            // Only wrap in Arc at the point of creation
-                            let resources_arc = Arc::new(resources.clone());
-                            Self { processor: PrintProcessor::new(resources_arc) }
-                        }
-                    }
-
-                    #[async_trait::async_trait]
-                    impl crate::app::EventProcessor for PrintWrapper {
-                        fn name(&self) -> &str {
-                            "print"
-                        }
-
-                        async fn process(
-                            &self,
-                            event: crate::proto::HubEvent,
-                        ) -> crate::app::ProcessorResult<()> {
-                            // Use the processor trait directly
-                            use crate::processor::consumer::EventProcessor;
-                            self.processor
-                                .process_event(event)
-                                .await
-                                .map_err(|e| crate::app::ProcessorError::Processing(e.to_string()))
-                        }
-
-                        fn supported_types(&self) -> Vec<MessageType> {
-                            // Support all message types
-                            MessageType::all().collect()
-                        }
-                    }
-
-                    let wrapper = PrintWrapper::new(&app_resources);
-                    processor_registry.register(wrapper);
-                },
+                ProcessorType::Database => {},   // Already registered
+                ProcessorType::Print => {},      // Handled by enable_print_processor
+                ProcessorType::SpamFilter => {}, // Handled by enable_spam_filter
             }
         }
 
@@ -696,13 +724,24 @@ impl Service for StreamingService {
                 ServiceError::Initialization("No hub client available".to_string())
             })?;
 
+            let mut options = self.options.subscriber.clone().unwrap_or_default();
+
+            // Configure the subscriber to use spam filter if enabled
+            if !self.enable_spam_filter {
+                info!("Spam filter disabled - all messages will be processed");
+                options.spam_filter_enabled = Some(false);
+            } else {
+                info!("Spam filter enabled - spam messages will be filtered");
+                options.spam_filter_enabled = Some(true);
+            }
+
             HubSubscriber::new(
                 client.clone(),
                 Arc::clone(&context.state.redis),
                 RedisStream::new(Arc::clone(&context.state.redis)), // Can't use Arc<RedisStream> here
                 hub_guard.host().to_string(),
                 "default".to_string(),
-                self.options.subscriber.clone().unwrap_or_default(),
+                options,
             )
             .await
         };
