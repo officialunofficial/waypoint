@@ -1,11 +1,11 @@
 use crate::{
     database::client::Database,
     hub::error::Error,
-    processor::consumer::EventProcessor,
+    processor::{consumer::EventProcessor, database::DatabaseProcessor},
     proto::{
         self, FidRequest, FidTimestampRequest, HubEvent, HubEventType, LinksByFidRequest,
         MergeMessageBody, MergeOnChainEventBody, Message, OnChainEventRequest, OnChainEventType,
-        ReactionsByFidRequest,
+        ReactionsByFidRequest, hub_event::Body,
     },
 };
 use std::{sync::Arc, time::Duration};
@@ -106,11 +106,8 @@ impl MessageReconciler {
                 let message_type_str = message_type.to_string();
                 let semaphore_clone = Arc::clone(&semaphore);
 
-                // Create events before spawning the task to avoid self reference
-                let mut events = Vec::with_capacity(chunk_vec.len());
-                for message in chunk_vec {
-                    events.push(self.message_to_hub_event(message));
-                }
+                // Extract messages from chunk for potential batch processing
+                let message_batch = chunk_vec.clone();
 
                 let handle = tokio::spawn(async move {
                     // Acquire permit to limit concurrency
@@ -119,16 +116,80 @@ impl MessageReconciler {
                     let mut chunk_success = 0;
                     let mut chunk_error = 0;
 
-                    for event in events {
-                        match processor_clone.process_event(event).await {
-                            Ok(_) => chunk_success += 1,
+                    // Try to downcast to DatabaseProcessor to use batch processing
+                    if let Some(db_processor) = (processor_clone.as_any())
+                        .downcast_ref::<crate::processor::database::DatabaseProcessor>() 
+                    {
+                        // Process the entire batch at once
+                        match db_processor.process_message_batch(&message_batch, "merge").await {
+                            Ok(_) => {
+                                chunk_success = message_batch.len();
+                            },
                             Err(e) => {
                                 error!(
-                                    "Error processing {} message for FID {}: {:?}",
+                                    "Error batch processing {} messages for FID {}: {:?}",
                                     message_type_str, fid, e
                                 );
-                                chunk_error += 1;
+                                
+                                // If batch processing fails, fall back to individual processing
+                                // Create events for individual processing
+                                let mut events = Vec::with_capacity(message_batch.len());
+                                for message in &message_batch {
+                                    // Can't use self within the async closure - reconstruct the event instead
+                                    events.push(HubEvent {
+                                        id: 0, // We don't use this ID
+                                        r#type: 1, // MERGE_MESSAGE is type 1
+                                        body: Some(Body::MergeMessageBody(MergeMessageBody {
+                                            message: Some(message.clone()),
+                                            deleted_messages: Vec::new(),
+                                        })),
+                                        block_number: 0,
+                                        shard_index: 0,
+                                    });
+                                }
+                                
+                                for event in events {
+                                    match processor_clone.process_event(event).await {
+                                        Ok(_) => chunk_success += 1,
+                                        Err(e) => {
+                                            error!(
+                                                "Error processing {} message for FID {}: {:?}",
+                                                message_type_str, fid, e
+                                            );
+                                            chunk_error += 1;
+                                        },
+                                    }
+                                }
                             },
+                        }
+                    } else {
+                        // Fall back to individual processing for other processor types
+                        // Create events before processing
+                        let mut events = Vec::with_capacity(chunk_vec.len());
+                        for message in chunk_vec {
+                            events.push(HubEvent {
+                                id: 0, // We don't use this ID
+                                r#type: 1, // MERGE_MESSAGE is type 1
+                                body: Some(Body::MergeMessageBody(MergeMessageBody {
+                                    message: Some(message),
+                                    deleted_messages: Vec::new(),
+                                })),
+                                block_number: 0,
+                                shard_index: 0,
+                            });
+                        }
+                        
+                        for event in events {
+                            match processor_clone.process_event(event).await {
+                                Ok(_) => chunk_success += 1,
+                                Err(e) => {
+                                    error!(
+                                        "Error processing {} message for FID {}: {:?}",
+                                        message_type_str, fid, e
+                                    );
+                                    chunk_error += 1;
+                                },
+                            }
                         }
                     }
 

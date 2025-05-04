@@ -32,6 +32,8 @@ pub struct DatabaseConfig {
     pub timeout_seconds: u64,
     #[serde(default = "default_store_messages")]
     pub store_messages: bool,
+    #[serde(default = "default_db_batch_size")]
+    pub batch_size: usize,
 }
 
 /// Redis configuration
@@ -232,6 +234,11 @@ fn default_store_messages() -> bool {
     true // Store messages by default
 }
 
+/// Default batch size for database operations
+fn default_db_batch_size() -> usize {
+    100 // Default to 100 records per batch for database operations
+}
+
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
@@ -239,6 +246,7 @@ impl Default for DatabaseConfig {
             max_connections: 20,
             timeout_seconds: 30,
             store_messages: default_store_messages(),
+            batch_size: default_db_batch_size(),
         }
     }
 }

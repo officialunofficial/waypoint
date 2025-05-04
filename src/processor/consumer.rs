@@ -17,6 +17,11 @@ pub trait EventProcessor: Send + Sync + 'static {
         &self,
         event: HubEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    
+    /// Allows downcasting to concrete types for optimization
+    fn as_any(&self) -> &dyn std::any::Any {
+        &() // Default implementation returns empty Any
+    }
 }
 
 pub struct Consumer {
