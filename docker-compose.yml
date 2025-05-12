@@ -48,7 +48,13 @@ services:
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
       - "${WAYPOINT_MCP__PORT:-8000}:${WAYPOINT_MCP__PORT:-8000}"
+    volumes:
+      - ./keys:/app/keys
     environment:
+      # Farcaster Signup
+      PROVIDER_URL: ${PROVIDER_URL}
+      ETH_MNEMONIC: ${ETH_MNEMONIC}
+      FARCASTER_HUB_URL: ${FARCASTER_HUB_URL}
       # Database
       WAYPOINT_DATABASE__URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-waypoint}
       WAYPOINT_DATABASE__MAX_CONNECTIONS: ${WAYPOINT_DATABASE__MAX_CONNECTIONS:-60}

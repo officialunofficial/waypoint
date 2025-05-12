@@ -1,0 +1,95 @@
+# This is a sample configuration for Waypoint.
+# You can use this as a starting point for your own configuration.
+# Copy this file to config.toml and modify it to suit your needs.
+# You can also set these values using environment variables prefixed with WAYPOINT__
+
+# Database Configuration
+[database]
+# PostgreSQL connection URL
+url = "postgresql://postgres:postgres@localhost:5432/waypoint"
+# Maximum number of connections in the pool
+max_connections = 60
+# Connection timeout in seconds
+timeout_seconds = 30
+# Whether to store messages in the messages table (set to false to skip messages table completely)
+store_messages = true
+
+# Redis Configuration
+[redis]
+# Redis connection URL
+url = "redis://localhost:6379"
+# Connection pool size
+pool_size = 5
+
+# Farcaster Hub Configuration
+[hub]
+# Hub gRPC URL
+url = "snapchain.farcaster.xyz:3383"
+# Maximum number of retry attempts for connection issues
+retry_max_attempts = 5
+# Base delay in milliseconds for exponential backoff
+retry_base_delay_ms = 100
+# Maximum delay in milliseconds for exponential backoff
+retry_max_delay_ms = 30000
+# Jitter factor as a percentage to add to backoff times (0.0-1.0)
+retry_jitter_factor = 0.25
+# Request timeout in milliseconds
+retry_timeout_ms = 60000
+# Connection timeout in milliseconds
+conn_timeout_ms = 30000
+
+# MCP Service Configuration
+[mcp]
+# Enable the MCP service
+enabled = true
+# Network address to bind the MCP service to (use 0.0.0.0 to allow external connections)
+bind_address = "127.0.0.1"
+# Port to listen on for MCP connections
+port = 8000
+
+# OpenTelemetry Configuration
+[otel]
+# Enable OpenTelemetry tracing
+enabled = false
+# OpenTelemetry collector endpoint
+endpoint = "http://otel-collector:4317"
+# Service name used in traces
+service_name = "waypoint"
+# Timeout in seconds for telemetry operations
+timeout_seconds = 3
+
+# Logging Configuration
+# Format can be "json" for structured logging or "text" for human-readable logs
+log_format = "json"
+
+# Database Management
+# Set to true to clear database on startup (use with caution)
+clear_db = false
+
+# StatsD Metrics Configuration
+[statsd]
+# Prefix for all metrics
+prefix = "way_read"
+# StatsD server address (host:port)
+addr = "127.0.0.1:8125"
+# Whether to use tagged metrics (requires a StatsD server that supports tags)
+use_tags = false
+# Enable metrics collection
+enabled = false
+
+# Model Context Protocol Integration
+[mcp]
+# Enable MCP integration
+enabled = true
+# Transport type: "process", "http", or "tcp"
+transport = "http"
+# Command to execute for the MCP server (only used with process transport)
+server_command = "npx"
+# Arguments for the MCP server command (only used with process transport)
+server_args = ["-y", "@modelcontextprotocol/server-everything"]
+# HTTP port for MCP server (only used with http transport)
+http_port = 3000
+# TCP port for MCP server (only used with tcp transport)
+tcp_port = 3001
+# Bind address for TCP and HTTP servers
+bind_address = "0.0.0.0"
