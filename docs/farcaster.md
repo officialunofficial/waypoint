@@ -22,11 +22,11 @@ To register a new Farcaster account, follow these steps:
 
    This command will:
    - Generate a new Ethereum wallet from the mnemonic
-   - Registers a farcaster FID
+   - Register a farcaster FID
    - Register a username for the account and add to it
    - Store the ED25519 signer in the `.keys` directory
-   - Registers the signer for the account
-   - Sends a hello world message to the snapchain
+   - Register the signer for the account
+   - Send a hello world message to the Snapchain
 
 3. After successful registration, your keys will be stored in the `.keys` directory.
 
