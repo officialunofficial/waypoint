@@ -13,7 +13,7 @@ ifneq (,$(wildcard ./.env))
 	export
 endif
 
-.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-update-user-data backfill-update-user-data-max test docker-build docker-run docker-push docker-tag metrics-start metrics-stop metrics-open fmt fmt-rust fmt-biome changelog help env-setup
+.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-update-user-data backfill-update-user-data-max test docker-build docker-run docker-push docker-tag metrics-start metrics-stop metrics-open fmt fmt-rust fmt-biome changelog help env-setup farcaster
 
 init:
 	mkdir -p $(PROTO_DIR)
@@ -144,6 +144,10 @@ changelog:
 		exit 1; \
 	fi
 
+# Farcaster commands
+farcaster-signup: proto build env-setup
+	cargo run -- farcaster signup
+
 # Help target - displays available commands
 help:
 	@echo "Waypoint Makefile Commands:"
@@ -156,6 +160,9 @@ help:
 	@echo "  make run                      - Run the main service"
 	@echo "  make test                     - Run tests"
 	@echo "  make fmt                      - Format all code"
+	@echo ""
+	@echo "Farcaster:"
+	@echo "  make farcaster signup         - Register a new Farcaster account"
 	@echo ""
 	@echo "Backfill:"
 	@echo "  FID-Based Backfill:"

@@ -38,6 +38,8 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 
 For detailed development instructions, see the [Development Guide](docs/development.md).
 
+For Farcaster integration and signup instructions, see the [Farcaster Guide](docs/farcaster.md).
+
 ```bash
 # Create and configure your environment
 make env-setup
@@ -55,6 +57,9 @@ make backfill-queue-fids FIDS=1,2,3    # Queue specific FIDs
 
 # Run a backfill worker
 make backfill-worker                   # Run backfill worker (50 concurrent jobs by default)
+
+# Farcaster commands
+make farcaster signup                  # Register a new Farcaster account
 ```
 
 ## Docker Development

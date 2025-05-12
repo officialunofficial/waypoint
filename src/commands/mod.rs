@@ -1,5 +1,6 @@
 pub mod backfill;
 pub mod mcp;
+pub mod farcaster;
 
 use clap::Command;
 use color_eyre::eyre::Result;
@@ -11,6 +12,7 @@ pub fn register_commands(app: Command) -> Command {
     app.subcommand(Command::new("start").about("Start the service"))
         .subcommand(backfill::register_commands(Command::new("backfill")))
         .subcommand(mcp::register_commands(Command::new("mcp")))
+        .subcommand(farcaster::register_commands(Command::new("farcaster")))
 }
 
 /// Handle all application commands
@@ -21,6 +23,7 @@ pub async fn handle_commands(matches: clap::ArgMatches, config: &Config) -> Resu
             backfill::handle_command(backfill_matches, config).await
         },
         Some(("mcp", mcp_matches)) => mcp::handle_command(mcp_matches, config).await,
+        Some(("farcaster", farcaster_matches)) => farcaster::handle_command(farcaster_matches).await,
         _ => {
             println!("Please specify a subcommand. Use --help for more information.");
             Ok(())
