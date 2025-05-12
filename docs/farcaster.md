@@ -28,10 +28,6 @@ To register a new Farcaster account, follow these steps:
    - Registers the signer for the account
    - Sends a hello world message to the snapchain
 
-3. The process will prompt you for:
-   - A username to register (must be available)
-   - Confirmation of the registration
-
-4. After successful registration, your keys will be stored in the `.keys` directory.
+3. After successful registration, your keys will be stored in the `.keys` directory.
 
 For more information about the Farcaster protocol, visit the [official Farcaster documentation](https://docs.farcaster.xyz/). 
