@@ -3,6 +3,7 @@ mod error;
 mod keystore;
 mod provider;
 mod wallet;
+mod client;
 
 pub use config::EthConfig;
 pub use error::{EthError, NetworkKind};
@@ -16,3 +17,4 @@ pub mod types {
     pub use alloy_primitives::{Address, B256 as TxHash, U256};
     pub use alloy_rpc_types_eth::TransactionReceipt;
 }
+pub use client::EthClient;
