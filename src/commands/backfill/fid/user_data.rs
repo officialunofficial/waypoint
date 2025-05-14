@@ -61,6 +61,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                 page_size: Some(1),
                 page_token: None,
                 reverse: Some(true),
+                shard_id: 0,
             }))
             .await?;
 
