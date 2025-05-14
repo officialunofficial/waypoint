@@ -506,6 +506,7 @@ impl Hub {
                     page_size,
                     page_token: page_token_clone,
                     reverse,
+                    shard_id: 0,
                 });
                 match client.get_fids(request).await {
                     Ok(response) => Ok(response.into_inner()),

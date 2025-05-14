@@ -12,6 +12,10 @@ This document tracks recent changes to the Waypoint project that might not yet b
 store_messages = false
 ```
 
+### Version 0.4.4 Changes
+
+- Version bump for maintenance release
+
 ### Version 0.4.3 Changes
 
 - Changed database storage configuration to allow completely skipping the messages table insert

@@ -256,6 +256,7 @@ impl MessageReconciler {
                         )),
                         block_number: 0,
                         shard_index: 0,
+                        timestamp: 0,
                     };
 
                     match processor_clone.process_event(onchain_event).await {
@@ -1001,6 +1002,7 @@ impl MessageReconciler {
             body: Some(proto::hub_event::Body::MergeMessageBody(merge_message_body)),
             block_number: 0,
             shard_index: 0,
+            timestamp: 0, // Add missing timestamp field
         }
     }
 
