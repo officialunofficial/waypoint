@@ -83,6 +83,7 @@ message FidsRequest {
   optional uint32 page_size = 1;
   optional bytes page_token = 2;
   optional bool reverse = 3;
+  uint32 shard_id = 4;
 }
 
 message FidsResponse {
@@ -270,4 +271,18 @@ message TrieNodeMetadataResponse {
   uint64 num_messages = 2;
   string hash = 3;
   repeated TrieNodeMetadataResponse children = 4;
+}
+
+message EventsRequest {
+  uint64 start_id = 1;
+  optional uint32 shard_index = 2;
+  optional uint64 stop_id = 3;
+  optional uint32 page_size = 4;
+  optional bytes page_token = 5;
+  optional bool reverse = 6;
+}
+
+message EventsResponse {
+  repeated HubEvent events = 1;
+  optional bytes next_page_token = 2;
 }
