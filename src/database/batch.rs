@@ -3,13 +3,13 @@ use crate::{
     database::models::Fid,
     proto::{
         Message,
+        cast_add_body::Parent,
+        link_body::Target as LinkTarget,
         message_data::Body::{
             CastAddBody, LinkBody, ReactionBody, UserDataBody, UsernameProofBody,
             VerificationAddAddressBody,
         },
-        cast_add_body::Parent,
         reaction_body::Target as ReactionTarget,
-        link_body::Target as LinkTarget,
     },
 };
 use serde_json::Value;
@@ -45,16 +45,13 @@ pub fn build_insert_sql(
         })
         .collect::<Vec<_>>()
         .join(",\n       ");
-        
+
     let update_clause = if update_actions.is_empty() {
         "DO NOTHING".to_string()
     } else {
-        format!(
-            "DO UPDATE SET\n    {}", 
-            update_actions.join(",\n    ")
-        )
+        format!("DO UPDATE SET\n    {}", update_actions.join(",\n    "))
     };
-        
+
     format!(
         r#"INSERT INTO {} ({})
 VALUES {}
@@ -110,12 +107,9 @@ impl<'a> CastInsert<'a> {
 
         // Convert embeds to normalized form
         let embeds = serde_json::to_value(
-            cast_body
-                .embeds
-                .iter()
-                .map(NormalizedEmbed::from_protobuf_embed)
-                .collect::<Vec<_>>()
-        ).ok()?;
+            cast_body.embeds.iter().map(NormalizedEmbed::from_protobuf_embed).collect::<Vec<_>>(),
+        )
+        .ok()?;
 
         // Convert other fields
         let mentions = serde_json::to_value(&cast_body.mentions).ok()?;
@@ -336,18 +330,21 @@ impl<'a> BatchInserter<'a> {
     /// Group messages by their message type
     pub fn group_messages_by_type(messages: &[Message]) -> HashMap<i32, Vec<&Message>> {
         let mut grouped = HashMap::new();
-        
+
         for msg in messages {
             if let Some(data) = &msg.data {
                 grouped.entry(data.r#type).or_insert_with(Vec::new).push(msg);
             }
         }
-        
+
         grouped
     }
 
     /// Bulk insert messages into the messages table
-    pub async fn bulk_insert_messages(&self, messages: &[Message]) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    pub async fn bulk_insert_messages(
+        &self,
+        messages: &[Message],
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
         if messages.is_empty() {
             return Ok(0);
         }
@@ -358,16 +355,26 @@ impl<'a> BatchInserter<'a> {
             let sql = build_insert_sql(
                 "messages",
                 &[
-                    "fid", "type", "timestamp", "hash", "hash_scheme", "signature_scheme", 
-                    "signer", "body", "raw", "deleted_at", "pruned_at", "revoked_at"
+                    "fid",
+                    "type",
+                    "timestamp",
+                    "hash",
+                    "hash_scheme",
+                    "signature_scheme",
+                    "signer",
+                    "body",
+                    "raw",
+                    "deleted_at",
+                    "pruned_at",
+                    "revoked_at",
                 ],
                 chunk.len(),
                 "hash, fid, type",
                 &[
                     "deleted_at = EXCLUDED.deleted_at",
                     "pruned_at = EXCLUDED.pruned_at",
-                    "revoked_at = EXCLUDED.revoked_at"
-                ]
+                    "revoked_at = EXCLUDED.revoked_at",
+                ],
             );
 
             let mut query = sqlx::query(&sql);
@@ -403,7 +410,10 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Bulk insert casts
-    pub async fn bulk_insert_casts(&self, casts: Vec<CastInsert<'_>>) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    pub async fn bulk_insert_casts(
+        &self,
+        casts: Vec<CastInsert<'_>>,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
         if casts.is_empty() {
             return Ok(0);
         }
@@ -414,8 +424,15 @@ impl<'a> BatchInserter<'a> {
             let sql = build_insert_sql(
                 "casts",
                 &[
-                    "fid", "hash", "text", "parent_hash", "parent_url", 
-                    "timestamp", "embeds", "mentions", "mentions_positions"
+                    "fid",
+                    "hash",
+                    "text",
+                    "parent_hash",
+                    "parent_url",
+                    "timestamp",
+                    "embeds",
+                    "mentions",
+                    "mentions_positions",
                 ],
                 chunk.len(),
                 "hash",
@@ -426,8 +443,8 @@ impl<'a> BatchInserter<'a> {
                     "timestamp = EXCLUDED.timestamp",
                     "embeds = EXCLUDED.embeds",
                     "mentions = EXCLUDED.mentions",
-                    "mentions_positions = EXCLUDED.mentions_positions"
-                ]
+                    "mentions_positions = EXCLUDED.mentions_positions",
+                ],
             );
 
             let mut query = sqlx::query(&sql);
@@ -454,7 +471,10 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Bulk insert reactions
-    pub async fn bulk_insert_reactions(&self, reactions: Vec<ReactionInsert<'_>>) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    pub async fn bulk_insert_reactions(
+        &self,
+        reactions: Vec<ReactionInsert<'_>>,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
         if reactions.is_empty() {
             return Ok(0);
         }
@@ -465,8 +485,13 @@ impl<'a> BatchInserter<'a> {
             let sql = build_insert_sql(
                 "reactions",
                 &[
-                    "fid", "target_fid", "hash", "reaction_type", 
-                    "target_hash", "target_url", "timestamp"
+                    "fid",
+                    "target_fid",
+                    "hash",
+                    "reaction_type",
+                    "target_hash",
+                    "target_url",
+                    "timestamp",
                 ],
                 chunk.len(),
                 "hash",
@@ -475,8 +500,8 @@ impl<'a> BatchInserter<'a> {
                     "reaction_type = EXCLUDED.reaction_type",
                     "target_hash = EXCLUDED.target_hash",
                     "target_url = EXCLUDED.target_url",
-                    "timestamp = EXCLUDED.timestamp"
-                ]
+                    "timestamp = EXCLUDED.timestamp",
+                ],
             );
 
             let mut query = sqlx::query(&sql);
@@ -501,7 +526,10 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Bulk insert links
-    pub async fn bulk_insert_links(&self, links: Vec<LinkInsert<'_>>) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    pub async fn bulk_insert_links(
+        &self,
+        links: Vec<LinkInsert<'_>>,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
         if links.is_empty() {
             return Ok(0);
         }
@@ -511,17 +539,14 @@ impl<'a> BatchInserter<'a> {
         for chunk in links.chunks(self.batch_size) {
             let sql = build_insert_sql(
                 "links",
-                &[
-                    "fid", "target_fid", "hash", "type", 
-                    "timestamp", "display_timestamp"
-                ],
+                &["fid", "target_fid", "hash", "type", "timestamp", "display_timestamp"],
                 chunk.len(),
                 "hash",
                 &[
                     "type = EXCLUDED.type",
                     "timestamp = EXCLUDED.timestamp",
-                    "display_timestamp = EXCLUDED.display_timestamp"
-                ]
+                    "display_timestamp = EXCLUDED.display_timestamp",
+                ],
             );
 
             let mut query = sqlx::query(&sql);
@@ -545,7 +570,10 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Bulk insert user data
-    pub async fn bulk_insert_user_data(&self, user_data: Vec<UserDataInsert<'_>>) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    pub async fn bulk_insert_user_data(
+        &self,
+        user_data: Vec<UserDataInsert<'_>>,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
         if user_data.is_empty() {
             return Ok(0);
         }
@@ -561,8 +589,8 @@ impl<'a> BatchInserter<'a> {
                 &[
                     "hash = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.hash ELSE user_data.hash END",
                     "value = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.value ELSE user_data.value END",
-                    "timestamp = GREATEST(user_data.timestamp, EXCLUDED.timestamp)"
-                ]
+                    "timestamp = GREATEST(user_data.timestamp, EXCLUDED.timestamp)",
+                ],
             );
 
             let mut query = sqlx::query(&sql);
@@ -585,7 +613,10 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Bulk insert verifications
-    pub async fn bulk_insert_verifications(&self, verifications: Vec<VerificationInsert<'_>>) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    pub async fn bulk_insert_verifications(
+        &self,
+        verifications: Vec<VerificationInsert<'_>>,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
         if verifications.is_empty() {
             return Ok(0);
         }
@@ -596,8 +627,14 @@ impl<'a> BatchInserter<'a> {
             let sql = build_insert_sql(
                 "verifications",
                 &[
-                    "fid", "hash", "signer_address", "block_hash",
-                    "signature", "protocol", "timestamp", "deleted_at"
+                    "fid",
+                    "hash",
+                    "signer_address",
+                    "block_hash",
+                    "signature",
+                    "protocol",
+                    "timestamp",
+                    "deleted_at",
                 ],
                 chunk.len(),
                 "signer_address, fid",
@@ -607,8 +644,8 @@ impl<'a> BatchInserter<'a> {
                     "signature = CASE WHEN EXCLUDED.timestamp >= verifications.timestamp THEN EXCLUDED.signature ELSE verifications.signature END",
                     "protocol = CASE WHEN EXCLUDED.timestamp >= verifications.timestamp THEN EXCLUDED.protocol ELSE verifications.protocol END",
                     "timestamp = GREATEST(verifications.timestamp, EXCLUDED.timestamp)",
-                    "deleted_at = NULL"
-                ]
+                    "deleted_at = NULL",
+                ],
             );
 
             let mut query = sqlx::query(&sql);
@@ -634,7 +671,10 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Bulk insert username proofs
-    pub async fn bulk_insert_username_proofs(&self, proofs: Vec<UsernameProofInsert<'_>>) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    pub async fn bulk_insert_username_proofs(
+        &self,
+        proofs: Vec<UsernameProofInsert<'_>>,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
         if proofs.is_empty() {
             return Ok(0);
         }
@@ -650,8 +690,8 @@ impl<'a> BatchInserter<'a> {
                 &[
                     "hash = CASE WHEN EXCLUDED.timestamp >= username_proofs.timestamp THEN EXCLUDED.hash ELSE username_proofs.hash END",
                     "signature = CASE WHEN EXCLUDED.timestamp >= username_proofs.timestamp THEN EXCLUDED.signature ELSE username_proofs.signature END",
-                    "timestamp = GREATEST(username_proofs.timestamp, EXCLUDED.timestamp)"
-                ]
+                    "timestamp = GREATEST(username_proofs.timestamp, EXCLUDED.timestamp)",
+                ],
             );
 
             let mut query = sqlx::query(&sql);
@@ -674,7 +714,10 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Process a batch of messages, grouping them by type and inserting in bulk
-    pub async fn process_message_batch(&self, messages: &[Message]) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn process_message_batch(
+        &self,
+        messages: &[Message],
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if messages.is_empty() {
             return Ok(());
         }
@@ -702,42 +745,48 @@ impl<'a> BatchInserter<'a> {
         // Collect all inserts for each type
         for (msg_type, msgs) in grouped {
             match msg_type {
-                1 => { // CastAdd
+                1 => {
+                    // CastAdd
                     for msg in msgs {
                         if let Some(cast) = CastInsert::from_message(msg) {
                             cast_inserts.push(cast);
                         }
                     }
                 },
-                3 => { // ReactionAdd
+                3 => {
+                    // ReactionAdd
                     for msg in msgs {
                         if let Some(reaction) = ReactionInsert::from_message(msg) {
                             reaction_inserts.push(reaction);
                         }
                     }
                 },
-                5 => { // LinkAdd
+                5 => {
+                    // LinkAdd
                     for msg in msgs {
                         if let Some(link) = LinkInsert::from_message(msg) {
                             link_inserts.push(link);
                         }
                     }
                 },
-                7 => { // VerificationAdd
+                7 => {
+                    // VerificationAdd
                     for msg in msgs {
                         if let Some(verification) = VerificationInsert::from_message(msg) {
                             verification_inserts.push(verification);
                         }
                     }
                 },
-                11 => { // UserDataAdd
+                11 => {
+                    // UserDataAdd
                     for msg in msgs {
                         if let Some(user_data) = UserDataInsert::from_message(msg) {
                             user_data_inserts.push(user_data);
                         }
                     }
                 },
-                12 => { // UsernameProof
+                12 => {
+                    // UsernameProof
                     for msg in msgs {
                         if let Some(proof) = UsernameProofInsert::from_message(msg) {
                             username_proof_inserts.push(proof);
@@ -745,7 +794,7 @@ impl<'a> BatchInserter<'a> {
                     }
                 },
                 // Add other message type handlers as needed
-                _ => {} // Skip unsupported message types
+                _ => {}, // Skip unsupported message types
             }
         }
 
@@ -756,35 +805,35 @@ impl<'a> BatchInserter<'a> {
                 return Err(e);
             }
         }
-        
+
         if !reaction_inserts.is_empty() {
             if let Err(e) = self.bulk_insert_reactions(reaction_inserts).await {
                 error!("Error in bulk insert of reactions: {}", e);
                 return Err(e);
             }
         }
-        
+
         if !link_inserts.is_empty() {
             if let Err(e) = self.bulk_insert_links(link_inserts).await {
                 error!("Error in bulk insert of links: {}", e);
                 return Err(e);
             }
         }
-        
+
         if !user_data_inserts.is_empty() {
             if let Err(e) = self.bulk_insert_user_data(user_data_inserts).await {
                 error!("Error in bulk insert of user data: {}", e);
                 return Err(e);
             }
         }
-        
+
         if !verification_inserts.is_empty() {
             if let Err(e) = self.bulk_insert_verifications(verification_inserts).await {
                 error!("Error in bulk insert of verifications: {}", e);
                 return Err(e);
             }
         }
-        
+
         if !username_proof_inserts.is_empty() {
             if let Err(e) = self.bulk_insert_username_proofs(username_proof_inserts).await {
                 error!("Error in bulk insert of username proofs: {}", e);

@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use rayon::prelude::*;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
-use std::hash::Hasher;
 use std::any::Any;
+use std::hash::Hasher;
 use std::sync::Arc;
 use tracing::{debug, error};
 
@@ -685,7 +685,7 @@ impl DatabaseProcessor {
         }
         Ok(())
     }
-    
+
     /// Process a batch of messages in bulk for improved efficiency
     pub async fn process_message_batch(
         &self,
@@ -695,14 +695,14 @@ impl DatabaseProcessor {
         if messages.is_empty() {
             return Ok(());
         }
-        
+
         // Get the batch size from configuration
         let batch_size = self.resources.config.database.batch_size;
-        
+
         // Create a batch inserter with our database pool and configured batch size
         let batch_inserter = BatchInserter::new(&self.resources.database.pool, batch_size);
-        
-        // For operations other than "merge" (like delete, prune, revoke), 
+
+        // For operations other than "merge" (like delete, prune, revoke),
         // we'll process messages individually since they have special handling
         if operation != "merge" {
             for msg in messages {
@@ -713,25 +713,25 @@ impl DatabaseProcessor {
             }
             return Ok(());
         }
-        
+
         // For normal merge operations, use the batch inserter
         // This groups messages by type and inserts them in bulk
         match batch_inserter.process_message_batch(messages).await {
             Ok(_) => {
                 debug!("Successfully processed batch of {} messages", messages.len());
                 Ok(())
-            }
+            },
             Err(e) => {
                 error!("Error in batch processing: {}", e);
-                
+
                 // If we encounter a database error, try processing messages individually as fallback
                 if e.to_string().contains("EOF") || e.to_string().contains("timed out") {
                     error!("Fatal database error in batch processing: {}", e);
                     std::process::exit(1);
                 }
-                
+
                 Err(e)
-            }
+            },
         }
     }
 
@@ -986,7 +986,7 @@ impl EventProcessor for DatabaseProcessor {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    
+
     async fn process_event(
         &self,
         event: HubEvent,
