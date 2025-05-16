@@ -704,7 +704,8 @@ impl Consumer {
                                 type ConsumerName = String;
                                 type DeliveryTime = u64;
                                 type AdditionalInfo = Vec<(String, u64)>;
-                                type PendingItem = (String, ConsumerName, DeliveryTime, AdditionalInfo);
+                                type PendingItem =
+                                    (String, ConsumerName, DeliveryTime, AdditionalInfo);
                                 type PendingResult = Vec<PendingItem>;
                                 let pending_details: std::result::Result<
                                     PendingResult,
