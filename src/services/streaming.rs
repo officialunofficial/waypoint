@@ -279,8 +279,12 @@ impl Consumer {
         };
 
         // Find all stream keys matching our pattern
-        let keys_result: std::result::Result<Vec<String>, crate::redis::error::Error> = 
-            bb8_redis::redis::cmd("KEYS").arg("hub:*:stream:*").query_async(&mut *conn).await.map_err(Error::RedisError);
+        let keys_result: std::result::Result<Vec<String>, crate::redis::error::Error> =
+            bb8_redis::redis::cmd("KEYS")
+                .arg("hub:*:stream:*")
+                .query_async(&mut *conn)
+                .await
+                .map_err(Error::RedisError);
 
         let mut total_deleted = 0;
         let mut total_reclaimed = 0;
@@ -292,8 +296,9 @@ impl Consumer {
                 for stream_key in keys {
                     let stream_key_str = stream_key.as_str(); // Convert to &str
                     // Check if this stream has the specified consumer group (default)
-                    let has_group =
-                        self.check_stream_has_group(&mut conn, stream_key_str, &self.group_name).await;
+                    let has_group = self
+                        .check_stream_has_group(&mut conn, stream_key_str, &self.group_name)
+                        .await;
 
                     if has_group {
                         // First try to reclaim any extremely stale messages
@@ -310,7 +315,11 @@ impl Consumer {
 
                         // Then cleanup idle consumers
                         let deleted = self
-                            .cleanup_consumer_group(stream_key_str, &self.group_name, idle_threshold)
+                            .cleanup_consumer_group(
+                                stream_key_str,
+                                &self.group_name,
+                                idle_threshold,
+                            )
                             .await;
                         total_deleted += deleted;
                     }
@@ -389,7 +398,8 @@ impl Consumer {
 
         // Get pending message details
         type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
-        let pending_result: std::result::Result<PendingResult, crate::redis::error::Error> = bb8_redis::redis::cmd("XPENDING")
+        let pending_result: std::result::Result<PendingResult, crate::redis::error::Error> =
+            bb8_redis::redis::cmd("XPENDING")
             .arg(stream_key)
             .arg(group_name)
             .arg("-")  // start ID
@@ -410,7 +420,8 @@ impl Consumer {
                     total_claimed = msg_ids.len();
 
                     // Claim the messages with FORCE option
-                    let claim_result: std::result::Result<Vec<String>, crate::redis::error::Error> = bb8_redis::redis::cmd("XCLAIM")
+                    let claim_result: std::result::Result<Vec<String>, crate::redis::error::Error> =
+                        bb8_redis::redis::cmd("XCLAIM")
                             .arg(stream_key)
                             .arg(group_name)
                             .arg(waypoint_consumer)
@@ -437,8 +448,10 @@ impl Consumer {
                                 // to avoid the infinitely sized future issue
                                 let mut continue_claims = true;
                                 while continue_claims {
-                                    let more_pending: std::result::Result<PendingResult, crate::redis::error::Error> = 
-                                        bb8_redis::redis::cmd("XPENDING")
+                                    let more_pending: std::result::Result<
+                                        PendingResult,
+                                        crate::redis::error::Error,
+                                    > = bb8_redis::redis::cmd("XPENDING")
                                             .arg(stream_key)
                                             .arg(group_name)
                                             .arg("-")  // start ID
@@ -448,15 +461,19 @@ impl Consumer {
                                             .query_async(&mut *conn)
                                             .await
                                             .map_err(Error::RedisError);
-                                    
+
                                     match more_pending {
                                         Ok(more_msgs) if !more_msgs.is_empty() => {
                                             // Extract more message IDs
-                                            let more_ids: Vec<String> =
-                                                more_msgs.iter().map(|(id, ..)| id.clone()).collect();
-                                            
-                                            let more_claim_result: std::result::Result<Vec<String>, crate::redis::error::Error> = 
-                                                bb8_redis::redis::cmd("XCLAIM")
+                                            let more_ids: Vec<String> = more_msgs
+                                                .iter()
+                                                .map(|(id, ..)| id.clone())
+                                                .collect();
+
+                                            let more_claim_result: std::result::Result<
+                                                Vec<String>,
+                                                crate::redis::error::Error,
+                                            > = bb8_redis::redis::cmd("XCLAIM")
                                                     .arg(stream_key)
                                                     .arg(group_name)
                                                     .arg(waypoint_consumer)
@@ -467,22 +484,26 @@ impl Consumer {
                                                     .query_async(&mut *conn)
                                                     .await
                                                     .map_err(Error::RedisError);
-                                                    
+
                                             match more_claim_result {
                                                 Ok(_) => {
                                                     let additional = more_ids.len();
-                                                    info!("[{}] Successfully claimed {} more messages from consumer {}",
-                                                         stream_key, additional, consumer_name);
+                                                    info!(
+                                                        "[{}] Successfully claimed {} more messages from consumer {}",
+                                                        stream_key, additional, consumer_name
+                                                    );
                                                     total_claimed += additional;
-                                                    
+
                                                     // If we got a full batch, continue claiming
                                                     continue_claims = more_msgs.len() == BATCH_SIZE;
                                                 },
                                                 Err(e) => {
-                                                    error!("[{}] Error claiming more messages from consumer {}: {}",
-                                                           stream_key, consumer_name, e);
+                                                    error!(
+                                                        "[{}] Error claiming more messages from consumer {}: {}",
+                                                        stream_key, consumer_name, e
+                                                    );
                                                     continue_claims = false;
-                                                }
+                                                },
                                             }
                                         },
                                         _ => continue_claims = false,
@@ -650,12 +671,13 @@ impl Consumer {
         let mut conn = self.stream.get_connection().await?;
 
         // Get pending message summary information
-        let pending_info: std::result::Result<Vec<Vec<String>>, crate::redis::error::Error> = bb8_redis::redis::cmd("XPENDING")
-            .arg(stream_key)
-            .arg(group_name)
-            .query_async(&mut *conn)
-            .await
-            .map_err(Error::RedisError);
+        let pending_info: std::result::Result<Vec<Vec<String>>, crate::redis::error::Error> =
+            bb8_redis::redis::cmd("XPENDING")
+                .arg(stream_key)
+                .arg(group_name)
+                .query_async(&mut *conn)
+                .await
+                .map_err(Error::RedisError);
 
         // Track total reclaimed messages
         let mut total_reclaimed = 0;
@@ -676,7 +698,10 @@ impl Consumer {
                             while processed < pending_count {
                                 // Get a batch of pending messages with details
                                 type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
-                                let pending_details: std::result::Result<PendingResult, crate::redis::error::Error> = bb8_redis::redis::cmd("XPENDING")
+                                let pending_details: std::result::Result<
+                                    PendingResult,
+                                    crate::redis::error::Error,
+                                > = bb8_redis::redis::cmd("XPENDING")
                                         .arg(stream_key)
                                         .arg(group_name)
                                         .arg("-")  // start ID
@@ -722,7 +747,10 @@ impl Consumer {
                                                 .collect();
 
                                             // Force claim with XCLAIM
-                                            let claim_result: std::result::Result<Vec<String>, crate::redis::error::Error> = bb8_redis::redis::cmd("XCLAIM")
+                                            let claim_result: std::result::Result<
+                                                Vec<String>,
+                                                crate::redis::error::Error,
+                                            > = bb8_redis::redis::cmd("XCLAIM")
                                                     .arg(stream_key)
                                                     .arg(group_name)
                                                     .arg(&waypoint_consumer)
@@ -743,7 +771,10 @@ impl Consumer {
                                                     total_reclaimed += reclaim_count;
 
                                                     // Try to acknowledge them to clear the backlog
-                                                    let ack_result: std::result::Result<u64, crate::redis::error::Error> = bb8_redis::redis::cmd("XACK")
+                                                    let ack_result: std::result::Result<
+                                                        u64,
+                                                        crate::redis::error::Error,
+                                                    > = bb8_redis::redis::cmd("XACK")
                                                         .arg(stream_key)
                                                         .arg(group_name)
                                                         .arg(&msg_ids)
@@ -857,7 +888,10 @@ impl Consumer {
         stream_key: &str,
         group_name: &str,
         message_type: MessageType,
-    ) -> std::result::Result<Option<Vec<crate::redis::stream::StreamEntry>>, crate::redis::error::Error> {
+    ) -> std::result::Result<
+        Option<Vec<crate::redis::stream::StreamEntry>>,
+        crate::redis::error::Error,
+    > {
         // Check shutdown before starting the operation
         if self.should_shutdown().await {
             info!("Shutdown signal detected before stream reservation for {:?}", message_type);
