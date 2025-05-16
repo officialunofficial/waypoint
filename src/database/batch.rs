@@ -19,6 +19,7 @@ use std::error::Error;
 use tracing::{debug, error};
 
 /// Default batch size for database operations
+#[allow(dead_code)]
 const DEFAULT_BATCH_SIZE: usize = 100;
 
 /// Utility for building SQL for bulk inserts

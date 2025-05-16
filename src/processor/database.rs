@@ -19,7 +19,6 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use rayon::prelude::*;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
-use std::any::Any;
 use std::hash::Hasher;
 use std::sync::Arc;
 use tracing::{debug, error};

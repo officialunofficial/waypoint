@@ -1,7 +1,7 @@
 use crate::{
     database::client::Database,
     hub::error::Error,
-    processor::{consumer::EventProcessor, database::DatabaseProcessor},
+    processor::consumer::EventProcessor,
     proto::{
         self, FidRequest, FidTimestampRequest, HubEvent, HubEventType, LinksByFidRequest,
         MergeMessageBody, MergeOnChainEventBody, Message, OnChainEventRequest, OnChainEventType,
@@ -145,6 +145,7 @@ impl MessageReconciler {
                                         })),
                                         block_number: 0,
                                         shard_index: 0,
+                                        timestamp: 0,
                                     });
                                 }
 
@@ -176,6 +177,7 @@ impl MessageReconciler {
                                 })),
                                 block_number: 0,
                                 shard_index: 0,
+                                timestamp: 0,
                             });
                         }
 
@@ -384,259 +386,6 @@ impl MessageReconciler {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    async fn reconcile_casts(
-        &self,
-        fid: u64,
-        processor: Arc<dyn EventProcessor>,
-    ) -> Result<usize, Error> {
-        info!("Reconciling casts for FID {}", fid);
-        let start_time = std::time::Instant::now();
-
-        let messages = self.get_all_cast_messages(fid).await?;
-        let count = messages.len();
-
-        debug!("Retrieved {} casts for FID {}", count, fid);
-
-        let mut success_count = 0;
-        let mut error_count = 0;
-
-        for (idx, message) in messages.into_iter().enumerate() {
-            let event = self.message_to_hub_event(message);
-
-            match processor.process_event(event).await {
-                Err(e) => {
-                    error!(
-                        "Error processing cast message {}/{} for FID {}: {:?}",
-                        idx + 1,
-                        count,
-                        fid,
-                        e
-                    );
-                    error_count += 1;
-                },
-                _ => {
-                    success_count += 1;
-                    if success_count % 100 == 0 {
-                        debug!("Processed {}/{} casts for FID {}", success_count, count, fid);
-                    }
-                },
-            }
-        }
-
-        let elapsed = start_time.elapsed();
-        info!(
-            "Completed reconciling casts for FID {}: processed {} messages ({} succeeded, {} failed) in {:.2?}",
-            fid, count, success_count, error_count, elapsed
-        );
-
-        // No additional success log needed
-
-        Ok(count)
-    }
-
-    #[allow(dead_code)]
-    async fn reconcile_reactions(
-        &self,
-        fid: u64,
-        processor: Arc<dyn EventProcessor>,
-    ) -> Result<usize, Error> {
-        info!("Reconciling reactions for FID {}", fid);
-        let start_time = std::time::Instant::now();
-
-        let messages = self.get_all_reaction_messages(fid).await?;
-        let count = messages.len();
-
-        debug!("Retrieved {} reactions for FID {}", count, fid);
-
-        let mut success_count = 0;
-        let mut error_count = 0;
-
-        for (idx, message) in messages.into_iter().enumerate() {
-            let event = self.message_to_hub_event(message);
-
-            match processor.process_event(event).await {
-                Err(e) => {
-                    error!(
-                        "Error processing reaction message {}/{} for FID {}: {:?}",
-                        idx + 1,
-                        count,
-                        fid,
-                        e
-                    );
-                    error_count += 1;
-                },
-                _ => {
-                    success_count += 1;
-                    if success_count % 100 == 0 {
-                        debug!("Processed {}/{} reactions for FID {}", success_count, count, fid);
-                    }
-                },
-            }
-        }
-
-        let elapsed = start_time.elapsed();
-        info!(
-            "Completed reconciling reactions for FID {}: processed {} messages ({} succeeded, {} failed) in {:.2?}",
-            fid, count, success_count, error_count, elapsed
-        );
-
-        Ok(count)
-    }
-
-    #[allow(dead_code)]
-    async fn reconcile_links(
-        &self,
-        fid: u64,
-        processor: Arc<dyn EventProcessor>,
-    ) -> Result<usize, Error> {
-        info!("Reconciling links for FID {}", fid);
-        let start_time = std::time::Instant::now();
-
-        let messages = self.get_all_link_messages(fid).await?;
-        let count = messages.len();
-
-        debug!("Retrieved {} links for FID {}", count, fid);
-
-        let mut success_count = 0;
-        let mut error_count = 0;
-
-        for (idx, message) in messages.into_iter().enumerate() {
-            let event = self.message_to_hub_event(message);
-
-            match processor.process_event(event).await {
-                Err(e) => {
-                    error!(
-                        "Error processing link message {}/{} for FID {}: {:?}",
-                        idx + 1,
-                        count,
-                        fid,
-                        e
-                    );
-                    error_count += 1;
-                },
-                _ => {
-                    success_count += 1;
-                    if success_count % 100 == 0 {
-                        debug!("Processed {}/{} links for FID {}", success_count, count, fid);
-                    }
-                },
-            }
-        }
-
-        let elapsed = start_time.elapsed();
-        info!(
-            "Completed reconciling links for FID {}: processed {} messages ({} succeeded, {} failed) in {:.2?}",
-            fid, count, success_count, error_count, elapsed
-        );
-
-        Ok(count)
-    }
-
-    #[allow(dead_code)]
-    async fn reconcile_verifications(
-        &self,
-        fid: u64,
-        processor: Arc<dyn EventProcessor>,
-    ) -> Result<usize, Error> {
-        info!("Reconciling verifications for FID {}", fid);
-        let start_time = std::time::Instant::now();
-
-        let messages = self.get_all_verification_messages(fid).await?;
-        let count = messages.len();
-
-        debug!("Retrieved {} verifications for FID {}", count, fid);
-
-        let mut success_count = 0;
-        let mut error_count = 0;
-
-        for (idx, message) in messages.into_iter().enumerate() {
-            let event = self.message_to_hub_event(message);
-
-            match processor.process_event(event).await {
-                Err(e) => {
-                    error!(
-                        "Error processing verification message {}/{} for FID {}: {:?}",
-                        idx + 1,
-                        count,
-                        fid,
-                        e
-                    );
-                    error_count += 1;
-                },
-                _ => {
-                    success_count += 1;
-                    if success_count % 100 == 0 {
-                        debug!(
-                            "Processed {}/{} verifications for FID {}",
-                            success_count, count, fid
-                        );
-                    }
-                },
-            }
-        }
-
-        let elapsed = start_time.elapsed();
-        info!(
-            "Completed reconciling verifications for FID {}: processed {} messages ({} succeeded, {} failed) in {:.2?}",
-            fid, count, success_count, error_count, elapsed
-        );
-
-        Ok(count)
-    }
-
-    #[allow(dead_code)]
-    async fn reconcile_user_data(
-        &self,
-        fid: u64,
-        processor: Arc<dyn EventProcessor>,
-    ) -> Result<usize, Error> {
-        info!("Reconciling user data for FID {}", fid);
-        let start_time = std::time::Instant::now();
-
-        let messages = self.get_all_user_data_messages(fid).await?;
-        let count = messages.len();
-
-        debug!("Retrieved {} user data messages for FID {}", count, fid);
-
-        let mut success_count = 0;
-        let mut error_count = 0;
-
-        // Process user data messages one by one
-        for (idx, message) in messages.into_iter().enumerate() {
-            let event = self.message_to_hub_event(message);
-
-            match processor.process_event(event).await {
-                Err(e) => {
-                    error!(
-                        "Error processing user data message {}/{} for FID {}: {:?}",
-                        idx + 1,
-                        count,
-                        fid,
-                        e
-                    );
-                    error_count += 1;
-                },
-                _ => {
-                    success_count += 1;
-                    if success_count % 100 == 0 {
-                        debug!(
-                            "Processed {}/{} user data messages for FID {}",
-                            success_count, count, fid
-                        );
-                    }
-                },
-            }
-        }
-
-        let elapsed = start_time.elapsed();
-        info!(
-            "Completed reconciling user data for FID {}: processed {} messages ({} succeeded, {} failed) in {:.2?}",
-            fid, count, success_count, error_count, elapsed
-        );
-
-        Ok(count)
-    }
 
     async fn get_all_cast_messages(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
