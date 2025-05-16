@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       version:
@@ -10,59 +13,138 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
-  prepare-release:
+  # Auto-increment version on main branch
+  auto-version:
+    name: Auto-increment Version
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'chore(release)')
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Get current version
+        id: current_version
+        run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+      
+      - name: Increment patch version
+        id: bump_version
+        run: |
+          IFS='.' read -ra VERSION_PARTS <<< "${{ steps.current_version.outputs.version }}"
+          MAJOR="${VERSION_PARTS[0]}"
+          MINOR="${VERSION_PARTS[1]}"
+          PATCH="${VERSION_PARTS[2]}"
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "$NEW_VERSION" > VERSION
+      
+      - name: Update Cargo.toml version
+        run: |
+          sed -i "s/^version = \".*\"/version = \"${{ steps.bump_version.outputs.new_version }}\"/" Cargo.toml
+      
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
         with:
           tool: git-cliff
-
-      - name: Update VERSION file
+      
+      - name: Generate changelog
+        run: |
+          git-cliff -t v${{ steps.bump_version.outputs.new_version }} -o CHANGELOG.md
+      
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(release): bump version to ${{ steps.bump_version.outputs.new_version }}"
+          file_pattern: "VERSION Cargo.toml CHANGELOG.md"
+          branch: main
+  
+  # Manual or tag-based release process
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      # For manual releases, update version files first
+      - name: Update VERSION file (Manual Release)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           echo "${VERSION#v}" > VERSION
         env:
           VERSION: ${{ github.event.inputs.version }}
-
-      - name: Update Cargo.toml version
+      
+      - name: Update Cargo.toml version (Manual Release)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           NEW_VERSION="${VERSION#v}"
           sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
         env:
           VERSION: ${{ github.event.inputs.version }}
-
+      
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+      
       - name: Generate changelog
         run: |
-          git-cliff --tag ${{ github.event.inputs.version }} -o CHANGELOG.md
-
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
+          VERSION_TAG="${{ github.event.inputs.version || github.ref_name }}"
+          git-cliff --tag $VERSION_TAG -o CHANGELOG.md
+      
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          commit_message: "chore(release): prepare ${{ github.event.inputs.version }}"
-          file_pattern: "VERSION Cargo.toml CHANGELOG.md"
-          branch: release/${{ github.event.inputs.version }}
-          create_branch: true
-
-      - name: Create pull request
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          title: "Release ${{ github.event.inputs.version }}"
-          body: |
-            This PR prepares for the ${{ github.event.inputs.version }} release.
-            
-            - Updates VERSION file
-            - Updates Cargo.toml version
-            - Updates CHANGELOG.md
-            
-            Please review the changes and approve the release.
-          base: main
-          branch: release/${{ github.event.inputs.version }}
+          name: Release ${{ steps.get_version.outputs.version }}
+          tag_name: ${{ steps.get_version.outputs.version }}
+          body_path: CHANGELOG.md
           draft: false
+          prerelease: false
+  
+  # Publish to crates.io after release is created
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: release
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.85.0
+      
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Verify package
+        run: cargo package --no-verify
+      
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish

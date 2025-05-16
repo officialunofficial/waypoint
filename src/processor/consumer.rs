@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle, time};
 use tracing::error;
 
-const BASE_GROUP_NAME: &str = "hub_events";
+const BASE_GROUP_NAME: &str = "default";
 const MAX_EVENTS_PER_FETCH: u64 = 50; // Increased from 10 to 50 for better throughput
 const MESSAGE_PROCESSING_CONCURRENCY: usize = 250; // Increased from 200 to 250
 // Number of parallel consumers per stream type for higher throughput
@@ -104,8 +104,8 @@ impl Consumer {
 
             // Launch multiple parallel consumers for this stream type
             for consumer_num in 0..CONSUMERS_PER_STREAM {
-                // Each parallel consumer has a unique ID suffix (waypoint-hostname-1, waypoint-hostname-2, etc.)
-                let consumer_instance_id = format!("{}-{}", consumer_id, consumer_num + 1);
+                // Use a simpler consumer ID format to avoid reclamation issues
+                let consumer_instance_id = format!("waypoint-{}", consumer_num + 1);
 
                 let processor = StreamProcessor {
                     stream: Arc::clone(&self.stream),

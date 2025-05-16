@@ -206,8 +206,10 @@ impl RedisStream {
                                 stream_key
                             );
 
-                            // Only claim messages if we're an active consumer
-                            if active_consumers.contains(&consumer_name) {
+                            // Always allow waypoint consumers to claim messages for better recovery
+                            let should_claim = true;
+
+                            if should_claim {
                                 let mut conn = match redis.pool.get().await {
                                     Ok(conn) => conn,
                                     Err(e) => {
@@ -226,6 +228,9 @@ impl RedisStream {
                                     type PendingResult =
                                         Vec<(String, String, u64, Vec<(String, u64)>)>;
 
+                                    // Use a larger batch size for all groups for better performance
+                                    let batch_size = 100;
+
                                     let pending_result: Result<
                                         PendingResult,
                                         bb8_redis::redis::RedisError,
@@ -234,7 +239,7 @@ impl RedisStream {
                                             .arg(gn)
                                             .arg("-")  // start ID
                                             .arg("+")  // end ID
-                                            .arg(10)   // count (claim in batches)
+                                            .arg(batch_size) // count (claim in batches)
                                             .arg(idle_consumer)
                                             .query_async(&mut *conn)
                                             .await;
@@ -265,6 +270,60 @@ impl RedisStream {
                                                 cn,
                                                 sk
                                             );
+
+                                            // Aggressively claim all pending messages for better recovery
+                                            if pending_msgs.len() == batch_size {
+                                                // Continue claiming in a loop until no more messages
+                                                let mut claimed_all = false;
+                                                while !claimed_all {
+                                                    let more_pending: Result<
+                                                        PendingResult,
+                                                        bb8_redis::redis::RedisError,
+                                                    > = bb8_redis::redis::cmd("XPENDING")
+                                                        .arg(sk)
+                                                        .arg(gn)
+                                                        .arg("-")
+                                                        .arg("+")
+                                                        .arg(batch_size)
+                                                        .arg(idle_consumer)
+                                                        .query_async(&mut *conn)
+                                                        .await;
+
+                                                    match more_pending {
+                                                        Ok(more_msgs) if !more_msgs.is_empty() => {
+                                                            let more_ids: Vec<String> = more_msgs
+                                                                .iter()
+                                                                .map(|(id, ..)| id.clone())
+                                                                .collect();
+
+                                                            let _: Result<
+                                                                (),
+                                                                bb8_redis::redis::RedisError,
+                                                            > = bb8_redis::redis::cmd("XCLAIM")
+                                                                .arg(sk)
+                                                                .arg(gn)
+                                                                .arg(cn)
+                                                                .arg(0)
+                                                                .arg(&more_ids)
+                                                                .arg("JUSTID")
+                                                                .query_async(&mut *conn)
+                                                                .await;
+
+                                                            tracing::info!(
+                                                                "Rebalanced additional {} messages from idle consumer {} to {} for stream {}",
+                                                                more_ids.len(),
+                                                                idle_consumer,
+                                                                cn,
+                                                                sk
+                                                            );
+
+                                                            claimed_all =
+                                                                more_msgs.len() < batch_size;
+                                                        },
+                                                        _ => claimed_all = true,
+                                                    }
+                                                }
+                                            }
                                         },
                                         Ok(_) => {
                                             // No pending messages for this consumer
@@ -522,17 +581,11 @@ impl RedisStream {
         Ok(all_ids)
     }
 
-    /// Gets a stable consumer ID that persists across restarts for the same host
-    /// Uses hostname + app name to ensure uniqueness across machines while remaining
-    /// stable for the same process across restarts
+    /// Gets a stable consumer ID that's simple and consistent
+    /// Uses a fixed, simple ID to avoid reclamation issues
     pub fn get_stable_consumer_id() -> String {
-        // Get hostname using hostname crate to avoid env vars
-        let hostname = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
-
-        // Waypoint-{hostname} forms a stable consumer ID that persists across restarts
-        format!("waypoint-{}", hostname)
+        // Use a simple, consistent consumer ID for easier reclamation
+        "waypoint-consumer".to_string()
     }
 
     pub async fn reserve(
