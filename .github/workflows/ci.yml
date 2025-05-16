@@ -6,31 +6,94 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  SQLX_OFFLINE: true
+
 jobs:
-  build:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    # Set environment variables at the job level so they're available in all steps
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
-      SQLX_OFFLINE: true
-      RUSTFLAGS: "-D warnings"
-    
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Install Protoc
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
-    
-    - name: Build
-      run: cargo build
-    
-    - name: Run tests without database connection
-      run: cargo test --no-default-features
-    
-    - name: Check formatting
-      run: cargo fmt --all -- --check
-    
-    - name: Clippy
-      run: cargo clippy -- -D warnings
+      - uses: actions/checkout@v4
+      
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: rustfmt, clippy
+      
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+  test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: waypoint
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc and database clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler redis-tools postgresql-client
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify Redis Connection
+        run: redis-cli ping
+
+      - name: Verify Postgres Connection
+        run: pg_isready -h localhost -p 5432
+
+      - name: Init postgres schema
+        run: psql -h localhost -p 5432 -U postgres -d waypoint -f migrations/init.sql
+        env:
+          PGPASSWORD: postgres
+
+      - name: Build
+        run: cargo build
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
+
+      - name: Run tests
+        run: cargo test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
+          REDIS_URL: redis://localhost:6379
+
+      # Also test without database features
+      - name: Run tests without database connection
+        run: cargo test --no-default-features
