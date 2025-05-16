@@ -396,8 +396,12 @@ impl Consumer {
         let mut conn = self.stream.get_connection().await?;
         let mut total_claimed = 0;
 
-        // Get pending message details
-        type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
+        // Define types to improve readability
+        type ConsumerName = String;
+        type DeliveryTime = u64;
+        type AdditionalInfo = Vec<(String, u64)>;
+        type PendingItem = (String, ConsumerName, DeliveryTime, AdditionalInfo);
+        type PendingResult = Vec<PendingItem>;
         let pending_result: std::result::Result<PendingResult, crate::redis::error::Error> =
             bb8_redis::redis::cmd("XPENDING")
             .arg(stream_key)
@@ -696,8 +700,12 @@ impl Consumer {
                             // Process in batches for better performance and to avoid timeout issues
                             let mut processed = 0;
                             while processed < pending_count {
-                                // Get a batch of pending messages with details
-                                type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
+                                // Define types to improve readability
+                                type ConsumerName = String;
+                                type DeliveryTime = u64;
+                                type AdditionalInfo = Vec<(String, u64)>;
+                                type PendingItem = (String, ConsumerName, DeliveryTime, AdditionalInfo);
+                                type PendingResult = Vec<PendingItem>;
                                 let pending_details: std::result::Result<
                                     PendingResult,
                                     crate::redis::error::Error,
@@ -720,12 +728,7 @@ impl Consumer {
                                         processed += pending_msgs.len() as u64;
 
                                         // Filter messages that have been pending for longer than threshold
-                                        let stale_msgs: Vec<&(
-                                            String,
-                                            String,
-                                            u64,
-                                            Vec<(String, u64)>,
-                                        )> = pending_msgs
+                                        let stale_msgs: Vec<&PendingItem> = pending_msgs
                                             .iter()
                                             .filter(|(_, _, idle, _)| *idle >= idle_threshold)
                                             .collect();
