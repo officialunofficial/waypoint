@@ -378,13 +378,15 @@ impl Redis {
 
         // Use JUSTID to reduce network traffic when claiming many messages
         // This avoids transferring the full message content which we'll fetch separately
+        // Add FORCE option to forcibly claim messages regardless of idle time (Redis 7.0+)
         let claimed_ids: RedisResult<Vec<String>> = bb8_redis::redis::cmd("XCLAIM")
             .arg(key)
             .arg(group)
             .arg(consumer)
             .arg(min_idle_time.as_millis() as u64)
             .arg(ids)
-            .arg("JUSTID")
+            .arg("FORCE")  // Force claim even if messages don't satisfy idle time
+            .arg("JUSTID") // Only return the message ID, not the full content
             .query_async(&mut *conn)
             .await;
 
