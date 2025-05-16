@@ -386,7 +386,6 @@ impl MessageReconciler {
         Ok(())
     }
 
-
     async fn get_all_cast_messages(&self, fid: u64) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
         let page_size = 1000u32;
