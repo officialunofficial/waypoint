@@ -87,6 +87,11 @@ jobs:
         run: cargo build
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
+          
+      - name: Make build
+        run: make build
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
 
       - name: Run tests
         run: cargo test
