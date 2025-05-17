@@ -336,6 +336,7 @@ impl Redis {
     ) -> Result<Vec<PendingItem>, Error> {
         let mut conn = self.pool.get().await.map_err(|e| Error::PoolError(e.to_string()))?;
 
+        // Use a simpler approach that we know works with Redis
         let items: RedisResult<Vec<(String, String, String, String)>> =
             bb8_redis::redis::cmd("XPENDING")
                 .arg(key)

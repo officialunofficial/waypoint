@@ -674,158 +674,174 @@ impl Consumer {
         // Get a Redis connection
         let mut conn = self.stream.get_connection().await?;
 
-        // Get pending message summary information
-        let pending_info: std::result::Result<Vec<Vec<String>>, crate::redis::error::Error> =
-            bb8_redis::redis::cmd("XPENDING")
-                .arg(stream_key)
-                .arg(group_name)
-                .query_async(&mut *conn)
-                .await
-                .map_err(Error::RedisError);
+        // Get pending message info first using XPENDING with just key and group name
+        // XPENDING with just stream_key and group_name returns [count, min-id, max-id, [consumer details]]
+        // We need to handle the response properly to extract the count
+        let pending_info_result: std::result::Result<
+            Vec<bb8_redis::redis::Value>,
+            bb8_redis::redis::RedisError,
+        > = bb8_redis::redis::cmd("XPENDING")
+            .arg(stream_key)
+            .arg(group_name)
+            .query_async(&mut *conn)
+            .await;
+
+        // Extract the first value from the response (which should be the count)
+        let pending_info_result = pending_info_result
+            .map(|values| {
+                if values.is_empty() {
+                    0
+                } else {
+                    // Try to extract the count from the first element
+                    match &values[0] {
+                        bb8_redis::redis::Value::Int(count) => *count as u64,
+                        _ => {
+                            // If format doesn't match, log and default to 0
+                            error!(
+                                "[{}] Unable to parse pending count from XPENDING result, assuming 0",
+                                stream_key
+                            );
+                            0
+                        }
+                    }
+                }
+            })
+            .map_err(Error::RedisError);
 
         // Track total reclaimed messages
         let mut total_reclaimed = 0;
 
-        match pending_info {
-            Ok(info) => {
-                // Check if there are any pending messages (format: [count, smallest-id, largest-id, consumer-info])
-                if info.len() >= 3 {
-                    if let Ok(pending_count) = info[0][0].parse::<u64>() {
-                        if pending_count > 0 {
+        // Simplify the pending count extraction to use the returned u64 value directly
+        let pending_count = match pending_info_result {
+            Ok(count) => count,
+            Err(e) => {
+                error!("[{}] Error getting pending info: {}", stream_key, e);
+                0
+            },
+        };
+
+        if pending_count > 0 {
+            info!(
+                "[{}] Found {} pending messages to check for reclamation",
+                stream_key, pending_count
+            );
+
+            // Process in batches for better performance and to avoid timeout issues
+            let mut processed = 0;
+            while processed < pending_count {
+                // Define types to improve readability
+                type ConsumerName = String;
+                type DeliveryTime = u64;
+                type AdditionalInfo = Vec<(String, u64)>;
+                type PendingItem = (String, ConsumerName, DeliveryTime, AdditionalInfo);
+                type PendingDetailsResult =
+                    std::result::Result<Vec<PendingItem>, bb8_redis::redis::RedisError>;
+
+                // Use a simpler, direct approach that works with Redis
+                let pending_details: PendingDetailsResult = bb8_redis::redis::cmd("XPENDING")
+                        .arg(stream_key)
+                        .arg(group_name)
+                        .arg("-")  // start ID
+                        .arg("+")  // end ID
+                        .arg(BATCH_SIZE)  // batch size
+                        .query_async(&mut *conn)
+                        .await;
+
+                match pending_details {
+                    Ok(pending_msgs) => {
+                        if pending_msgs.is_empty() {
+                            break; // No more messages to process
+                        }
+
+                        processed += pending_msgs.len() as u64;
+
+                        // Filter messages that have been pending for longer than threshold
+                        let stale_msgs: Vec<&PendingItem> = pending_msgs
+                            .iter()
+                            .filter(|(_, _, idle, _)| *idle >= idle_threshold)
+                            .collect();
+
+                        if !stale_msgs.is_empty() {
+                            let reclaim_count = stale_msgs.len();
                             info!(
-                                "[{}] Found {} pending messages to check for reclamation",
-                                stream_key, pending_count
+                                "[{}] Found {} extremely stale messages to force reclaim",
+                                stream_key, reclaim_count
                             );
 
-                            // Process in batches for better performance and to avoid timeout issues
-                            let mut processed = 0;
-                            while processed < pending_count {
-                                // Define types to improve readability
-                                type ConsumerName = String;
-                                type DeliveryTime = u64;
-                                type AdditionalInfo = Vec<(String, u64)>;
-                                type PendingItem =
-                                    (String, ConsumerName, DeliveryTime, AdditionalInfo);
-                                type PendingResult = Vec<PendingItem>;
-                                let pending_details: std::result::Result<
-                                    PendingResult,
-                                    crate::redis::error::Error,
-                                > = bb8_redis::redis::cmd("XPENDING")
+                            // Get our stable consumer ID
+                            let waypoint_consumer =
+                                crate::redis::stream::RedisStream::get_stable_consumer_id();
+
+                            // Extract message IDs
+                            let msg_ids: Vec<String> =
+                                stale_msgs.iter().map(|(id, ..)| id.clone()).collect();
+
+                            // Force claim with XCLAIM
+                            let claim_result: std::result::Result<
+                                Vec<String>,
+                                crate::redis::error::Error,
+                            > = bb8_redis::redis::cmd("XCLAIM")
+                                    .arg(stream_key)
+                                    .arg(group_name)
+                                    .arg(&waypoint_consumer)
+                                    .arg(0) // min-idle-time (not used with FORCE)
+                                    .arg(&msg_ids)
+                                    .arg("FORCE") // Force reclaim
+                                    .arg("JUSTID") // Just claim, don't return data
+                                    .query_async(&mut *conn)
+                                    .await
+                                    .map_err(Error::RedisError);
+
+                            match claim_result {
+                                Ok(_) => {
+                                    info!(
+                                        "[{}] Successfully force reclaimed {} stale messages",
+                                        stream_key, reclaim_count
+                                    );
+                                    total_reclaimed += reclaim_count;
+
+                                    // Try to acknowledge them to clear the backlog
+                                    let ack_result: std::result::Result<
+                                        u64,
+                                        crate::redis::error::Error,
+                                    > = bb8_redis::redis::cmd("XACK")
                                         .arg(stream_key)
                                         .arg(group_name)
-                                        .arg("-")  // start ID
-                                        .arg("+")  // end ID
-                                        .arg(BATCH_SIZE)  // batch size
+                                        .arg(&msg_ids)
                                         .query_async(&mut *conn)
                                         .await
                                         .map_err(Error::RedisError);
 
-                                match pending_details {
-                                    Ok(pending_msgs) => {
-                                        if pending_msgs.is_empty() {
-                                            break; // No more messages to process
-                                        }
-
-                                        processed += pending_msgs.len() as u64;
-
-                                        // Filter messages that have been pending for longer than threshold
-                                        let stale_msgs: Vec<&PendingItem> = pending_msgs
-                                            .iter()
-                                            .filter(|(_, _, idle, _)| *idle >= idle_threshold)
-                                            .collect();
-
-                                        if !stale_msgs.is_empty() {
-                                            let reclaim_count = stale_msgs.len();
+                                    match ack_result {
+                                        Ok(count) => {
                                             info!(
-                                                "[{}] Found {} extremely stale messages to force reclaim",
-                                                stream_key, reclaim_count
+                                                "[{}] Acknowledged {} stale messages after claiming",
+                                                stream_key, count
                                             );
-
-                                            // Get our stable consumer ID
-                                            let waypoint_consumer = crate::redis::stream::RedisStream::get_stable_consumer_id();
-
-                                            // Extract message IDs
-                                            let msg_ids: Vec<String> = stale_msgs
-                                                .iter()
-                                                .map(|(id, ..)| id.clone())
-                                                .collect();
-
-                                            // Force claim with XCLAIM
-                                            let claim_result: std::result::Result<
-                                                Vec<String>,
-                                                crate::redis::error::Error,
-                                            > = bb8_redis::redis::cmd("XCLAIM")
-                                                    .arg(stream_key)
-                                                    .arg(group_name)
-                                                    .arg(&waypoint_consumer)
-                                                    .arg(0) // min-idle-time (not used with FORCE)
-                                                    .arg(&msg_ids)
-                                                    .arg("FORCE") // Force reclaim
-                                                    .arg("JUSTID") // Just claim, don't return data
-                                                    .query_async(&mut *conn)
-                                                    .await
-                                                    .map_err(Error::RedisError);
-
-                                            match claim_result {
-                                                Ok(_) => {
-                                                    info!(
-                                                        "[{}] Successfully force reclaimed {} stale messages",
-                                                        stream_key, reclaim_count
-                                                    );
-                                                    total_reclaimed += reclaim_count;
-
-                                                    // Try to acknowledge them to clear the backlog
-                                                    let ack_result: std::result::Result<
-                                                        u64,
-                                                        crate::redis::error::Error,
-                                                    > = bb8_redis::redis::cmd("XACK")
-                                                        .arg(stream_key)
-                                                        .arg(group_name)
-                                                        .arg(&msg_ids)
-                                                        .query_async(&mut *conn)
-                                                        .await
-                                                        .map_err(Error::RedisError);
-
-                                                    match ack_result {
-                                                        Ok(count) => {
-                                                            info!(
-                                                                "[{}] Acknowledged {} stale messages after claiming",
-                                                                stream_key, count
-                                                            );
-                                                        },
-                                                        Err(e) => {
-                                                            error!(
-                                                                "[{}] Error acknowledging stale messages: {}",
-                                                                stream_key, e
-                                                            );
-                                                        },
-                                                    }
-                                                },
-                                                Err(e) => {
-                                                    error!(
-                                                        "[{}] Error force reclaiming stale messages: {}",
-                                                        stream_key, e
-                                                    );
-                                                },
-                                            }
-                                        }
-                                    },
-                                    Err(e) => {
-                                        error!(
-                                            "[{}] Error getting pending message details: {}",
-                                            stream_key, e
-                                        );
-                                        break;
-                                    },
-                                }
+                                        },
+                                        Err(e) => {
+                                            error!(
+                                                "[{}] Error acknowledging stale messages: {}",
+                                                stream_key, e
+                                            );
+                                        },
+                                    }
+                                },
+                                Err(e) => {
+                                    error!(
+                                        "[{}] Error force reclaiming stale messages: {}",
+                                        stream_key, e
+                                    );
+                                },
                             }
                         }
-                    }
+                    },
+                    Err(e) => {
+                        error!("[{}] Error getting pending message details: {}", stream_key, e);
+                        break;
+                    },
                 }
-            },
-            Err(e) => {
-                error!("[{}] Error getting pending information: {}", stream_key, e);
-            },
+            }
         }
 
         Ok(total_reclaimed)
