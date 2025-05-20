@@ -1,4 +1,5 @@
 //! Database module for PostgreSQL interactions
+pub mod batch;
 pub mod client;
 pub mod error;
 pub mod models;
