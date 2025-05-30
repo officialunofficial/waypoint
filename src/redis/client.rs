@@ -15,26 +15,21 @@ impl Redis {
     pub async fn new(config: &RedisConfig) -> Result<Self, Error> {
         let manager =
             RedisConnectionManager::new(config.url.as_str()).map_err(Error::RedisError)?;
-        
+
         let builder = bb8::Pool::builder()
             .retry_connection(true)
             .max_size(config.pool_size)
             .connection_timeout(Duration::from_millis(config.connection_timeout_ms))
             .idle_timeout(Some(Duration::from_secs(config.idle_timeout_secs)))
             .max_lifetime(Some(Duration::from_secs(config.max_connection_lifetime_secs)));
-        
-        let pool = builder
-            .build(manager)
-            .await
-            .map_err(|e| Error::PoolError(e.to_string()))?;
-            
+
+        let pool = builder.build(manager).await.map_err(|e| Error::PoolError(e.to_string()))?;
+
         info!(
-            "Initialized Redis pool with {} max connections, {}ms connection timeout, {}s idle timeout", 
-            config.pool_size, 
-            config.connection_timeout_ms,
-            config.idle_timeout_secs
+            "Initialized Redis pool with {} max connections, {}ms connection timeout, {}s idle timeout",
+            config.pool_size, config.connection_timeout_ms, config.idle_timeout_secs
         );
-        
+
         Ok(Self { pool, config: Some(config.clone()) })
     }
 
@@ -63,7 +58,7 @@ impl Redis {
         let state = self.pool.state();
         let available = state.idle_connections;
         let total = state.connections;
-        
+
         // Consider under pressure if < 20% connections available
         if total > 0 {
             let available_percentage = (available as f32 / total as f32) * 100.0;
@@ -74,9 +69,12 @@ impl Redis {
     }
 
     /// Get a connection with timeout and backpressure awareness
-    pub async fn get_connection_with_timeout(&self, timeout_ms: u64) -> Result<bb8::PooledConnection<'_, RedisConnectionManager>, Error> {
+    pub async fn get_connection_with_timeout(
+        &self,
+        timeout_ms: u64,
+    ) -> Result<bb8::PooledConnection<'_, RedisConnectionManager>, Error> {
         let timeout = Duration::from_millis(timeout_ms);
-        
+
         tokio::time::timeout(timeout, self.pool.get())
             .await
             .map_err(|_| Error::PoolError("Connection timeout".to_string()))?
@@ -328,7 +326,7 @@ impl Redis {
         // Reduce block timeout to minimize connection hold time
         // Use adaptive timeout based on pool pressure
         let block_timeout = if self.is_pool_under_pressure() { 50 } else { 100 };
-        
+
         let result: RedisResult<Option<StreamResponse>> = bb8_redis::redis::cmd("XREADGROUP")
             .arg("GROUP")
             .arg(group)

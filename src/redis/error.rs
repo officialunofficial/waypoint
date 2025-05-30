@@ -38,13 +38,14 @@ impl Error {
         match self {
             Error::RedisError(redis_err) => {
                 // Check if it's a connection error that might recover
-                matches!(redis_err.kind(), 
-                    bb8_redis::redis::ErrorKind::IoError | 
-                    bb8_redis::redis::ErrorKind::BusyLoadingError | 
-                    bb8_redis::redis::ErrorKind::TryAgain | 
-                    bb8_redis::redis::ErrorKind::ClusterDown
+                matches!(
+                    redis_err.kind(),
+                    bb8_redis::redis::ErrorKind::IoError
+                        | bb8_redis::redis::ErrorKind::BusyLoadingError
+                        | bb8_redis::redis::ErrorKind::TryAgain
+                        | bb8_redis::redis::ErrorKind::ClusterDown
                 )
-            }
+            },
             Error::PoolError(_) => true,
             Error::OperationTimeout(_) => true,
             Error::PoolExhausted => true,
@@ -60,12 +61,13 @@ impl Error {
     pub fn should_trigger_circuit_breaker(&self) -> bool {
         match self {
             Error::RedisError(redis_err) => {
-                matches!(redis_err.kind(), 
-                    bb8_redis::redis::ErrorKind::IoError | 
-                    bb8_redis::redis::ErrorKind::AuthenticationFailed | 
-                    bb8_redis::redis::ErrorKind::ClientError
+                matches!(
+                    redis_err.kind(),
+                    bb8_redis::redis::ErrorKind::IoError
+                        | bb8_redis::redis::ErrorKind::AuthenticationFailed
+                        | bb8_redis::redis::ErrorKind::ClientError
                 )
-            }
+            },
             Error::PoolError(_) => true,
             Error::OperationTimeout(_) => true,
             Error::PoolExhausted => true,
@@ -80,14 +82,12 @@ impl Error {
             Error::RateLimitExceeded => Some(1000),
             Error::BackpressureDetected => Some(200),
             Error::OperationTimeout(_) => Some(100),
-            Error::RedisError(redis_err) => {
-                match redis_err.kind() {
-                    bb8_redis::redis::ErrorKind::BusyLoadingError => Some(1000),
-                    bb8_redis::redis::ErrorKind::TryAgain => Some(100),
-                    bb8_redis::redis::ErrorKind::IoError => Some(500),
-                    _ => None,
-                }
-            }
+            Error::RedisError(redis_err) => match redis_err.kind() {
+                bb8_redis::redis::ErrorKind::BusyLoadingError => Some(1000),
+                bb8_redis::redis::ErrorKind::TryAgain => Some(100),
+                bb8_redis::redis::ErrorKind::IoError => Some(500),
+                _ => None,
+            },
             _ => None,
         }
     }

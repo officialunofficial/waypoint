@@ -210,7 +210,10 @@ impl BackfillQueue {
         // Check if Redis pool is under pressure before attempting to get a job
         if self.redis.is_pool_under_pressure() {
             let (total, available) = self.redis.get_pool_health();
-            debug!("Redis pool under pressure: {}/{} connections available, delaying job fetch", available, total);
+            debug!(
+                "Redis pool under pressure: {}/{} connections available, delaying job fetch",
+                available, total
+            );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
@@ -312,7 +315,7 @@ impl BackfillQueue {
             .arg(-1)
             .query_async(&mut *conn)
             .await;
-        
+
         if let Ok(job_list) = jobs {
             // Find and remove the job with matching ID
             for job_data in job_list {
@@ -395,7 +398,7 @@ impl BackfillQueue {
             },
         }
     }
-    
+
     /// Clean up expired jobs from the in-progress queue
     /// This helps recover from crashes or other issues where jobs weren't properly completed
     pub async fn cleanup_expired_jobs(&self) -> Result<(), crate::redis::error::Error> {
@@ -413,7 +416,7 @@ impl BackfillQueue {
             .arg(-1)
             .query_async(&mut *conn)
             .await;
-        
+
         if let Ok(job_list) = jobs {
             let mut expired_count = 0;
             for job_data in job_list {
@@ -423,12 +426,14 @@ impl BackfillQueue {
                         let elapsed = chrono::Utc::now()
                             .signed_duration_since(job.created_at)
                             .num_seconds() as u64;
-                        
+
                         if elapsed > timeout {
                             // Job has expired, move it back to queue for retry
-                            info!("Found expired job {} (elapsed: {}s > timeout: {}s), moving back to queue", 
-                                job.id, elapsed, timeout);
-                            
+                            info!(
+                                "Found expired job {} (elapsed: {}s > timeout: {}s), moving back to queue",
+                                job.id, elapsed, timeout
+                            );
+
                             // Remove from in-progress queue
                             let _: RedisResult<()> = bb8_redis::redis::cmd("LREM")
                                 .arg(&self.in_progress_queue_key)
@@ -436,7 +441,7 @@ impl BackfillQueue {
                                 .arg(&job_data)
                                 .query_async(&mut *conn)
                                 .await;
-                            
+
                             // Reset state and retry
                             job.state = JobState::Pending;
                             self.retry_job(job).await?;
@@ -445,12 +450,12 @@ impl BackfillQueue {
                     }
                 }
             }
-            
+
             if expired_count > 0 {
                 info!("Cleaned up {} expired jobs from in-progress queue", expired_count);
             }
         }
-        
+
         Ok(())
     }
 }
@@ -621,7 +626,7 @@ impl Worker {
             if *self.shutdown.read().await {
                 break;
             }
-            
+
             // Periodically clean up expired jobs (every 60 seconds)
             if last_cleanup.elapsed() > Duration::from_secs(60) {
                 if let Err(e) = self.queue.cleanup_expired_jobs().await {
@@ -826,24 +831,26 @@ impl Worker {
                         // Clone job ID and queue reference for completion tracking
                         let job_id = job.id.clone();
                         let queue_for_completion = Arc::clone(&self.queue);
-                        
+
                         // Wrap the handle to mark job as complete after processing
                         let wrapped_handle = tokio::spawn(async move {
                             let result = handle.await;
-                            
+
                             // Mark job as complete regardless of success/failure
                             // This ensures jobs are properly removed from tracking
                             if let Err(e) = queue_for_completion.complete_job(&job_id).await {
                                 error!("Failed to mark job {} as complete: {:?}", job_id, e);
                             }
-                            
+
                             // Flatten the result to match expected type
                             match result {
                                 Ok(inner_result) => inner_result,
-                                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+                                Err(e) => {
+                                    Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                                },
                             }
                         });
-                        
+
                         handles.push(wrapped_handle);
                     },
                     Ok(None) => {

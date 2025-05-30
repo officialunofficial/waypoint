@@ -98,7 +98,7 @@ pub struct HubConfig {
     // Connection limits
     #[serde(default = "default_hub_max_concurrent_connections")]
     pub max_concurrent_connections: u32,
-    
+
     #[serde(default = "default_hub_max_requests_per_second")]
     pub max_requests_per_second: u32,
 

@@ -15,19 +15,24 @@ async fn get_max_fid_from_hub_info(hub: &mut Hub) -> u64 {
         Ok(info) => {
             // Use the total number of FID registrations as an approximation
             // In practice, FIDs are usually assigned sequentially, so this is a good estimate
-            let total_fids = info.db_stats.as_ref()
-                .map(|stats| stats.num_fid_registrations)
-                .unwrap_or(0);
-            
+            let total_fids =
+                info.db_stats.as_ref().map(|stats| stats.num_fid_registrations).unwrap_or(0);
+
             if total_fids > 0 {
                 info!("Detected {} total FID registrations from hub info", total_fids);
                 // Add some buffer to account for any recent registrations
                 let max_fid_estimate = total_fids + 10000;
-                info!("Using estimated max FID: {} (total registrations + 10k buffer)", max_fid_estimate);
+                info!(
+                    "Using estimated max FID: {} (total registrations + 10k buffer)",
+                    max_fid_estimate
+                );
                 max_fid_estimate
             } else {
                 let default_max = 10000;
-                info!("No FID registrations found in hub info, using default max FID: {}", default_max);
+                info!(
+                    "No FID registrations found in hub info, using default max FID: {}",
+                    default_max
+                );
                 default_max
             }
         },
@@ -125,8 +130,11 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
             }
         }
 
-        info!("Queued all FIDs from 1 to {} in {} batches (batch size: {})", hub_max_fid, queued_batches, batch_size);
-        
+        info!(
+            "Queued all FIDs from 1 to {} in {} batches (batch size: {})",
+            hub_max_fid, queued_batches, batch_size
+        );
+
         // Log queue status
         let queue_len = fid_queue.get_queue_length().await.unwrap_or(0);
         info!("Total jobs in queue after queueing: {}", queue_len);
@@ -182,8 +190,11 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
             }
         }
 
-        info!("Queued all FIDs from 1 to {} in {} batches (batch size: {})", max, queued_batches, batch_size);
-        
+        info!(
+            "Queued all FIDs from 1 to {} in {} batches (batch size: {})",
+            max, queued_batches, batch_size
+        );
+
         // Log queue status
         let queue_len = fid_queue.get_queue_length().await.unwrap_or(0);
         info!("Total jobs in queue after queueing: {}", queue_len);

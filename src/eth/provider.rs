@@ -119,7 +119,7 @@ mod tests {
             Ok(config) => config,
             Err(_) => return, // Skip test if config loading fails
         };
-        
+
         // Skip this test if no API key is provided
         let api_key = match &config.eth.alchemy_api_key {
             Some(key) => key,
