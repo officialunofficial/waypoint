@@ -16,55 +16,6 @@ permissions:
   packages: write
 
 jobs:
-  # Auto-increment version on main branch
-  auto-version:
-    name: Auto-increment Version
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'chore(release)')
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Get current version
-        id: current_version
-        run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
-      
-      - name: Increment patch version
-        id: bump_version
-        run: |
-          IFS='.' read -ra VERSION_PARTS <<< "${{ steps.current_version.outputs.version }}"
-          MAJOR="${VERSION_PARTS[0]}"
-          MINOR="${VERSION_PARTS[1]}"
-          PATCH="${VERSION_PARTS[2]}"
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "$NEW_VERSION" > VERSION
-      
-      - name: Update Cargo.toml version
-        run: |
-          sed -i "s/^version = \".*\"/version = \"${{ steps.bump_version.outputs.new_version }}\"/" Cargo.toml
-      
-      - name: Install git-cliff
-        uses: taiki-e/install-action@v2
-        with:
-          tool: git-cliff
-      
-      - name: Generate changelog
-        run: |
-          git-cliff -t v${{ steps.bump_version.outputs.new_version }} -o CHANGELOG.md
-      
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore(release): bump version to ${{ steps.bump_version.outputs.new_version }}"
-          file_pattern: "VERSION Cargo.toml CHANGELOG.md"
-          branch: main
-  
   # Manual or tag-based release process
   release:
     name: Create Release
@@ -78,18 +29,16 @@ jobs:
           fetch-depth: 0
       
       # For manual releases, update version files first
-      - name: Update VERSION file (Manual Release)
+      - name: Install Rust (for manual releases)
         if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "${VERSION#v}" > VERSION
-        env:
-          VERSION: ${{ github.event.inputs.version }}
+        uses: dtolnay/rust-toolchain@1.85.0
       
-      - name: Update Cargo.toml version (Manual Release)
+      - name: Update Cargo.toml and Cargo.lock version (Manual Release)
         if: github.event_name == 'workflow_dispatch'
         run: |
           NEW_VERSION="${VERSION#v}"
           sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+          cargo update --workspace
         env:
           VERSION: ${{ github.event.inputs.version }}
       
