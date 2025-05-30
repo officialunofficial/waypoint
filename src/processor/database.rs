@@ -1,5 +1,6 @@
 use crate::{
     core::{normalize::NormalizedEmbed, util::from_farcaster_time},
+    database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
     processor::consumer::EventProcessor,
     proto::{
@@ -20,7 +21,7 @@ use rayon::prelude::*;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
 use std::hash::Hasher;
 use std::sync::Arc;
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 #[derive(Clone)]
 pub struct DatabaseProcessor {
@@ -353,9 +354,9 @@ impl DatabaseProcessor {
                 INSERT INTO user_data (fid, type, hash, value, timestamp)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (fid, type) DO UPDATE SET
-                    value = EXCLUDED.value,
-                    hash = EXCLUDED.hash,
-                    timestamp = EXCLUDED.timestamp
+                    hash = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.hash ELSE user_data.hash END,
+                    value = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.value ELSE user_data.value END,
+                    timestamp = GREATEST(user_data.timestamp, EXCLUDED.timestamp)
                 "#,
                     data.fid as i64,
                     user_data.r#type as i16,
@@ -593,7 +594,7 @@ impl DatabaseProcessor {
         Ok(())
     }
 
-    async fn process_message(
+    pub async fn process_message(
         &self,
         msg: &Message,
         operation: &str,
@@ -682,6 +683,55 @@ impl DatabaseProcessor {
             }
         }
         Ok(())
+    }
+
+    /// Process a batch of messages in bulk for improved efficiency
+    pub async fn process_message_batch(
+        &self,
+        messages: &[Message],
+        operation: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if messages.is_empty() {
+            return Ok(());
+        }
+
+        // Get the batch size from configuration
+        let batch_size = self.resources.config.database.batch_size;
+
+        // Create a batch inserter with our database pool and configured batch size
+        let batch_inserter = BatchInserter::new(&self.resources.database.pool, batch_size);
+
+        // For operations other than "merge" (like delete, prune, revoke),
+        // we'll process messages individually since they have special handling
+        if operation != "merge" {
+            for msg in messages {
+                if let Err(e) = self.process_message(msg, operation).await {
+                    error!("Error processing message in batch (op={}): {}", operation, e);
+                    return Err(e);
+                }
+            }
+            return Ok(());
+        }
+
+        // For normal merge operations, use the batch inserter
+        // This groups messages by type and inserts them in bulk
+        match batch_inserter.process_message_batch(messages).await {
+            Ok(_) => {
+                trace!("Successfully processed batch of {} messages", messages.len());
+                Ok(())
+            },
+            Err(e) => {
+                error!("Error in batch processing: {}", e);
+
+                // If we encounter a database error, try processing messages individually as fallback
+                if e.to_string().contains("EOF") || e.to_string().contains("timed out") {
+                    error!("Fatal database error in batch processing: {}", e);
+                    std::process::exit(1);
+                }
+
+                Err(e)
+            },
+        }
     }
 
     pub fn create_handlers(
@@ -931,6 +981,11 @@ impl DatabaseProcessor {
 
 #[async_trait]
 impl EventProcessor for DatabaseProcessor {
+    /// Implementation of the as_any method to allow downcasting
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn process_event(
         &self,
         event: HubEvent,
@@ -939,12 +994,20 @@ impl EventProcessor for DatabaseProcessor {
             Some(Body::MergeMessageBody(body)) => {
                 // Process the main message
                 if let Some(msg) = &body.message {
+                    // For individual messages, still use the single message approach
                     self.process_message(msg, "merge").await?;
                 }
 
                 // Process all deleted messages
-                for deleted_msg in &body.deleted_messages {
-                    self.process_message(deleted_msg, "delete").await?;
+                let deleted_messages: Vec<_> = body.deleted_messages.iter().collect();
+                if !deleted_messages.is_empty() {
+                    // For multiple deleted messages, use batch processing
+                    if deleted_messages.len() > 1 {
+                        self.process_message_batch(&body.deleted_messages, "delete").await?;
+                    } else {
+                        // For a single deleted message, use the single message approach
+                        self.process_message(deleted_messages[0], "delete").await?;
+                    }
                 }
             },
             Some(Body::PruneMessageBody(body)) => {

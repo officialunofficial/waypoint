@@ -9,7 +9,7 @@ use tokio::{
     sync::{RwLock, mpsc},
     time,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BackfillJob {
@@ -207,21 +207,30 @@ impl BackfillQueue {
     }
 
     pub async fn get_job(&self) -> Result<Option<BackfillJob>, crate::redis::error::Error> {
+        // Check if Redis pool is under pressure before attempting to get a job
+        if self.redis.is_pool_under_pressure() {
+            let (total, available) = self.redis.get_pool_health();
+            debug!(
+                "Redis pool under pressure: {}/{} connections available, delaying job fetch",
+                available, total
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
         let mut conn = self
             .redis
-            .pool
-            .get()
-            .await
-            .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
+            .get_connection_with_timeout(2000) // 2 second timeout
+            .await?;
 
         // Try queues in priority order: high, normal, low
         let queue_keys =
             [&self.high_priority_queue_key, &self.queue_key, &self.low_priority_queue_key];
 
         for queue_key in &queue_keys {
+            // Use shorter timeout for BRPOP to avoid holding connections too long
             let result: RedisResult<Option<Vec<String>>> = bb8_redis::redis::cmd("BRPOP")
                 .arg(queue_key)
-                .arg(1) // Short timeout to try next queue if empty
+                .arg(0.5) // Reduced timeout to 500ms
                 .query_async(&mut *conn)
                 .await;
 
@@ -297,7 +306,36 @@ impl BackfillQueue {
             .await
             .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
 
-        // Remove job from in-progress list
+        // Remove job from in-progress queue by value
+        // We need to find and remove the job with matching ID from the in-progress queue
+        // First, get all jobs from in-progress queue
+        let jobs: RedisResult<Vec<String>> = bb8_redis::redis::cmd("LRANGE")
+            .arg(&self.in_progress_queue_key)
+            .arg(0)
+            .arg(-1)
+            .query_async(&mut *conn)
+            .await;
+
+        if let Ok(job_list) = jobs {
+            // Find and remove the job with matching ID
+            for job_data in job_list {
+                if let Ok(job) = serde_json::from_str::<BackfillJob>(&job_data) {
+                    if job.id == job_id {
+                        // Remove this specific job from the in-progress queue
+                        let _: RedisResult<()> = bb8_redis::redis::cmd("LREM")
+                            .arg(&self.in_progress_queue_key)
+                            .arg(0) // Remove all occurrences
+                            .arg(&job_data)
+                            .query_async(&mut *conn)
+                            .await;
+                        debug!("Removed job {} from in-progress queue", job_id);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Also remove the job key if it exists
         let _: RedisResult<()> = bb8_redis::redis::cmd("DEL")
             .arg(format!("backfill:job:{}", job_id))
             .query_async(&mut *conn)
@@ -309,6 +347,8 @@ impl BackfillQueue {
 
         // Update StatsD metrics
         metrics::increment_jobs_processed();
+
+        info!("Marked job {} as complete", job_id);
 
         Ok(())
     }
@@ -358,6 +398,66 @@ impl BackfillQueue {
             },
         }
     }
+
+    /// Clean up expired jobs from the in-progress queue
+    /// This helps recover from crashes or other issues where jobs weren't properly completed
+    pub async fn cleanup_expired_jobs(&self) -> Result<(), crate::redis::error::Error> {
+        let mut conn = self
+            .redis
+            .pool
+            .get()
+            .await
+            .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
+
+        // Get all jobs from in-progress queue
+        let jobs: RedisResult<Vec<String>> = bb8_redis::redis::cmd("LRANGE")
+            .arg(&self.in_progress_queue_key)
+            .arg(0)
+            .arg(-1)
+            .query_async(&mut *conn)
+            .await;
+
+        if let Ok(job_list) = jobs {
+            let mut expired_count = 0;
+            for job_data in job_list {
+                if let Ok(mut job) = serde_json::from_str::<BackfillJob>(&job_data) {
+                    // Check if job has exceeded its visibility timeout
+                    if let Some(timeout) = job.visibility_timeout {
+                        let elapsed = chrono::Utc::now()
+                            .signed_duration_since(job.created_at)
+                            .num_seconds() as u64;
+
+                        if elapsed > timeout {
+                            // Job has expired, move it back to queue for retry
+                            info!(
+                                "Found expired job {} (elapsed: {}s > timeout: {}s), moving back to queue",
+                                job.id, elapsed, timeout
+                            );
+
+                            // Remove from in-progress queue
+                            let _: RedisResult<()> = bb8_redis::redis::cmd("LREM")
+                                .arg(&self.in_progress_queue_key)
+                                .arg(0)
+                                .arg(&job_data)
+                                .query_async(&mut *conn)
+                                .await;
+
+                            // Reset state and retry
+                            job.state = JobState::Pending;
+                            self.retry_job(job).await?;
+                            expired_count += 1;
+                        }
+                    }
+                }
+            }
+
+            if expired_count > 0 {
+                info!("Cleaned up {} expired jobs from in-progress queue", expired_count);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // Message types for worker stats updates
@@ -385,6 +485,8 @@ pub struct Worker {
     spam_filter: Arc<SpamFilter>,
     // Global semaphore to prevent overwhelming the database connection pool
     db_connection_limiter: Arc<tokio::sync::Semaphore>,
+    // Hub connection rate limiter to avoid overwhelming the hub
+    hub_connection_limiter: Arc<tokio::sync::Semaphore>,
 }
 
 impl Worker {
@@ -411,6 +513,10 @@ impl Worker {
         // to leave room for other application operations
         let db_connection_limiter = Arc::new(tokio::sync::Semaphore::new(8));
 
+        // Create a hub connection limiter to avoid overwhelming the hub
+        // Conservative limit based on typical hub capacity
+        let hub_connection_limiter = Arc::new(tokio::sync::Semaphore::new(5));
+
         Self {
             reconciler,
             queue,
@@ -423,6 +529,7 @@ impl Worker {
             },
             spam_filter,
             db_connection_limiter,
+            hub_connection_limiter,
         }
     }
 
@@ -512,11 +619,20 @@ impl Worker {
 
         let mut handles = Vec::new();
         let mut last_progress_log = std::time::Instant::now();
+        let mut last_cleanup = std::time::Instant::now();
 
         loop {
             // Check if we should shutdown
             if *self.shutdown.read().await {
                 break;
+            }
+
+            // Periodically clean up expired jobs (every 60 seconds)
+            if last_cleanup.elapsed() > Duration::from_secs(60) {
+                if let Err(e) = self.queue.cleanup_expired_jobs().await {
+                    error!("Error cleaning up expired jobs: {:?}", e);
+                }
+                last_cleanup = std::time::Instant::now();
             }
 
             // Update local stats from the shared stats
@@ -565,7 +681,7 @@ impl Worker {
                             );
 
                             // Remember the original job ID so we can mark it as completed
-                            let original_job_id = job.id.clone();
+                            let _original_job_id = job.id.clone();
 
                             // Asynchronously add the job back to the queue
                             let queue_clone = Arc::clone(&self.queue);
@@ -573,11 +689,7 @@ impl Worker {
                                 if let Err(e) = queue_clone.add_job(remaining_job).await {
                                     error!("Failed to requeue remaining FIDs: {:?}", e);
                                 }
-
-                                // Mark the original job as completed since we've now requeued the remaining FIDs
-                                if let Err(e) = queue_clone.complete_job(&original_job_id).await {
-                                    error!("Failed to mark split job as completed: {:?}", e);
-                                }
+                                // Note: The original job will be marked complete after processing by the wrapped handle
                             });
                         }
 
@@ -588,6 +700,7 @@ impl Worker {
                         let fid_count = job.fids.len();
                         let spam_filter = Arc::clone(&self.spam_filter);
                         let db_connection_limiter = Arc::clone(&self.db_connection_limiter);
+                        let hub_connection_limiter = Arc::clone(&self.hub_connection_limiter);
 
                         info!("Starting backfill job with {} FIDs", fid_count);
 
@@ -608,42 +721,38 @@ impl Worker {
                                 }
                             }
 
-                            // Set up a semaphore to limit concurrent Hub connections
-                            // Use a reasonable value to prevent overwhelming the Hub API
-                            // while still maintaining good throughput
-                            let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
                             let mut tasks = Vec::new();
 
-                            // Process FIDs in parallel using Tokio tasks with semaphore
+                            // Process FIDs in parallel using Tokio tasks with proper rate limiting
                             for fid in non_spam_fids {
                                 let reconciler_clone = Arc::clone(&reconciler);
                                 let processors_clone = processors.clone();
                                 let tx_clone2 = tx_clone.clone();
-                                let semaphore_clone = Arc::clone(&semaphore);
+                                let hub_limiter_clone = Arc::clone(&hub_connection_limiter);
                                 let db_limiter_clone = Arc::clone(&db_connection_limiter);
 
                                 let task = tokio::spawn(async move {
                                     // Acquire permits to limit concurrency of Hub calls and database connections
-                                    let _hub_permit = semaphore_clone.acquire().await.unwrap();
+                                    let _hub_permit = hub_limiter_clone.acquire().await.unwrap();
                                     // Also acquire a database connection permit to avoid overwhelming the DB
                                     let _db_permit = db_limiter_clone.acquire().await.unwrap();
 
                                     let fid_start = std::time::Instant::now();
-                                    info!("Starting processing FID {}", fid);
+                                    trace!("Starting processing FID {}", fid);
 
                                     let mut success = false;
                                     let mut error = false;
 
                                     for (idx, processor) in processors_clone.iter().enumerate() {
                                         let processor_name = format!("Processor {}", idx + 1);
-                                        info!("Using {} for FID {}", processor_name, fid);
+                                        trace!("Using {} for FID {}", processor_name, fid);
 
                                         match reconciler_clone
                                             .reconcile_fid(fid, processor.clone())
                                             .await
                                         {
                                             Ok(_) => {
-                                                info!(
+                                                trace!(
                                                     "Successfully processed FID {} with {}",
                                                     fid, processor_name
                                                 );
@@ -719,7 +828,30 @@ impl Worker {
                             Ok(())
                         });
 
-                        handles.push(handle);
+                        // Clone job ID and queue reference for completion tracking
+                        let job_id = job.id.clone();
+                        let queue_for_completion = Arc::clone(&self.queue);
+
+                        // Wrap the handle to mark job as complete after processing
+                        let wrapped_handle = tokio::spawn(async move {
+                            let result = handle.await;
+
+                            // Mark job as complete regardless of success/failure
+                            // This ensures jobs are properly removed from tracking
+                            if let Err(e) = queue_for_completion.complete_job(&job_id).await {
+                                error!("Failed to mark job {} as complete: {:?}", job_id, e);
+                            }
+
+                            // Flatten the result to match expected type
+                            match result {
+                                Ok(inner_result) => inner_result,
+                                Err(e) => {
+                                    Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                                },
+                            }
+                        });
+
+                        handles.push(wrapped_handle);
                     },
                     Ok(None) => {
                         // No jobs available, wait a bit
