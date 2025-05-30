@@ -132,7 +132,11 @@ impl MessageReconciler {
 
             // Process all collected messages in a single batch
             if !all_messages.is_empty() {
-                debug!("Attempting to batch process {} messages for {} FIDs", all_messages.len(), fid_results.len());
+                debug!(
+                    "Attempting to batch process {} messages for {} FIDs",
+                    all_messages.len(),
+                    fid_results.len()
+                );
                 if let Some(db_processor) = processor
                     .as_any()
                     .downcast_ref::<crate::processor::database::DatabaseProcessor>(

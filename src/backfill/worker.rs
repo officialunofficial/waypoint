@@ -724,22 +724,29 @@ impl Worker {
                             // Use the new batch reconciliation method for better database efficiency
                             if !non_spam_fids.is_empty() {
                                 let _hub_permit = hub_connection_limiter.acquire().await.unwrap();
-                                
+
                                 // Process all FIDs using the batch processor
                                 for processor in &processors {
-                                    match reconciler.reconcile_fids_batch(&non_spam_fids, processor.clone()).await {
+                                    match reconciler
+                                        .reconcile_fids_batch(&non_spam_fids, processor.clone())
+                                        .await
+                                    {
                                         Ok((success_count, error_count)) => {
                                             job_success_count += success_count;
                                             job_error_count += error_count;
-                                            
+
                                             info!(
                                                 "Batch processed {} FIDs: {} succeeded, {} failed",
-                                                non_spam_fids.len(), success_count, error_count
+                                                non_spam_fids.len(),
+                                                success_count,
+                                                error_count
                                             );
-                                            
+
                                             metrics::increment_fids_processed(success_count as u64);
                                             if error_count > 0 {
-                                                if let Err(e) = tx_clone.send(StatsUpdate::Error).await {
+                                                if let Err(e) =
+                                                    tx_clone.send(StatsUpdate::Error).await
+                                                {
                                                     error!("Failed to send error update: {}", e);
                                                 }
                                                 metrics::increment_job_errors();
@@ -748,11 +755,12 @@ impl Worker {
                                         Err(e) => {
                                             error!("Error in batch reconciliation: {:?}", e);
                                             job_error_count += non_spam_fids.len();
-                                            if let Err(e) = tx_clone.send(StatsUpdate::Error).await {
+                                            if let Err(e) = tx_clone.send(StatsUpdate::Error).await
+                                            {
                                                 error!("Failed to send error update: {}", e);
                                             }
                                             metrics::increment_job_errors();
-                                        }
+                                        },
                                     }
                                 }
                             }
