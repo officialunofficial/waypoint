@@ -55,6 +55,9 @@ impl StateProvider {
             hub_guard.connect().await.map_err(|e| AppError::Hub(e.to_string()))?;
         }
 
+        // Log database connection info (safely)
+        database.log_connection_info();
+
         // Create the state
         let state = AppState { hub, redis, database };
 

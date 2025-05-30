@@ -644,6 +644,8 @@ impl RedisStream {
         min_idle: Duration,
         count: u64,
     ) -> Result<Vec<PendingItem>, Error> {
+        // For now, let's fall back to the original implementation
+        // which is known to work in the codebase
         self.redis.xpending(key, group, min_idle, count).await
     }
 
