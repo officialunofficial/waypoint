@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO user_data (fid, type, hash, value, timestamp)\n                VALUES ($1, $2, $3, $4, $5)\n                ON CONFLICT (fid, type) DO UPDATE SET\n                    hash = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.hash ELSE user_data.hash END,\n                    value = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.value ELSE user_data.value END,\n                    timestamp = GREATEST(user_data.timestamp, EXCLUDED.timestamp)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int2",
+        "Bytea",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ca6db56af60ca20821d2fe0453291c5400bd46e2850fa38d80249e3fbf40b188"
+}
