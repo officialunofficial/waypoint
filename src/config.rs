@@ -263,7 +263,7 @@ pub struct BackfillConfig {
 
 impl Default for BackfillConfig {
     fn default() -> Self {
-        Self { concurrency: Some(50), batch_size: Some(50) }
+        Self { concurrency: Some(40), batch_size: Some(50) } // Align with Docker default
     }
 }
 
@@ -281,8 +281,8 @@ impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             url: "postgresql://localhost/waypoint".to_string(),
-            max_connections: 20,
-            timeout_seconds: 30,
+            max_connections: 60, // Align with Docker default
+            timeout_seconds: 30, // Align with Docker default
             store_messages: default_store_messages(),
             batch_size: default_db_batch_size(),
         }
