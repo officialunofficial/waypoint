@@ -2,7 +2,7 @@ use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, trace};
 use waypoint::{
     backfill::reconciler::MessageReconciler,
     config::Config,
@@ -109,18 +109,18 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                 // Acquire a permit from the semaphore
                 let _permit = semaphore_clone.acquire().await.unwrap();
 
-                info!("Updating user_data for FID {}", fid);
+                trace!("Updating user_data for FID {}", fid);
 
                 // Get user_data messages for this FID
                 match reconciler_clone.get_all_user_data_messages(fid).await {
                     Ok(messages) => {
                         let message_count = messages.len();
                         if message_count == 0 {
-                            info!("No user_data found for FID {}", fid);
+                            trace!("No user_data found for FID {}", fid);
                             return (fid, true, 0);
                         }
 
-                        info!("Retrieved {} user_data messages for FID {}", message_count, fid);
+                        trace!("Retrieved {} user_data messages for FID {}", message_count, fid);
 
                         // Process each message
                         let mut success = true;

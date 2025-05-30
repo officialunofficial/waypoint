@@ -115,6 +115,8 @@ impl HubSubscriber {
             // Create a default config if none provided
             Arc::new(HubConfig {
                 url: hub_host.clone(),
+                max_concurrent_connections: 5,
+                max_requests_per_second: 10,
                 retry_max_attempts: 5,
                 retry_base_delay_ms: 100,
                 retry_max_delay_ms: 30000,

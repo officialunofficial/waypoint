@@ -21,7 +21,7 @@ use rayon::prelude::*;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
 use std::hash::Hasher;
 use std::sync::Arc;
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 #[derive(Clone)]
 pub struct DatabaseProcessor {
@@ -354,9 +354,9 @@ impl DatabaseProcessor {
                 INSERT INTO user_data (fid, type, hash, value, timestamp)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (fid, type) DO UPDATE SET
-                    value = EXCLUDED.value,
-                    hash = EXCLUDED.hash,
-                    timestamp = EXCLUDED.timestamp
+                    hash = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.hash ELSE user_data.hash END,
+                    value = CASE WHEN EXCLUDED.timestamp >= user_data.timestamp THEN EXCLUDED.value ELSE user_data.value END,
+                    timestamp = GREATEST(user_data.timestamp, EXCLUDED.timestamp)
                 "#,
                     data.fid as i64,
                     user_data.r#type as i16,
@@ -717,7 +717,7 @@ impl DatabaseProcessor {
         // This groups messages by type and inserts them in bulk
         match batch_inserter.process_message_batch(messages).await {
             Ok(_) => {
-                debug!("Successfully processed batch of {} messages", messages.len());
+                trace!("Successfully processed batch of {} messages", messages.len());
                 Ok(())
             },
             Err(e) => {

@@ -16,7 +16,7 @@ use serde_json::Value;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
 use std::collections::HashMap;
 use std::error::Error;
-use tracing::{debug, error};
+use tracing::{error, trace};
 
 /// Default batch size for database operations
 #[allow(dead_code)]
@@ -487,19 +487,19 @@ impl<'a> BatchInserter<'a> {
                 "reactions",
                 &[
                     "fid",
-                    "target_fid",
+                    "target_cast_fid",
                     "hash",
-                    "reaction_type",
-                    "target_hash",
+                    "type",
+                    "target_cast_hash",
                     "target_url",
                     "timestamp",
                 ],
                 chunk.len(),
                 "hash",
                 &[
-                    "target_fid = EXCLUDED.target_fid",
-                    "reaction_type = EXCLUDED.reaction_type",
-                    "target_hash = EXCLUDED.target_hash",
+                    "target_cast_fid = EXCLUDED.target_cast_fid",
+                    "type = EXCLUDED.type",
+                    "target_cast_hash = EXCLUDED.target_cast_hash",
                     "target_url = EXCLUDED.target_url",
                     "timestamp = EXCLUDED.timestamp",
                 ],
@@ -730,7 +730,7 @@ impl<'a> BatchInserter<'a> {
         // We'll process this separately since all messages go into the messages table
         if !messages.is_empty() {
             match self.bulk_insert_messages(messages).await {
-                Ok(count) => debug!("Bulk inserted {} messages", count),
+                Ok(count) => trace!("Bulk inserted {} messages", count),
                 Err(e) => error!("Error bulk inserting messages: {}", e),
             }
         }

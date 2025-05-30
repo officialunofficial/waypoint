@@ -6,7 +6,39 @@ use tracing::info;
 use waypoint::{
     backfill::worker::{BackfillJob, BackfillQueue, JobPriority, JobState},
     config::Config,
+    hub::client::Hub,
 };
+
+/// Helper function to get max FID from hub info
+async fn get_max_fid_from_hub_info(hub: &mut Hub) -> u64 {
+    match hub.get_hub_info().await {
+        Ok(info) => {
+            // Use the total number of FID registrations as an approximation
+            // In practice, FIDs are usually assigned sequentially, so this is a good estimate
+            let total_fids = info.db_stats.as_ref()
+                .map(|stats| stats.num_fid_registrations)
+                .unwrap_or(0);
+            
+            if total_fids > 0 {
+                info!("Detected {} total FID registrations from hub info", total_fids);
+                // Add some buffer to account for any recent registrations
+                let max_fid_estimate = total_fids + 10000;
+                info!("Using estimated max FID: {} (total registrations + 10k buffer)", max_fid_estimate);
+                max_fid_estimate
+            } else {
+                let default_max = 10000;
+                info!("No FID registrations found in hub info, using default max FID: {}", default_max);
+                default_max
+            }
+        },
+        Err(e) => {
+            info!("Failed to get hub info: {}. Using default max FID.", e);
+            let default_max = 10000;
+            info!("Using default max FID: {}", default_max);
+            default_max
+        },
+    }
+}
 
 /// Register FID queue command
 pub fn register_command() -> Command {
@@ -47,38 +79,29 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     let mut hub_guard = hub.lock().await;
     hub_guard.connect().await?;
 
-    // Instead of using get_fids which is not supported, get max FID from hub info
-    let hub_max_fid = match hub_guard.get_hub_info().await {
-        Ok(info) => {
-            // Calculate the sum of all fids across all shards
-            let sum_fids =
-                info.shard_infos.iter().map(|shard| shard.num_fid_registrations).sum::<u64>();
-
-            // Find the maximum FID from the hub info as fallback
-            let max_fid = info
-                .shard_infos
-                .iter()
-                .map(|shard| shard.num_fid_registrations)
-                .max()
-                .unwrap_or(10000);
-
-            info!("Detected total FID registrations from hub: {}", sum_fids);
-            info!("Detected maximum FID per shard from hub: {}", max_fid);
-            sum_fids
+    // Get the maximum FID - try GetFids first, fall back to hub info
+    let hub_max_fid = match hub_guard.get_fids(Some(1), None, Some(true)).await {
+        Ok(fids_response) => {
+            if let Some(max_fid) = fids_response.fids.first() {
+                info!("Detected maximum FID from hub: {}", max_fid);
+                *max_fid
+            } else {
+                // No FIDs found, use hub info
+                get_max_fid_from_hub_info(&mut hub_guard).await
+            }
         },
         Err(e) => {
-            info!("Failed to get hub info: {}. Using default max FID instead.", e);
-            let default_max_fid = 10000;
-            info!("Using default max FID: {}", default_max_fid);
-            default_max_fid
+            info!("Failed to get FIDs from hub: {}. Falling back to hub info.", e);
+            // For sharded hubs, GetFids might not work, so use hub info
+            get_max_fid_from_hub_info(&mut hub_guard).await
         },
     };
 
-    // If no options provided, use the sum of FIDs from shards
+    // If no options provided, use the maximum FID from hub
     if fids_str.is_none() && max_fid_str.is_none() {
-        info!("No FIDs or max FID specified, using sum of FIDs from hub: {}", hub_max_fid);
+        info!("No FIDs or max FID specified, using maximum FID from hub: {}", hub_max_fid);
 
-        // Queue in batches up to the sum of FIDs from shards
+        // Queue in batches up to the maximum FID
         let mut queued_batches = 0;
         for start in (1..=hub_max_fid).step_by(batch_size as usize) {
             let end = std::cmp::min(start + batch_size - 1, hub_max_fid);
@@ -102,7 +125,11 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
             }
         }
 
-        info!("Queued all FIDs from 1 to {} in {} batches", hub_max_fid, queued_batches);
+        info!("Queued all FIDs from 1 to {} in {} batches (batch size: {})", hub_max_fid, queued_batches, batch_size);
+        
+        // Log queue status
+        let queue_len = fid_queue.get_queue_length().await.unwrap_or(0);
+        info!("Total jobs in queue after queueing: {}", queue_len);
     }
     // Process specific FIDs if provided
     else if let Some(fids) = fids_str {
@@ -155,7 +182,11 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
             }
         }
 
-        info!("Queued all FIDs from 1 to {} in {} batches", max, queued_batches);
+        info!("Queued all FIDs from 1 to {} in {} batches (batch size: {})", max, queued_batches, batch_size);
+        
+        // Log queue status
+        let queue_len = fid_queue.get_queue_length().await.unwrap_or(0);
+        info!("Total jobs in queue after queueing: {}", queue_len);
     }
 
     info!("FID backfill jobs queued successfully");

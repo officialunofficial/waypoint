@@ -110,17 +110,24 @@ impl AlchemyProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     #[tokio::test]
     async fn test_provider_api_calls() {
+        // Load config to get API key from environment
+        let config = match Config::load() {
+            Ok(config) => config,
+            Err(_) => return, // Skip test if config loading fails
+        };
+        
         // Skip this test if no API key is provided
-        let api_key = match std::env::var("WAYPOINT_ETH__ALCHEMY_API_KEY") {
-            Ok(key) => key,
-            Err(_) => return, // Skip test if no API key
+        let api_key = match &config.eth.alchemy_api_key {
+            Some(key) => key,
+            None => return, // Skip test if no API key
         };
 
         // Create provider for Base Sepolia (testnet)
-        let provider = AlchemyProvider::new(NetworkKind::BaseSepolia, &api_key).unwrap();
+        let provider = AlchemyProvider::new(NetworkKind::BaseSepolia, api_key).unwrap();
 
         // Check network
         assert_eq!(provider.network(), &NetworkKind::BaseSepolia);

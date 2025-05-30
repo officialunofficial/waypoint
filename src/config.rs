@@ -40,6 +40,7 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     pub url: String,
+    #[serde(default = "default_redis_pool_size")]
     pub pool_size: u32,
     #[serde(default = "default_redis_batch_size")]
     pub batch_size: usize,
@@ -49,10 +50,32 @@ pub struct RedisConfig {
     pub consumer_rebalance_interval_seconds: u64,
     #[serde(default = "default_metrics_collection_interval")]
     pub metrics_collection_interval_seconds: u64,
+    #[serde(default = "default_connection_timeout_ms")]
+    pub connection_timeout_ms: u64,
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+    #[serde(default = "default_max_connection_lifetime_secs")]
+    pub max_connection_lifetime_secs: u64,
+}
+
+fn default_redis_pool_size() -> u32 {
+    20 // Balanced pool size - enough for concurrency without overwhelming hub
 }
 
 fn default_redis_batch_size() -> usize {
     100 // Default batch size for Redis operations
+}
+
+fn default_connection_timeout_ms() -> u64 {
+    5000 // 5 second connection timeout
+}
+
+fn default_idle_timeout_secs() -> u64 {
+    300 // 5 minute idle timeout
+}
+
+fn default_max_connection_lifetime_secs() -> u64 {
+    1800 // 30 minute max connection lifetime
 }
 
 fn default_enable_dead_letter() -> bool {
@@ -72,6 +95,13 @@ fn default_metrics_collection_interval() -> u64 {
 pub struct HubConfig {
     pub url: String,
 
+    // Connection limits
+    #[serde(default = "default_hub_max_concurrent_connections")]
+    pub max_concurrent_connections: u32,
+    
+    #[serde(default = "default_hub_max_requests_per_second")]
+    pub max_requests_per_second: u32,
+
     // Retry configuration
     #[serde(default = "default_retry_attempts")]
     pub retry_max_attempts: u32,
@@ -90,6 +120,14 @@ pub struct HubConfig {
 
     #[serde(default = "default_conn_timeout_ms")]
     pub conn_timeout_ms: u64,
+}
+
+fn default_hub_max_concurrent_connections() -> u32 {
+    5 // Conservative limit to avoid overwhelming hub
+}
+
+fn default_hub_max_requests_per_second() -> u32 {
+    10 // Conservative rate limit
 }
 
 fn default_retry_attempts() -> u32 {
@@ -255,11 +293,14 @@ impl Default for RedisConfig {
     fn default() -> Self {
         Self {
             url: "redis://localhost:6379".to_string(),
-            pool_size: 5,
+            pool_size: default_redis_pool_size(),
             batch_size: default_redis_batch_size(),
             enable_dead_letter: default_enable_dead_letter(),
             consumer_rebalance_interval_seconds: default_consumer_rebalance_interval(),
             metrics_collection_interval_seconds: default_metrics_collection_interval(),
+            connection_timeout_ms: default_connection_timeout_ms(),
+            idle_timeout_secs: default_idle_timeout_secs(),
+            max_connection_lifetime_secs: default_max_connection_lifetime_secs(),
         }
     }
 }
@@ -268,6 +309,8 @@ impl Default for HubConfig {
     fn default() -> Self {
         Self {
             url: "snapchain.farcaster.xyz:3383".to_string(),
+            max_concurrent_connections: default_hub_max_concurrent_connections(),
+            max_requests_per_second: default_hub_max_requests_per_second(),
             retry_max_attempts: default_retry_attempts(),
             retry_base_delay_ms: default_retry_base_delay_ms(),
             retry_max_delay_ms: default_retry_max_delay_ms(),

@@ -10,7 +10,7 @@ use crate::{
 };
 use std::{sync::Arc, time::Duration};
 use tonic::transport::Channel;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 pub struct MessageReconciler {
     hub_client: proto::hub_service_client::HubServiceClient<Channel>,
@@ -39,7 +39,7 @@ impl MessageReconciler {
         fid: u64,
         processor: Arc<dyn EventProcessor>,
     ) -> Result<(), Error> {
-        info!("Starting reconciliation for FID {}", fid);
+        trace!("Starting reconciliation for FID {}", fid);
         let start_time = std::time::Instant::now();
 
         // Fetch message types sequentially to avoid overwhelming the Hub
@@ -91,7 +91,7 @@ impl MessageReconciler {
                 continue;
             }
 
-            info!("Processing {} {} messages for FID {}", count, message_type, fid);
+            trace!("Processing {} {} messages for FID {}", count, message_type, fid);
 
             let mut success_count = 0;
             let mut error_count = 0;
@@ -215,7 +215,7 @@ impl MessageReconciler {
                 }
             }
 
-            info!(
+            trace!(
                 "Completed processing {} {} messages for FID {} ({} succeeded, {} failed)",
                 count, message_type, fid, success_count, error_count
             );
@@ -224,7 +224,7 @@ impl MessageReconciler {
         // Now handle user_data specially to ensure complete profiles are built
         let user_data_count = user_data.len();
         if user_data_count > 0 {
-            info!("Processing {} user_data messages for FID {}", user_data_count, fid);
+            trace!("Processing {} user_data messages for FID {}", user_data_count, fid);
 
             // Regular user data processing
             {
@@ -286,7 +286,7 @@ impl MessageReconciler {
                     }
                 }
 
-                info!(
+                trace!(
                     "Completed processing {} user_data messages for FID {} ({} succeeded, {} failed)",
                     user_data_count, fid, success_count, error_count
                 );
@@ -295,7 +295,7 @@ impl MessageReconciler {
 
         // Now handle onchain events, if any
         if onchain_events_count > 0 {
-            info!("Processing {} onchain events for FID {}", onchain_events_count, fid);
+            trace!("Processing {} onchain events for FID {}", onchain_events_count, fid);
 
             let mut success_count = 0;
             let mut error_count = 0;
@@ -354,7 +354,7 @@ impl MessageReconciler {
                 }
             }
 
-            info!(
+            trace!(
                 "Completed processing {} onchain events for FID {} ({} succeeded, {} failed)",
                 onchain_events_count, fid, success_count, error_count
             );
@@ -392,7 +392,7 @@ impl MessageReconciler {
         let mut page_token = None;
         let mut page_count = 0;
 
-        debug!("Fetching casts for FID {} with page size {}", fid, page_size);
+        trace!("Fetching casts for FID {} with page size {}", fid, page_size);
 
         loop {
             page_count += 1;
@@ -410,7 +410,7 @@ impl MessageReconciler {
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
-            debug!(
+            trace!(
                 "Received page {} with {} casts for FID {}",
                 page_count, page_messages_count, fid
             );
@@ -425,7 +425,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!(
+        trace!(
             "Fetched a total of {} casts for FID {} in {} pages",
             messages.len(),
             fid,
@@ -440,7 +440,7 @@ impl MessageReconciler {
         let mut page_token = None;
         let mut page_count = 0;
 
-        debug!("Fetching reactions for FID {} with page size {}", fid, page_size);
+        trace!("Fetching reactions for FID {} with page size {}", fid, page_size);
 
         loop {
             page_count += 1;
@@ -459,7 +459,7 @@ impl MessageReconciler {
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
-            debug!(
+            trace!(
                 "Received page {} with {} reactions for FID {}",
                 page_count, page_messages_count, fid
             );
@@ -474,7 +474,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!(
+        trace!(
             "Fetched a total of {} reactions for FID {} in {} pages",
             messages.len(),
             fid,
@@ -489,7 +489,7 @@ impl MessageReconciler {
         let mut page_token = None;
         let mut page_count = 0;
 
-        debug!("Fetching links for FID {} with page size {}", fid, page_size);
+        trace!("Fetching links for FID {} with page size {}", fid, page_size);
 
         loop {
             page_count += 1;
@@ -508,7 +508,7 @@ impl MessageReconciler {
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
-            debug!(
+            trace!(
                 "Received page {} with {} links for FID {}",
                 page_count, page_messages_count, fid
             );
@@ -523,7 +523,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!(
+        trace!(
             "Fetched a total of {} links for FID {} in {} pages",
             messages.len(),
             fid,
@@ -538,7 +538,7 @@ impl MessageReconciler {
         let mut page_token = None;
         let mut page_count = 0;
 
-        debug!("Fetching verifications for FID {} with page size {}", fid, page_size);
+        trace!("Fetching verifications for FID {} with page size {}", fid, page_size);
 
         loop {
             page_count += 1;
@@ -559,7 +559,7 @@ impl MessageReconciler {
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
-            debug!(
+            trace!(
                 "Received page {} with {} verifications for FID {}",
                 page_count, page_messages_count, fid
             );
@@ -574,7 +574,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!(
+        trace!(
             "Fetched a total of {} verifications for FID {} in {} pages",
             messages.len(),
             fid,
@@ -589,7 +589,7 @@ impl MessageReconciler {
         let mut page_token = None;
         let mut page_count = 0;
 
-        debug!("Fetching user data for FID {} with page size {}", fid, page_size);
+        trace!("Fetching user data for FID {} with page size {}", fid, page_size);
 
         loop {
             page_count += 1;
@@ -607,7 +607,7 @@ impl MessageReconciler {
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
-            debug!(
+            trace!(
                 "Received page {} with {} user data messages for FID {}",
                 page_count, page_messages_count, fid
             );
@@ -622,7 +622,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!(
+        trace!(
             "Fetched a total of {} user data messages for FID {} in {} pages",
             messages.len(),
             fid,
@@ -638,7 +638,7 @@ impl MessageReconciler {
         let mut page_token = None;
         let mut page_count = 0;
 
-        debug!("Fetching username proofs for FID {} with page size {}", fid, page_size);
+        trace!("Fetching username proofs for FID {} with page size {}", fid, page_size);
 
         loop {
             page_count += 1;
@@ -700,7 +700,7 @@ impl MessageReconciler {
             let page_messages_count = username_messages.len();
             messages.extend(username_messages);
 
-            debug!(
+            trace!(
                 "Received page {} with {} username proof messages for FID {}",
                 page_count, page_messages_count, fid
             );
@@ -715,7 +715,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!(
+        trace!(
             "Fetched a total of {} username proof messages for FID {} in {} pages",
             messages.len(),
             fid,
@@ -729,7 +729,7 @@ impl MessageReconciler {
         let mut events = Vec::new();
         let page_size = 1000u32;
 
-        debug!("Fetching onchain events for FID {} with page size {}", fid, page_size);
+        trace!("Fetching onchain events for FID {} with page size {}", fid, page_size);
 
         // Try fetching all types of onchain events
         for event_type in [
@@ -767,7 +767,7 @@ impl MessageReconciler {
                 let page_events_count = response.events.len();
                 events.extend(response.events);
 
-                debug!(
+                trace!(
                     "Received page {} with {} onchain events of type {:?} for FID {}",
                     local_page_count, page_events_count, event_type, fid
                 );
@@ -783,7 +783,7 @@ impl MessageReconciler {
             }
         }
 
-        debug!("Fetched a total of {} onchain events for FID {}", events.len(), fid);
+        trace!("Fetched a total of {} onchain events for FID {}", events.len(), fid);
         Ok(events)
     }
 
