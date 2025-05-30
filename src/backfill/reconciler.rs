@@ -20,6 +20,169 @@ pub struct MessageReconciler {
 }
 
 impl MessageReconciler {
+    /// Reconcile multiple FIDs in a batch for better efficiency
+    /// This method fetches data for multiple FIDs concurrently and processes them in batches
+    pub async fn reconcile_fids_batch(
+        &self,
+        fids: &[u64],
+        processor: Arc<dyn EventProcessor>,
+    ) -> Result<(usize, usize), Error> {
+        if fids.is_empty() {
+            return Ok((0, 0));
+        }
+
+        trace!("Starting batch reconciliation for {} FIDs", fids.len());
+        let start_time = std::time::Instant::now();
+
+        let mut total_success = 0;
+        let mut total_errors = 0;
+
+        // Process FIDs in smaller concurrent batches to avoid overwhelming the hub
+        const CONCURRENT_BATCH_SIZE: usize = 3;
+
+        for fid_chunk in fids.chunks(CONCURRENT_BATCH_SIZE) {
+            let mut fetch_tasks = Vec::new();
+
+            // Fetch data for all FIDs in this chunk concurrently
+            for &fid in fid_chunk {
+                let hub_client = self.hub_client.clone();
+                let task = tokio::spawn(async move {
+                    let reconciler = MessageReconciler {
+                        hub_client,
+                        _database: Arc::new(crate::database::Database::empty()), // Placeholder
+                        _connection_timeout: std::time::Duration::from_secs(30),
+                        _use_streaming_rpcs: false,
+                    };
+
+                    // Fetch all message types for this FID
+                    let casts = reconciler.get_all_cast_messages(fid).await?;
+                    let reactions = reconciler.get_all_reaction_messages(fid).await?;
+                    let links = reconciler.get_all_link_messages(fid).await?;
+                    let verifications = reconciler.get_all_verification_messages(fid).await?;
+                    let user_data = reconciler.get_all_user_data_messages(fid).await?;
+                    let username_proofs = reconciler.get_all_username_proofs(fid).await?;
+                    let onchain_events = reconciler.get_all_onchain_events(fid).await?;
+
+                    Ok::<_, Error>((
+                        fid,
+                        casts,
+                        reactions,
+                        links,
+                        verifications,
+                        user_data,
+                        username_proofs,
+                        onchain_events,
+                    ))
+                });
+                fetch_tasks.push(task);
+            }
+
+            // Wait for all fetches to complete and collect the data
+            let mut all_messages = Vec::new();
+            let mut fid_results = Vec::new();
+
+            for task in fetch_tasks {
+                match task.await {
+                    Ok(Ok((
+                        fid,
+                        casts,
+                        reactions,
+                        links,
+                        verifications,
+                        user_data,
+                        username_proofs,
+                        onchain_events,
+                    ))) => {
+                        let total_count = casts.len()
+                            + reactions.len()
+                            + links.len()
+                            + verifications.len()
+                            + user_data.len()
+                            + username_proofs.len()
+                            + onchain_events.len();
+
+                        info!("Fetched {} total messages for FID {}", total_count, fid);
+
+                        // Collect all messages for batch processing
+                        all_messages.extend(casts);
+                        all_messages.extend(reactions);
+                        all_messages.extend(links);
+                        all_messages.extend(verifications);
+                        all_messages.extend(user_data);
+                        all_messages.extend(username_proofs);
+
+                        // Handle onchain events separately (they're not Message type)
+                        for _event in onchain_events {
+                            // Process onchain events individually for now
+                            // TODO: Add batch processing for onchain events
+                        }
+
+                        fid_results.push((fid, true));
+                    },
+                    Ok(Err(e)) => {
+                        error!("Error fetching data for FID in batch: {:?}", e);
+                        total_errors += 1;
+                    },
+                    Err(e) => {
+                        error!("Task error in batch reconciliation: {:?}", e);
+                        total_errors += 1;
+                    },
+                }
+            }
+
+            // Process all collected messages in a single batch
+            if !all_messages.is_empty() {
+                debug!("Attempting to batch process {} messages for {} FIDs", all_messages.len(), fid_results.len());
+                if let Some(db_processor) = processor
+                    .as_any()
+                    .downcast_ref::<crate::processor::database::DatabaseProcessor>(
+                ) {
+                    debug!("Using DatabaseProcessor for batch processing");
+                    match db_processor.process_message_batch(&all_messages, "merge").await {
+                        Ok(_) => {
+                            total_success += fid_results.len();
+                            info!(
+                                "Successfully batch processed {} messages for {} FIDs",
+                                all_messages.len(),
+                                fid_results.len()
+                            );
+                        },
+                        Err(e) => {
+                            error!("Error in batch processing messages: {:?}", e);
+                            // Fall back to individual processing
+                            debug!("Falling back to individual FID processing");
+                            for (fid, _) in &fid_results {
+                                match self.reconcile_fid(*fid, processor.clone()).await {
+                                    Ok(_) => total_success += 1,
+                                    Err(_) => total_errors += 1,
+                                }
+                            }
+                        },
+                    }
+                } else {
+                    debug!("Processor is not DatabaseProcessor, using individual FID processing");
+                    // Fall back to individual FID processing for non-database processors
+                    for (fid, _) in &fid_results {
+                        match self.reconcile_fid(*fid, processor.clone()).await {
+                            Ok(_) => total_success += 1,
+                            Err(_) => total_errors += 1,
+                        }
+                    }
+                }
+            }
+        }
+
+        let elapsed = start_time.elapsed();
+        info!(
+            "Completed batch reconciliation for {} FIDs in {:.2?}: {} succeeded, {} failed",
+            fids.len(),
+            elapsed,
+            total_success,
+            total_errors
+        );
+
+        Ok((total_success, total_errors))
+    }
     pub fn new(
         hub_client: proto::hub_service_client::HubServiceClient<Channel>,
         database: Arc<Database>,

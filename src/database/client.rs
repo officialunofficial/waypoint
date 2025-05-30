@@ -16,11 +16,11 @@ impl Database {
     /// Creates a new Database instance using the provided configuration
     pub async fn new(config: &DatabaseConfig) -> Result<Self, Error> {
         let pool = PgPoolOptions::new()
-            .min_connections(10)
+            .min_connections(5)
             .max_connections(config.max_connections)
             .test_before_acquire(true)
-            .idle_timeout(Duration::from_secs(30))
-            .max_lifetime(Duration::from_secs(1800))
+            .idle_timeout(Duration::from_secs(300)) // 5 minutes
+            .max_lifetime(Duration::from_secs(3600)) // 1 hour
             .acquire_timeout(Duration::from_secs(config.timeout_seconds))
             .connect_lazy_with(config.url.clone().parse()?);
 

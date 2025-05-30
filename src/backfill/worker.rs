@@ -170,7 +170,7 @@ impl BackfillQueue {
         // Use a reference to avoid copying non-Copy type
         let priority = &job.priority;
 
-        info!(
+        trace!(
             "Adding backfill job {} with {} FIDs to queue: {} (priority: {:?})",
             job_id, fid_count, queue_key, priority
         );
@@ -190,7 +190,7 @@ impl BackfillQueue {
 
         match &result {
             Ok(_) => {
-                info!("Successfully added job {} to queue {}", job_id, queue_key);
+                trace!("Successfully added job {} to queue {}", job_id, queue_key);
                 // Update metrics with minimal lock time
                 {
                     let mut metrics = self.metrics.write().await;
@@ -271,7 +271,7 @@ impl BackfillQueue {
                             .await;
                     }
 
-                    info!(
+                    trace!(
                         "Retrieved backfill job {} with {} FIDs from queue {} (priority: {:?}, attempt: {})",
                         job.id,
                         job.fids.len(),
@@ -348,7 +348,7 @@ impl BackfillQueue {
         // Update StatsD metrics
         metrics::increment_jobs_processed();
 
-        info!("Marked job {} as complete", job_id);
+        trace!("Marked job {} as complete", job_id);
 
         Ok(())
     }
@@ -429,7 +429,7 @@ impl BackfillQueue {
 
                         if elapsed > timeout {
                             // Job has expired, move it back to queue for retry
-                            info!(
+                            trace!(
                                 "Found expired job {} (elapsed: {}s > timeout: {}s), moving back to queue",
                                 job.id, elapsed, timeout
                             );
@@ -508,14 +508,14 @@ impl Worker {
         }
 
         // Create a database connection limiter
-        // Use a conservative value to ensure we don't overwhelm the database
-        // This should be significantly less than the database max_connections setting
-        // to leave room for other application operations
-        let db_connection_limiter = Arc::new(tokio::sync::Semaphore::new(8));
+        // Use a more reasonable value based on typical database pool sizes
+        // This should align with the database pool configuration
+        // Most database pools are configured with 20-50 connections
+        let db_connection_limiter = Arc::new(tokio::sync::Semaphore::new(20));
 
         // Create a hub connection limiter to avoid overwhelming the hub
-        // Conservative limit based on typical hub capacity
-        let hub_connection_limiter = Arc::new(tokio::sync::Semaphore::new(5));
+        // More reasonable limit for hub connections
+        let hub_connection_limiter = Arc::new(tokio::sync::Semaphore::new(10));
 
         Self {
             reconciler,
@@ -573,14 +573,14 @@ impl Worker {
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // If configured concurrency is too high, reduce it to avoid overwhelming the Hub and database
-        // Make sure we don't have more concurrent jobs than database connections we can safely use
-        let db_limit = self.db_connection_limiter.available_permits();
-        let effective_concurrency = std::cmp::min(std::cmp::min(self.concurrency, 5), db_limit);
+        // If configured concurrency is too high, reduce it to avoid overwhelming the Hub
+        // Database connections are managed by the pool, so we only need to limit hub connections
+        let hub_limit = self.hub_connection_limiter.available_permits();
+        let effective_concurrency = std::cmp::min(self.concurrency, hub_limit);
 
         info!(
-            "Starting backfill worker with concurrency {} (reduced from {}) and spam filtering enabled. DB connection limit: {}",
-            effective_concurrency, self.concurrency, db_limit
+            "Starting backfill worker with concurrency {} (reduced from {}) and spam filtering enabled. Hub connection limit: {}",
+            effective_concurrency, self.concurrency, hub_limit
         );
 
         // Update the concurrency value
@@ -659,8 +659,8 @@ impl Worker {
                     Ok(Some(mut job)) => {
                         // Limit the number of FIDs processed per job to avoid overwhelming the Hub and database
                         // If there are too many FIDs in a job, split it into smaller chunks
-                        // Use a smaller batch size to reduce database connection pressure
-                        const MAX_FIDS_PER_JOB: usize = 25;
+                        // Increased batch size since we're no longer limiting database connections per task
+                        const MAX_FIDS_PER_JOB: usize = 50;
                         let original_fid_count = job.fids.len();
 
                         if original_fid_count > MAX_FIDS_PER_JOB {
@@ -699,10 +699,10 @@ impl Worker {
                         let fids = job.fids.clone();
                         let fid_count = job.fids.len();
                         let spam_filter = Arc::clone(&self.spam_filter);
-                        let db_connection_limiter = Arc::clone(&self.db_connection_limiter);
+                        let _db_connection_limiter = Arc::clone(&self.db_connection_limiter);
                         let hub_connection_limiter = Arc::clone(&self.hub_connection_limiter);
 
-                        info!("Starting backfill job with {} FIDs", fid_count);
+                        trace!("Starting backfill job with {} FIDs", fid_count);
 
                         let handle = tokio::spawn(async move {
                             let job_start_time = std::time::Instant::now();
@@ -721,86 +721,39 @@ impl Worker {
                                 }
                             }
 
-                            let mut tasks = Vec::new();
-
-                            // Process FIDs in parallel using Tokio tasks with proper rate limiting
-                            for fid in non_spam_fids {
-                                let reconciler_clone = Arc::clone(&reconciler);
-                                let processors_clone = processors.clone();
-                                let tx_clone2 = tx_clone.clone();
-                                let hub_limiter_clone = Arc::clone(&hub_connection_limiter);
-                                let db_limiter_clone = Arc::clone(&db_connection_limiter);
-
-                                let task = tokio::spawn(async move {
-                                    // Acquire permits to limit concurrency of Hub calls and database connections
-                                    let _hub_permit = hub_limiter_clone.acquire().await.unwrap();
-                                    // Also acquire a database connection permit to avoid overwhelming the DB
-                                    let _db_permit = db_limiter_clone.acquire().await.unwrap();
-
-                                    let fid_start = std::time::Instant::now();
-                                    trace!("Starting processing FID {}", fid);
-
-                                    let mut success = false;
-                                    let mut error = false;
-
-                                    for (idx, processor) in processors_clone.iter().enumerate() {
-                                        let processor_name = format!("Processor {}", idx + 1);
-                                        trace!("Using {} for FID {}", processor_name, fid);
-
-                                        match reconciler_clone
-                                            .reconcile_fid(fid, processor.clone())
-                                            .await
-                                        {
-                                            Ok(_) => {
-                                                trace!(
-                                                    "Successfully processed FID {} with {}",
-                                                    fid, processor_name
-                                                );
-                                                success = true;
-                                                metrics::increment_fids_processed(1);
-                                            },
-                                            Err(e) => {
-                                                error!(
-                                                    "Error reconciling FID {} with {}: {:?}",
-                                                    fid, processor_name, e
-                                                );
-                                                error = true;
-                                                if let Err(e) =
-                                                    tx_clone2.send(StatsUpdate::Error).await
-                                                {
+                            // Use the new batch reconciliation method for better database efficiency
+                            if !non_spam_fids.is_empty() {
+                                let _hub_permit = hub_connection_limiter.acquire().await.unwrap();
+                                
+                                // Process all FIDs using the batch processor
+                                for processor in &processors {
+                                    match reconciler.reconcile_fids_batch(&non_spam_fids, processor.clone()).await {
+                                        Ok((success_count, error_count)) => {
+                                            job_success_count += success_count;
+                                            job_error_count += error_count;
+                                            
+                                            info!(
+                                                "Batch processed {} FIDs: {} succeeded, {} failed",
+                                                non_spam_fids.len(), success_count, error_count
+                                            );
+                                            
+                                            metrics::increment_fids_processed(success_count as u64);
+                                            if error_count > 0 {
+                                                if let Err(e) = tx_clone.send(StatsUpdate::Error).await {
                                                     error!("Failed to send error update: {}", e);
                                                 }
                                                 metrics::increment_job_errors();
-                                            },
+                                            }
+                                        },
+                                        Err(e) => {
+                                            error!("Error in batch reconciliation: {:?}", e);
+                                            job_error_count += non_spam_fids.len();
+                                            if let Err(e) = tx_clone.send(StatsUpdate::Error).await {
+                                                error!("Failed to send error update: {}", e);
+                                            }
+                                            metrics::increment_job_errors();
                                         }
                                     }
-
-                                    let fid_elapsed = fid_start.elapsed();
-                                    info!(
-                                        "Completed processing FID {} in {:.2?}",
-                                        fid, fid_elapsed
-                                    );
-                                    (success, error)
-                                });
-
-                                tasks.push(task);
-                            }
-
-                            // Wait for all tasks to complete
-                            for task in tasks {
-                                match task.await {
-                                    Ok((success, error)) => {
-                                        if success {
-                                            job_success_count += 1;
-                                        }
-                                        if error {
-                                            job_error_count += 1;
-                                        }
-                                    },
-                                    Err(e) => {
-                                        error!("Task failed: {:?}", e);
-                                        job_error_count += 1;
-                                    },
                                 }
                             }
 
