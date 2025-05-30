@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use prost::Message as ProstMessage;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Farcaster Hub data provider
 #[derive(Clone)]
@@ -44,7 +44,7 @@ impl FarcasterHubClient {
 #[async_trait]
 impl HubClient for FarcasterHubClient {
     async fn get_user_data_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
-        info!("Fetching user data for FID: {}", fid);
+        debug!("Fetching user data for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -87,7 +87,7 @@ impl HubClient for FarcasterHubClient {
     }
 
     async fn get_user_data(&self, fid: Fid, data_type: &str) -> Result<Option<Message>> {
-        info!("Fetching specific user data for FID: {} and type: {}", fid, data_type);
+        debug!("Fetching specific user data for FID: {} and type: {}", fid, data_type);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -136,7 +136,7 @@ impl HubClient for FarcasterHubClient {
     }
 
     async fn get_username_proofs_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
-        info!("Fetching username proofs for FID: {}", fid);
+        debug!("Fetching username proofs for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -216,7 +216,7 @@ impl HubClient for FarcasterHubClient {
     }
 
     async fn get_verifications_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
-        info!("Fetching verifications for FID: {}", fid);
+        debug!("Fetching verifications for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -260,7 +260,7 @@ impl HubClient for FarcasterHubClient {
 
     /// Get casts by FID with pagination support
     async fn get_casts_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
-        info!("Fetching casts for FID: {}", fid);
+        debug!("Fetching casts for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -494,7 +494,7 @@ impl HubClient for FarcasterHubClient {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<Message>> {
-        info!("Fetching all casts for FID: {} with timestamp filtering", fid);
+        debug!("Fetching all casts for FID: {} with timestamp filtering", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -546,7 +546,7 @@ impl HubClient for FarcasterHubClient {
         target_cast_hash: Option<&[u8]>,
         target_url: Option<&str>,
     ) -> Result<Option<Message>> {
-        info!("Fetching specific reaction for FID: {} with type: {}", fid, reaction_type);
+        debug!("Fetching specific reaction for FID: {} with type: {}", fid, reaction_type);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -618,7 +618,7 @@ impl HubClient for FarcasterHubClient {
         reaction_type: Option<u8>,
         limit: usize,
     ) -> Result<Vec<Message>> {
-        info!("Fetching reactions for FID: {}", fid);
+        debug!("Fetching reactions for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -750,7 +750,7 @@ impl HubClient for FarcasterHubClient {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<Message>> {
-        info!("Fetching all reactions for FID: {} with timestamp filtering", fid);
+        debug!("Fetching all casts for FID: {} with timestamp filtering", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -846,7 +846,7 @@ impl HubClient for FarcasterHubClient {
         link_type: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Message>> {
-        info!("Fetching links for FID: {}", fid);
+        debug!("Fetching reactions for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -941,7 +941,7 @@ impl HubClient for FarcasterHubClient {
 
     /// Get link compact state messages by FID
     async fn get_link_compact_state_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
-        info!("Fetching link compact state for FID: {}", fid);
+        debug!("Fetching reactions for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected
@@ -990,7 +990,7 @@ impl HubClient for FarcasterHubClient {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<Message>> {
-        info!("Fetching all links for FID: {} with timestamp filtering", fid);
+        debug!("Fetching all casts for FID: {} with timestamp filtering", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected

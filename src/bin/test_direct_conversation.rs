@@ -24,6 +24,8 @@ async fn main() {
     // Create a new Hub then connect to it
     let mut hub = Hub::new(Arc::new(waypoint::config::HubConfig {
         url: hub_address.to_string(),
+        max_concurrent_connections: 5,
+        max_requests_per_second: 10,
         retry_max_attempts: 5,
         retry_base_delay_ms: 100,
         retry_max_delay_ms: 30000,
