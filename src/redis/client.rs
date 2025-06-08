@@ -27,7 +27,10 @@ impl Redis {
 
         info!(
             "Initialized Redis pool with {} max connections, {}ms connection timeout, {}s idle timeout, {}s max lifetime",
-            config.pool_size, config.connection_timeout_ms, config.idle_timeout_secs, config.max_connection_lifetime_secs
+            config.pool_size,
+            config.connection_timeout_ms,
+            config.idle_timeout_secs,
+            config.max_connection_lifetime_secs
         );
 
         // Start pool health monitoring
@@ -43,12 +46,15 @@ impl Redis {
                 } else {
                     0.0
                 };
-                
+
                 info!(
                     "Redis pool health: {} total connections, {} idle ({:.1}%), {} pending",
-                    state.connections, state.idle_connections, idle_pct, state.connections - state.idle_connections
+                    state.connections,
+                    state.idle_connections,
+                    idle_pct,
+                    state.connections - state.idle_connections
                 );
-                
+
                 if idle_pct < 20.0 && state.connections >= max_pool_size {
                     warn!("Redis pool under pressure: only {:.1}% idle connections", idle_pct);
                 }
@@ -351,7 +357,7 @@ impl Redis {
         // Use short blocking timeout to balance efficiency and connection availability
         // 10ms blocking is more efficient than polling while still releasing connections quickly
         let block_timeout = if self.is_pool_under_pressure() { 0 } else { 10 };
-        
+
         let result: RedisResult<Option<StreamResponse>> = bb8_redis::redis::cmd("XREADGROUP")
             .arg("GROUP")
             .arg(group)
