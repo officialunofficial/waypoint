@@ -4,7 +4,7 @@ use crate::{
 };
 use bb8_redis::{RedisConnectionManager, redis::RedisResult};
 use std::time::Duration;
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct Redis {
     pub pool: bb8::Pool<RedisConnectionManager>,
@@ -26,9 +26,40 @@ impl Redis {
         let pool = builder.build(manager).await.map_err(|e| Error::PoolError(e.to_string()))?;
 
         info!(
-            "Initialized Redis pool with {} max connections, {}ms connection timeout, {}s idle timeout",
-            config.pool_size, config.connection_timeout_ms, config.idle_timeout_secs
+            "Initialized Redis pool with {} max connections, {}ms connection timeout, {}s idle timeout, {}s max lifetime",
+            config.pool_size,
+            config.connection_timeout_ms,
+            config.idle_timeout_secs,
+            config.max_connection_lifetime_secs
         );
+
+        // Start pool health monitoring
+        let pool_monitor = pool.clone();
+        let max_pool_size = config.pool_size;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let state = pool_monitor.state();
+                let idle_pct = if state.connections > 0 {
+                    (state.idle_connections as f32 / state.connections as f32) * 100.0
+                } else {
+                    0.0
+                };
+
+                info!(
+                    "Redis pool health: {} total connections, {} idle ({:.1}%), {} pending",
+                    state.connections,
+                    state.idle_connections,
+                    idle_pct,
+                    state.connections - state.idle_connections
+                );
+
+                if idle_pct < 20.0 && state.connections >= max_pool_size {
+                    warn!("Redis pool under pressure: only {:.1}% idle connections", idle_pct);
+                }
+            }
+        });
 
         Ok(Self { pool, config: Some(config.clone()) })
     }
@@ -323,9 +354,9 @@ impl Redis {
 
         type StreamResponse = Vec<(String, Vec<(String, Vec<(String, Vec<u8>)>)>)>;
 
-        // Reduce block timeout to minimize connection hold time
-        // Use adaptive timeout based on pool pressure
-        let block_timeout = if self.is_pool_under_pressure() { 50 } else { 100 };
+        // Use short blocking timeout to balance efficiency and connection availability
+        // 10ms blocking is more efficient than polling while still releasing connections quickly
+        let block_timeout = if self.is_pool_under_pressure() { 0 } else { 10 };
 
         let result: RedisResult<Option<StreamResponse>> = bb8_redis::redis::cmd("XREADGROUP")
             .arg("GROUP")
@@ -334,7 +365,7 @@ impl Redis {
             .arg("COUNT")
             .arg(count)
             .arg("BLOCK")
-            .arg(block_timeout) // Adaptive timeout based on pool pressure
+            .arg(block_timeout) // Short block or non-blocking under pressure
             .arg("STREAMS")
             .arg(key)
             .arg(">")

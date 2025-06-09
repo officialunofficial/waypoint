@@ -10,92 +10,61 @@ All notable changes to Waypoint will be documented in this file.
 
 """
 # Template for the changelog body
-# Valid placeholders: {version}, {date}
-# Additionally, placeholders can use values from the repo: {package.name}
 body = """
-## [{version}] - {date}
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | upper_first }}
+    {% for commit in commits %}
+        - {{ commit.message | upper_first | trim_end_matches(pat=".") }}
+    {%- endfor %}
+{% endfor %}
 
-{commits}
-"""
-# Template for the changelog footer
-footer = """
-
-"""
-# Template for each commit in the changelog
-trim = true
-template = """
-{scope}{message}
 """
 # Remove the leading and trailing whitespace from the template
-trim_newlines = true
+trim = true
+# Template for the changelog footer
+footer = ""
 
-# Sections for commit categorization
-[sections]
-added = "### Added"
-changed = "### Changed"
-fixed = "### Fixed"
-removed = "### Removed"
-security = "### Security"
-performance = "### Performance"
-deprecated = "### Deprecated"
-docs = "### Documentation"
-other = "### Other"
-
-# Prefixes used for commit categorization
-[commit_parsers]
-feat = { group = "added" }
-feature = { group = "added" }
-add = { group = "added" }
-change = { group = "changed" }
-update = { group = "changed" }
-fix = { group = "fixed" }
-security = { group = "security" }
-secure = { group = "security" }
-perf = { group = "performance" }
-performance = { group = "performance" }
-optimize = { group = "performance" }
-remove = { group = "removed" }
-deleted = { group = "removed" }
-deprecate = { group = "deprecated" }
-doc = { group = "docs" }
-docs = { group = "docs" }
-refactor = { group = "other" }
-chore = { group = "other" }
-test = { group = "other" }
-tests = { group = "other" }
-ci = { group = "other" }
-build = { group = "other" }
-
-# Ignore certain categories or commits
-[ignore_tags]
-regex = "^v0\\.1\\..*$"
-
+# Git commit processing configuration
 [git]
-# Use a custom commit format
+# Use conventional commits format
 conventional_commits = true
-# Filter out commits with these patterns
-filter_commits = true
-commit_parsers = [
-    { message = "^feat", group = "added" },
-    { message = "^fix", group = "fixed" },
-    { message = "^doc", group = "docs" },
-    { message = "^perf", group = "performance" },
-    { message = "^refactor", group = "other" },
-    { message = "^style", group = "other" },
-    { message = "^test", group = "other" },
-    { message = "^chore\\(release\\): prepare for", skip = true },
-    { message = "^chore\\(deps", group = "other" },
-    { message = "^chore", group = "other" },
-    { message = "^ci", group = "other" },
-    { message = "^build", group = "other" },
-]
-# Filter out the specified commit types
-filter_commit_types = []
-# Filter out commits by body using these patterns
-filter_commits_by_body = []
-# Sort the tags chronologically
-date_order = false
-# Sort the commits inside sections by oldest/newest order
-sort_commits = "oldest"
-# Define which tags to process
+# Filter commits
+filter_unconventional = false
+# Split the body by newlines
+split_commits = false
+# Protect breaking changes from being skipped
+protect_breaking_commits = false
+# Tag pattern
 tag_pattern = "v[0-9].*"
+# Skip tags matching this pattern
+skip_tags = "v0.1.[0-9]"
+# Sort commits inside sections by oldest/newest
+sort_commits = "oldest"
+# Commit parsers for grouping
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^doc", group = "Documentation" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactor" },
+    { message = "^style", group = "Styling" },
+    { message = "^test", group = "Testing" },
+    { message = "^chore\\(release\\): prepare for", skip = true },
+    { message = "^chore\\(deps", group = "Dependencies" },
+    { message = "^chore", group = "Miscellaneous Tasks" },
+    { message = "^ci", group = "Continuous Integration" },
+    { message = "^build", group = "Build System" },
+]
+# Process each fixup commit
+process_each_fixup_commit = false
+# Filter out the commits that are not conventional
+filter_commits = true
+# Process merge commits
+link_parsers = []
+# Sort the tags topologically
+topo_order = false

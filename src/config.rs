@@ -59,7 +59,7 @@ pub struct RedisConfig {
 }
 
 fn default_redis_pool_size() -> u32 {
-    20 // Balanced pool size - enough for concurrency without overwhelming hub
+    50 // Increased pool size to handle multiple stream consumers
 }
 
 fn default_redis_batch_size() -> usize {
@@ -67,15 +67,15 @@ fn default_redis_batch_size() -> usize {
 }
 
 fn default_connection_timeout_ms() -> u64 {
-    5000 // 5 second connection timeout
+    5000 // 5 second connection timeout - more time for busy pools
 }
 
 fn default_idle_timeout_secs() -> u64 {
-    300 // 5 minute idle timeout
+    300 // 5 minute idle timeout - reduce connection churn
 }
 
 fn default_max_connection_lifetime_secs() -> u64 {
-    1800 // 30 minute max connection lifetime
+    300 // 5 minute max connection lifetime - prevent stale connections
 }
 
 fn default_enable_dead_letter() -> bool {
