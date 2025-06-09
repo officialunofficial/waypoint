@@ -7,7 +7,7 @@ All notable changes to Waypoint will be documented in this file.
 ### Bug Fixes
 
 - Proto
-- Connection tuning
+- Redis defaults
 
 ## [0.6.1] - 2025-05-30
 
