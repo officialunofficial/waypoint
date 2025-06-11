@@ -499,6 +499,49 @@ impl DatabaseProcessor {
         .execute(&self.resources.database.pool)
         .await?;
 
+        // Handle tier purchase events specifically
+        if event.r#type == 5 {
+            // EVENT_TYPE_TIER_PURCHASE
+            if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(tier_body)) =
+                &event.body
+            {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO tier_purchases (
+                        fid,
+                        tier_type,
+                        for_days,
+                        payer,
+                        timestamp,
+                        block_number,
+                        block_hash,
+                        log_index,
+                        tx_index,
+                        tx_hash,
+                        block_timestamp,
+                        chain_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ON CONFLICT (tx_hash, log_index) DO NOTHING
+                    "#,
+                    event.fid as i64,
+                    tier_body.tier_type as i16,
+                    tier_body.for_days as i64,
+                    &tier_body.payer,
+                    ts,
+                    event.block_number as i64,
+                    &event.block_hash,
+                    event.log_index as i32,
+                    event.tx_index as i32,
+                    &event.transaction_hash,
+                    ts,
+                    event.chain_id as i64
+                )
+                .execute(&self.resources.database.pool)
+                .await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -1049,5 +1092,81 @@ impl EventProcessor for DatabaseProcessor {
             _ => {},
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::{TierPurchaseBody, TierType};
+
+    #[test]
+    fn test_convert_timestamp() {
+        // Test conversion from farcaster time to OffsetDateTime
+        let farcaster_timestamp = 100000000u32; // Example farcaster timestamp
+        let result = DatabaseProcessor::convert_timestamp(farcaster_timestamp);
+
+        // Verify it's a valid timestamp
+        assert!(result.unix_timestamp() > 0);
+    }
+
+    #[test]
+    fn test_tier_purchase_event_creation() {
+        // Create a tier purchase body
+        let tier_body = TierPurchaseBody {
+            tier_type: TierType::Pro as i32,
+            for_days: 365,
+            payer: vec![0x01, 0x02, 0x03], // Example payer address
+        };
+
+        // Create an onchain event with tier purchase
+        let event = OnChainEvent {
+            r#type: 5, // EVENT_TYPE_TIER_PURCHASE
+            fid: 12345,
+            chain_id: 10, // Optimism
+            block_number: 1000000,
+            block_hash: vec![0xaa; 32],
+            block_timestamp: 1700000000,
+            transaction_hash: vec![0xbb; 32],
+            log_index: 5,
+            tx_index: 10,
+            version: 1,
+            body: Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(tier_body)),
+        };
+
+        // Verify the event is properly constructed
+        assert_eq!(event.r#type, 5);
+        assert_eq!(event.fid, 12345);
+
+        if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(body)) = &event.body {
+            assert_eq!(body.tier_type, TierType::Pro as i32);
+            assert_eq!(body.for_days, 365);
+            assert_eq!(body.payer, vec![0x01, 0x02, 0x03]);
+        } else {
+            panic!("Expected tier purchase body");
+        }
+    }
+
+    #[test]
+    fn test_onchain_event_hash_generation() {
+        use std::hash::Hasher;
+
+        // Test deterministic hash generation for onchain events
+        let tx_hash = vec![0xaa; 32];
+        let log_index = 5u32;
+
+        let mut hasher1 = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&tx_hash, &mut hasher1);
+        std::hash::Hash::hash(&log_index, &mut hasher1);
+        let hash1 = hasher1.finish().to_be_bytes().to_vec();
+
+        let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&tx_hash, &mut hasher2);
+        std::hash::Hash::hash(&log_index, &mut hasher2);
+        let hash2 = hasher2.finish().to_be_bytes().to_vec();
+
+        // Verify deterministic hashing
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 8); // 64-bit hash as 8 bytes
     }
 }

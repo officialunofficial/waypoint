@@ -782,6 +782,8 @@ impl HubSubscriber {
                             Some(7) | Some(8) => "verifications",
                             Some(11) => "user_data",
                             Some(12) => "username_proofs",
+                            Some(13) => "frame_actions",
+                            Some(14) => "link_compact_states",
                             _ => "unknown",
                         }
                     } else {
@@ -802,6 +804,8 @@ impl HubSubscriber {
                             Some(7) | Some(8) => "verifications",
                             Some(11) => "user_data",
                             Some(12) => "username_proofs",
+                            Some(13) => "frame_actions",
+                            Some(14) => "link_compact_states",
                             _ => "unknown",
                         }
                     } else {
@@ -822,6 +826,8 @@ impl HubSubscriber {
                             Some(7) | Some(8) => "verifications",
                             Some(11) => "user_data",
                             Some(12) => "username_proofs",
+                            Some(13) => "frame_actions",
+                            Some(14) => "link_compact_states",
                             _ => "unknown",
                         }
                     } else {
@@ -837,12 +843,14 @@ impl HubSubscriber {
                             Some(2) => "onchain:signer_migrated",
                             Some(3) => "onchain:id_register",
                             Some(4) => "onchain:storage_rent",
+                            Some(5) => "onchain:tier_purchase",
                             _ => "onchain:unknown",
                         }
                     } else {
                         "onchain:unknown"
                     }
                 },
+                10 => "merge_failures", // MERGE_FAILURE
                 _ => "unknown",
             };
             event_groups.entry(event_type).or_default().push(bytes.clone());

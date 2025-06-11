@@ -45,6 +45,9 @@ pub enum UserDataType {
     Location = 7,
     Twitter = 8,
     Github = 9,
+    Banner = 10,
+    PrimaryAddressEthereum = 11,
+    PrimaryAddressSolana = 12,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,6 +67,23 @@ pub enum ReactionType {
 pub enum CastType {
     Cast = 0,
     LongCast = 1,
+    TenKCast = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OnChainEventType {
+    None = 0,
+    Signer = 1,
+    SignerMigrated = 2,
+    IdRegister = 3,
+    StorageRent = 4,
+    TierPurchase = 5,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TierType {
+    None = 0,
+    Pro = 1,
 }
 
 // Main Message struct for the database
@@ -118,4 +138,56 @@ pub struct AutoFollowRow {
     pub added_by: i64,
     pub created_at: Option<DateTime<Utc>>,
     pub active: Option<bool>,
+}
+
+#[derive(Debug)]
+pub struct TierPurchase {
+    pub id: Uuid,
+    pub fid: Fid,
+    pub tier_type: TierType,
+    pub for_days: u64,
+    pub payer: Vec<u8>,
+    pub timestamp: DateTime<Utc>,
+    pub block_number: u64,
+    pub block_hash: Vec<u8>,
+    pub log_index: u32,
+    pub tx_index: u32,
+    pub tx_hash: Vec<u8>,
+    pub block_timestamp: DateTime<Utc>,
+    pub chain_id: u64,
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_tier_purchase_creation() {
+        let now = Utc::now();
+        let tier_purchase = TierPurchase {
+            id: Uuid::new_v4(),
+            fid: 12345,
+            tier_type: TierType::Pro,
+            for_days: 365,
+            payer: vec![0x01, 0x02, 0x03],
+            timestamp: now,
+            block_number: 1000000,
+            block_hash: vec![0xaa; 32],
+            log_index: 5,
+            tx_index: 10,
+            tx_hash: vec![0xbb; 32],
+            block_timestamp: now,
+            chain_id: 10, // Optimism
+            deleted_at: None,
+        };
+
+        assert_eq!(tier_purchase.fid, 12345);
+        assert_eq!(tier_purchase.tier_type, TierType::Pro);
+        assert_eq!(tier_purchase.for_days, 365);
+        assert_eq!(tier_purchase.payer, vec![0x01, 0x02, 0x03]);
+        assert!(tier_purchase.deleted_at.is_none());
+    }
 }
