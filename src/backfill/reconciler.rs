@@ -904,6 +904,7 @@ impl MessageReconciler {
             OnChainEventType::EventTypeSignerMigrated,
             OnChainEventType::EventTypeIdRegister,
             OnChainEventType::EventTypeStorageRent,
+            OnChainEventType::EventTypeTierPurchase,
         ] {
             let mut local_page_count = 0;
             let mut local_page_token = None;
