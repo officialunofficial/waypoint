@@ -138,7 +138,7 @@ impl BackfillQueue {
 
         match result {
             Ok(len) => {
-                debug!("Queue {} has {} jobs remaining", key, len);
+                info!("Queue {} has {} jobs remaining", key, len);
                 Ok(len)
             },
             Err(e) => {
@@ -170,9 +170,10 @@ impl BackfillQueue {
         // Use a reference to avoid copying non-Copy type
         let priority = &job.priority;
 
-        trace!(
-            "Adding backfill job {} with {} FIDs to queue: {} (priority: {:?})",
-            job_id, fid_count, queue_key, priority
+        info!(
+            "Adding backfill job {} with {} FIDs to queue: {} (priority: {:?}), FID range: {:?}..{:?}",
+            job_id, fid_count, queue_key, priority, 
+            job.fids.first(), job.fids.last()
         );
 
         let mut conn = self
@@ -190,7 +191,7 @@ impl BackfillQueue {
 
         match &result {
             Ok(_) => {
-                trace!("Successfully added job {} to queue {}", job_id, queue_key);
+                info!("Successfully added job {} to queue {} with {} FIDs", job_id, queue_key, fid_count);
                 // Update metrics with minimal lock time
                 {
                     let mut metrics = self.metrics.write().await;
@@ -199,6 +200,11 @@ impl BackfillQueue {
 
                 // Update StatsD metrics
                 metrics::set_jobs_in_queue(fid_count as u64);
+                
+                // Log current queue length after adding
+                if let Ok(queue_len) = self.get_queue_length_for_key(queue_key).await {
+                    info!("Queue {} now has {} jobs after adding job {}", queue_key, queue_len, job_id);
+                }
             },
             Err(e) => error!("Failed to add job {} to queue {}: {:?}", job_id, queue_key, e),
         }
@@ -207,7 +213,6 @@ impl BackfillQueue {
     }
 
     pub async fn get_job(&self) -> Result<Option<BackfillJob>, crate::redis::error::Error> {
-        // Check if Redis pool is under pressure before attempting to get a job
         if self.redis.is_pool_under_pressure() {
             let (total, available) = self.redis.get_pool_health();
             debug!(
@@ -236,22 +241,18 @@ impl BackfillQueue {
 
             match result {
                 Ok(Some(values)) if values.len() >= 2 => {
-                    // BRPOP returns [key, value]
                     let job_data = &values[1];
                     let mut job: BackfillJob = serde_json::from_str(job_data).map_err(|e| {
                         crate::redis::error::Error::DeserializationError(e.to_string())
                     })?;
 
-                    // Update job state
                     job.state = JobState::InProgress;
                     job.attempts += 1;
 
-                    // Set visibility timeout if not set
                     if job.visibility_timeout.is_none() {
-                        job.visibility_timeout = Some(300); // Default 5 minute timeout
+                        job.visibility_timeout = Some(300);
                     }
 
-                    // Add to in-progress queue with TTL for visibility timeout
                     let in_progress_data = serde_json::to_string(&job).unwrap();
                     let _: RedisResult<()> = bb8_redis::redis::cmd("LPUSH")
                         .arg(&self.in_progress_queue_key)
@@ -260,7 +261,6 @@ impl BackfillQueue {
                         .await;
 
                     if let Some(timeout) = job.visibility_timeout {
-                        // Set expiration on the job - we'll get it back after timeout if not completed
                         let job_key = format!("backfill:job:{}", job.id);
                         let _: RedisResult<()> = bb8_redis::redis::cmd("SET")
                             .arg(&job_key)
@@ -271,21 +271,21 @@ impl BackfillQueue {
                             .await;
                     }
 
-                    trace!(
-                        "Retrieved backfill job {} with {} FIDs from queue {} (priority: {:?}, attempt: {})",
+                    info!(
+                        "Retrieved backfill job {} with {} FIDs from queue {} (priority: {:?}, attempt: {}), FID range: {:?}..{:?}",
                         job.id,
                         job.fids.len(),
                         queue_key,
                         job.priority,
-                        job.attempts
+                        job.attempts,
+                        job.fids.first(),
+                        job.fids.last()
                     );
                     debug!("FIDs in retrieved job: {:?}", job.fids);
 
                     return Ok(Some(job));
                 },
-                Ok(_) => {
-                    // Continue to next queue without logging
-                },
+                Ok(_) => continue,
                 Err(e) => {
                     error!("Error retrieving job from queue {}: {:?}", queue_key, e);
                     return Err(crate::redis::error::Error::RedisError(e));
@@ -293,7 +293,7 @@ impl BackfillQueue {
             }
         }
 
-        // No jobs found in any queue
+        debug!("No jobs found in any queue after checking all priority levels");
         Ok(None)
     }
 
@@ -348,7 +348,7 @@ impl BackfillQueue {
         // Update StatsD metrics
         metrics::increment_jobs_processed();
 
-        trace!("Marked job {} as complete", job_id);
+        info!("Marked job {} as complete and removed from in-progress queue", job_id);
 
         Ok(())
     }
@@ -377,26 +377,13 @@ impl BackfillQueue {
     }
 
     pub async fn get_queue_length(&self) -> Result<usize, crate::redis::error::Error> {
-        let mut conn = self
-            .redis
-            .pool
-            .get()
-            .await
-            .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
-
-        let result: RedisResult<usize> =
-            bb8_redis::redis::cmd("LLEN").arg(&self.queue_key).query_async(&mut *conn).await;
-
-        match result {
-            Ok(len) => {
-                debug!("Queue {} has {} jobs remaining", self.queue_key, len);
-                Ok(len)
-            },
-            Err(e) => {
-                error!("Error getting queue length for {}: {:?}", self.queue_key, e);
-                Err(crate::redis::error::Error::RedisError(e))
-            },
-        }
+        let high = self.get_queue_length_for_key(&self.high_priority_queue_key).await?;
+        let normal = self.get_queue_length_for_key(&self.queue_key).await?;
+        let low = self.get_queue_length_for_key(&self.low_priority_queue_key).await?;
+        
+        let total = high + normal + low;
+        info!("Total queue length: {} (High: {}, Normal: {}, Low: {})", total, high, normal, low);
+        Ok(total)
     }
 
     /// Clean up expired jobs from the in-progress queue
@@ -464,6 +451,7 @@ impl BackfillQueue {
 enum StatsUpdate {
     JobCompleted { fid_count: usize, spam_count: usize },
     Error,
+    HighestFidUpdate(u64),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -473,6 +461,7 @@ struct WorkerStats {
     spam_fids_skipped: usize,
     errors: usize,
     start_time: Option<std::time::Instant>,
+    highest_fid_processed: u64,
 }
 
 pub struct Worker {
@@ -483,10 +472,11 @@ pub struct Worker {
     shutdown: Arc<RwLock<bool>>,
     stats: WorkerStats,
     spam_filter: Arc<SpamFilter>,
-    // Global semaphore to prevent overwhelming the database connection pool
-    db_connection_limiter: Arc<tokio::sync::Semaphore>,
     // Hub connection rate limiter to avoid overwhelming the hub
     hub_connection_limiter: Arc<tokio::sync::Semaphore>,
+    // Track if we should auto-queue more FIDs when queue is empty
+    auto_queue_enabled: bool,
+    max_fid_to_process: Option<u64>,
 }
 
 impl Worker {
@@ -507,14 +497,7 @@ impl Worker {
             });
         }
 
-        // Create a database connection limiter
-        // Use a more reasonable value based on typical database pool sizes
-        // This should align with the database pool configuration
-        // Most database pools are configured with 20-50 connections
-        let db_connection_limiter = Arc::new(tokio::sync::Semaphore::new(20));
 
-        // Create a hub connection limiter to avoid overwhelming the hub
-        // More reasonable limit for hub connections
         let hub_connection_limiter = Arc::new(tokio::sync::Semaphore::new(10));
 
         Self {
@@ -528,14 +511,22 @@ impl Worker {
                 ..Default::default()
             },
             spam_filter,
-            db_connection_limiter,
             hub_connection_limiter,
+            auto_queue_enabled: false,
+            max_fid_to_process: None,
         }
     }
 
     pub fn add_processor<P: EventProcessor + 'static>(&mut self, processor: Arc<P>) {
         info!("Adding processor to backfill worker: {}", std::any::type_name::<P>());
         self.processors.push(processor);
+    }
+    
+    /// Enable auto-queueing of FIDs when the queue is empty
+    pub fn enable_auto_queue(&mut self, max_fid: u64) {
+        self.auto_queue_enabled = true;
+        self.max_fid_to_process = Some(max_fid);
+        info!("Auto-queueing enabled with max FID: {}", max_fid);
     }
 
     async fn log_stats(&self, queue_length: usize) {
@@ -612,6 +603,12 @@ impl Worker {
                         StatsUpdate::Error => {
                             stats_guard.errors += 1;
                         },
+                        StatsUpdate::HighestFidUpdate(fid) => {
+                            if fid > stats_guard.highest_fid_processed {
+                                stats_guard.highest_fid_processed = fid;
+                                info!("Updated highest processed FID to: {}", fid);
+                            }
+                        },
                     }
                 }
             })
@@ -638,23 +635,39 @@ impl Worker {
             // Update local stats from the shared stats
             self.stats = stats.read().await.clone();
 
-            // Clean up completed tasks
-            handles.retain(
-                |h: &tokio::task::JoinHandle<
-                    Result<(), Box<dyn std::error::Error + Send + Sync>>,
-                >| !h.is_finished(),
-            );
+            handles.retain(|h: &tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>| !h.is_finished());
             let active_tasks = handles.len();
 
             // Log progress every 10 seconds
             if last_progress_log.elapsed() > Duration::from_secs(10) {
-                let queue_length = self.queue.get_queue_length().await.unwrap_or(0);
-                self.log_stats(queue_length).await;
+                let metrics = self.queue.get_metrics().await;
+                info!(
+                    "Queue state - High: {}, Normal: {}, Low: {}, In Progress: {}, Total processed: {}",
+                    metrics.high_priority_queue_size,
+                    metrics.normal_priority_queue_size,
+                    metrics.low_priority_queue_size,
+                    metrics.in_progress_queue_size,
+                    metrics.jobs_processed
+                );
+                
+                let total_queue_length = metrics.high_priority_queue_size + 
+                    metrics.normal_priority_queue_size + 
+                    metrics.low_priority_queue_size;
+                self.log_stats(total_queue_length as usize).await;
                 last_progress_log = std::time::Instant::now();
             }
 
             // If we have capacity, try to get more jobs
             if active_tasks < self.concurrency {
+                let pre_metrics = self.queue.get_metrics().await;
+                debug!(
+                    "Attempting to get job. Current queue state - High: {}, Normal: {}, Low: {}, In Progress: {}",
+                    pre_metrics.high_priority_queue_size,
+                    pre_metrics.normal_priority_queue_size,
+                    pre_metrics.low_priority_queue_size,
+                    pre_metrics.in_progress_queue_size
+                );
+                
                 match self.queue.get_job().await {
                     Ok(Some(mut job)) => {
                         // Limit the number of FIDs processed per job to avoid overwhelming the Hub and database
@@ -668,29 +681,39 @@ impl Worker {
                             let remaining_fids = job.fids.split_off(MAX_FIDS_PER_JOB);
 
                             // Create a new job with the remaining FIDs and add it back to the queue
-                            let mut remaining_job = job.clone();
-                            remaining_job.fids = remaining_fids;
-                            remaining_job.id = uuid::Uuid::new_v4().to_string();
+                            let remaining_job = BackfillJob {
+                                fids: remaining_fids.clone(),
+                                priority: job.priority.clone(),
+                                state: JobState::Pending,
+                                visibility_timeout: job.visibility_timeout,
+                                attempts: 0, // Reset attempts for the new job
+                                created_at: chrono::Utc::now(),
+                                id: uuid::Uuid::new_v4().to_string(),
+                            };
 
                             // Add the remaining job back to the queue with the same priority
                             info!(
-                                "Splitting large job with {} FIDs into smaller chunks. Processing first {} FIDs, queuing remaining {} FIDs.",
+                                "Splitting large job {} with {} FIDs into smaller chunks. Processing first {} FIDs (range: {:?}..{:?}), queuing remaining {} FIDs (range: {:?}..{:?}).",
+                                job.id,
                                 original_fid_count,
                                 MAX_FIDS_PER_JOB,
-                                remaining_job.fids.len()
+                                job.fids.first(),
+                                job.fids.last(),
+                                remaining_job.fids.len(),
+                                remaining_job.fids.first(),
+                                remaining_job.fids.last()
                             );
 
-                            // Remember the original job ID so we can mark it as completed
-                            let _original_job_id = job.id.clone();
-
-                            // Asynchronously add the job back to the queue
-                            let queue_clone = Arc::clone(&self.queue);
-                            tokio::spawn(async move {
-                                if let Err(e) = queue_clone.add_job(remaining_job).await {
-                                    error!("Failed to requeue remaining FIDs: {:?}", e);
+                            let remaining_job_id = remaining_job.id.clone();
+                            let remaining_fid_count = remaining_job.fids.len();
+                            match self.queue.add_job(remaining_job).await {
+                                Ok(_) => {
+                                    info!("Successfully requeued job {} with {} remaining FIDs", remaining_job_id, remaining_fid_count);
+                                },
+                                Err(e) => {
+                                    error!("Failed to requeue job {} with {} remaining FIDs: {:?}", remaining_job_id, remaining_fid_count, e);
                                 }
-                                // Note: The original job will be marked complete after processing by the wrapped handle
-                            });
+                            }
                         }
 
                         let reconciler = Arc::clone(&self.reconciler);
@@ -699,11 +722,13 @@ impl Worker {
                         let fids = job.fids.clone();
                         let fid_count = job.fids.len();
                         let spam_filter = Arc::clone(&self.spam_filter);
-                        let _db_connection_limiter = Arc::clone(&self.db_connection_limiter);
                         let hub_connection_limiter = Arc::clone(&self.hub_connection_limiter);
+                        let highest_fid_in_job = *job.fids.iter().max().unwrap_or(&0);
 
-                        trace!("Starting backfill job with {} FIDs", fid_count);
+                        info!("Starting backfill job {} with {} FIDs (range: {:?}..{:?})", 
+                            job.id, fid_count, job.fids.first(), job.fids.last());
 
+                        let tx_for_highest = tx_clone.clone();
                         let handle = tokio::spawn(async move {
                             let job_start_time = std::time::Instant::now();
                             let mut job_success_count = 0;
@@ -785,6 +810,12 @@ impl Worker {
                             {
                                 error!("Failed to send job completion update: {}", e);
                             }
+                            
+                            if highest_fid_in_job > 0 {
+                                if let Err(e) = tx_for_highest.send(StatsUpdate::HighestFidUpdate(highest_fid_in_job)).await {
+                                    error!("Failed to send highest FID update: {}", e);
+                                }
+                            }
 
                             Ok(())
                         });
@@ -815,7 +846,58 @@ impl Worker {
                         handles.push(wrapped_handle);
                     },
                     Ok(None) => {
-                        // No jobs available, wait a bit
+                        let post_metrics = self.queue.get_metrics().await;
+                        let total_queued = post_metrics.high_priority_queue_size + 
+                            post_metrics.normal_priority_queue_size + 
+                            post_metrics.low_priority_queue_size;
+                        
+                        if total_queued == 0 && post_metrics.in_progress_queue_size == 0 {
+                            info!("All queues are empty and no jobs in progress.");
+                            
+                            // Check if we should auto-queue more FIDs
+                            if self.auto_queue_enabled {
+                                let current_highest = stats.read().await.highest_fid_processed;
+                                if let Some(max_fid) = self.max_fid_to_process {
+                                    if current_highest < max_fid {
+                                        // Queue the next batch of FIDs
+                                        let start_fid = current_highest + 1;
+                                        let end_fid = std::cmp::min(start_fid + 499, max_fid);
+                                        let batch_fids = (start_fid..=end_fid).collect::<Vec<_>>();
+                                        
+                                        info!(
+                                            "Auto-queueing FIDs {} to {} (current highest processed: {})",
+                                            start_fid, end_fid, current_highest
+                                        );
+                                        
+                                        match self.queue.add_job(BackfillJob {
+                                            fids: batch_fids,
+                                            priority: JobPriority::Normal,
+                                            state: JobState::Pending,
+                                            visibility_timeout: None,
+                                            attempts: 0,
+                                            created_at: chrono::Utc::now(),
+                                            id: String::new(),
+                                        }).await {
+                                            Ok(_) => {
+                                                info!("Successfully auto-queued FIDs {} to {}", start_fid, end_fid);
+                                            },
+                                            Err(e) => {
+                                                error!("Failed to auto-queue FIDs: {:?}", e);
+                                            }
+                                        }
+                                    } else {
+                                        info!("Backfill complete. Highest FID processed: {}, Max FID: {}", current_highest, max_fid);
+                                    }
+                                }
+                            } else {
+                                info!("Backfill may be complete. Auto-queueing is disabled.");
+                            }
+                        } else {
+                            debug!(
+                                "No jobs available but {} jobs still in progress", 
+                                post_metrics.in_progress_queue_size
+                            );
+                        }
                         time::sleep(Duration::from_secs(1)).await;
                     },
                     Err(e) => {
