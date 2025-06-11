@@ -157,3 +157,37 @@ pub struct TierPurchase {
     pub chain_id: u64,
     pub deleted_at: Option<DateTime<Utc>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_tier_purchase_creation() {
+        let now = Utc::now();
+        let tier_purchase = TierPurchase {
+            id: Uuid::new_v4(),
+            fid: 12345,
+            tier_type: TierType::Pro,
+            for_days: 365,
+            payer: vec![0x01, 0x02, 0x03],
+            timestamp: now,
+            block_number: 1000000,
+            block_hash: vec![0xaa; 32],
+            log_index: 5,
+            tx_index: 10,
+            tx_hash: vec![0xbb; 32],
+            block_timestamp: now,
+            chain_id: 10, // Optimism
+            deleted_at: None,
+        };
+
+        assert_eq!(tier_purchase.fid, 12345);
+        assert_eq!(tier_purchase.tier_type, TierType::Pro);
+        assert_eq!(tier_purchase.for_days, 365);
+        assert_eq!(tier_purchase.payer, vec![0x01, 0x02, 0x03]);
+        assert!(tier_purchase.deleted_at.is_none());
+    }
+}

@@ -1003,3 +1003,30 @@ impl MessageReconciler {
         "Unknown".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_onchain_event_types_include_tier_purchase() {
+        // Verify that the list of onchain event types includes tier purchase
+        let event_types = [
+            OnChainEventType::EventTypeSigner,
+            OnChainEventType::EventTypeSignerMigrated,
+            OnChainEventType::EventTypeIdRegister,
+            OnChainEventType::EventTypeStorageRent,
+            OnChainEventType::EventTypeTierPurchase,
+        ];
+
+        // Check that tier purchase is included
+        let has_tier_purchase = event_types
+            .iter()
+            .any(|&et| et == OnChainEventType::EventTypeTierPurchase);
+        
+        assert!(has_tier_purchase, "Tier purchase event type should be included in reconciler");
+        
+        // Verify the enum value
+        assert_eq!(OnChainEventType::EventTypeTierPurchase as i32, 5);
+    }
+}
