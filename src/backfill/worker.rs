@@ -172,8 +172,12 @@ impl BackfillQueue {
 
         info!(
             "Adding backfill job {} with {} FIDs to queue: {} (priority: {:?}), FID range: {:?}..{:?}",
-            job_id, fid_count, queue_key, priority, 
-            job.fids.first(), job.fids.last()
+            job_id,
+            fid_count,
+            queue_key,
+            priority,
+            job.fids.first(),
+            job.fids.last()
         );
 
         let mut conn = self
@@ -191,7 +195,10 @@ impl BackfillQueue {
 
         match &result {
             Ok(_) => {
-                info!("Successfully added job {} to queue {} with {} FIDs", job_id, queue_key, fid_count);
+                info!(
+                    "Successfully added job {} to queue {} with {} FIDs",
+                    job_id, queue_key, fid_count
+                );
                 // Update metrics with minimal lock time
                 {
                     let mut metrics = self.metrics.write().await;
@@ -200,10 +207,13 @@ impl BackfillQueue {
 
                 // Update StatsD metrics
                 metrics::set_jobs_in_queue(fid_count as u64);
-                
+
                 // Log current queue length after adding
                 if let Ok(queue_len) = self.get_queue_length_for_key(queue_key).await {
-                    info!("Queue {} now has {} jobs after adding job {}", queue_key, queue_len, job_id);
+                    info!(
+                        "Queue {} now has {} jobs after adding job {}",
+                        queue_key, queue_len, job_id
+                    );
                 }
             },
             Err(e) => error!("Failed to add job {} to queue {}: {:?}", job_id, queue_key, e),
@@ -380,7 +390,7 @@ impl BackfillQueue {
         let high = self.get_queue_length_for_key(&self.high_priority_queue_key).await?;
         let normal = self.get_queue_length_for_key(&self.queue_key).await?;
         let low = self.get_queue_length_for_key(&self.low_priority_queue_key).await?;
-        
+
         let total = high + normal + low;
         info!("Total queue length: {} (High: {}, Normal: {}, Low: {})", total, high, normal, low);
         Ok(total)
@@ -497,7 +507,6 @@ impl Worker {
             });
         }
 
-
         let hub_connection_limiter = Arc::new(tokio::sync::Semaphore::new(10));
 
         Self {
@@ -521,7 +530,7 @@ impl Worker {
         info!("Adding processor to backfill worker: {}", std::any::type_name::<P>());
         self.processors.push(processor);
     }
-    
+
     /// Enable auto-queueing of FIDs when the queue is empty
     pub fn enable_auto_queue(&mut self, max_fid: u64) {
         self.auto_queue_enabled = true;
@@ -635,7 +644,11 @@ impl Worker {
             // Update local stats from the shared stats
             self.stats = stats.read().await.clone();
 
-            handles.retain(|h: &tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>| !h.is_finished());
+            handles.retain(
+                |h: &tokio::task::JoinHandle<
+                    Result<(), Box<dyn std::error::Error + Send + Sync>>,
+                >| !h.is_finished(),
+            );
             let active_tasks = handles.len();
 
             // Log progress every 10 seconds
@@ -649,10 +662,10 @@ impl Worker {
                     metrics.in_progress_queue_size,
                     metrics.jobs_processed
                 );
-                
-                let total_queue_length = metrics.high_priority_queue_size + 
-                    metrics.normal_priority_queue_size + 
-                    metrics.low_priority_queue_size;
+
+                let total_queue_length = metrics.high_priority_queue_size
+                    + metrics.normal_priority_queue_size
+                    + metrics.low_priority_queue_size;
                 self.log_stats(total_queue_length as usize).await;
                 last_progress_log = std::time::Instant::now();
             }
@@ -667,7 +680,7 @@ impl Worker {
                     pre_metrics.low_priority_queue_size,
                     pre_metrics.in_progress_queue_size
                 );
-                
+
                 match self.queue.get_job().await {
                     Ok(Some(mut job)) => {
                         // Limit the number of FIDs processed per job to avoid overwhelming the Hub and database
@@ -708,11 +721,17 @@ impl Worker {
                             let remaining_fid_count = remaining_job.fids.len();
                             match self.queue.add_job(remaining_job).await {
                                 Ok(_) => {
-                                    info!("Successfully requeued job {} with {} remaining FIDs", remaining_job_id, remaining_fid_count);
+                                    info!(
+                                        "Successfully requeued job {} with {} remaining FIDs",
+                                        remaining_job_id, remaining_fid_count
+                                    );
                                 },
                                 Err(e) => {
-                                    error!("Failed to requeue job {} with {} remaining FIDs: {:?}", remaining_job_id, remaining_fid_count, e);
-                                }
+                                    error!(
+                                        "Failed to requeue job {} with {} remaining FIDs: {:?}",
+                                        remaining_job_id, remaining_fid_count, e
+                                    );
+                                },
                             }
                         }
 
@@ -725,8 +744,13 @@ impl Worker {
                         let hub_connection_limiter = Arc::clone(&self.hub_connection_limiter);
                         let highest_fid_in_job = *job.fids.iter().max().unwrap_or(&0);
 
-                        info!("Starting backfill job {} with {} FIDs (range: {:?}..{:?})", 
-                            job.id, fid_count, job.fids.first(), job.fids.last());
+                        info!(
+                            "Starting backfill job {} with {} FIDs (range: {:?}..{:?})",
+                            job.id,
+                            fid_count,
+                            job.fids.first(),
+                            job.fids.last()
+                        );
 
                         let tx_for_highest = tx_clone.clone();
                         let handle = tokio::spawn(async move {
@@ -810,9 +834,12 @@ impl Worker {
                             {
                                 error!("Failed to send job completion update: {}", e);
                             }
-                            
+
                             if highest_fid_in_job > 0 {
-                                if let Err(e) = tx_for_highest.send(StatsUpdate::HighestFidUpdate(highest_fid_in_job)).await {
+                                if let Err(e) = tx_for_highest
+                                    .send(StatsUpdate::HighestFidUpdate(highest_fid_in_job))
+                                    .await
+                                {
                                     error!("Failed to send highest FID update: {}", e);
                                 }
                             }
@@ -847,13 +874,13 @@ impl Worker {
                     },
                     Ok(None) => {
                         let post_metrics = self.queue.get_metrics().await;
-                        let total_queued = post_metrics.high_priority_queue_size + 
-                            post_metrics.normal_priority_queue_size + 
-                            post_metrics.low_priority_queue_size;
-                        
+                        let total_queued = post_metrics.high_priority_queue_size
+                            + post_metrics.normal_priority_queue_size
+                            + post_metrics.low_priority_queue_size;
+
                         if total_queued == 0 && post_metrics.in_progress_queue_size == 0 {
                             info!("All queues are empty and no jobs in progress.");
-                            
+
                             // Check if we should auto-queue more FIDs
                             if self.auto_queue_enabled {
                                 let current_highest = stats.read().await.highest_fid_processed;
@@ -863,30 +890,40 @@ impl Worker {
                                         let start_fid = current_highest + 1;
                                         let end_fid = std::cmp::min(start_fid + 499, max_fid);
                                         let batch_fids = (start_fid..=end_fid).collect::<Vec<_>>();
-                                        
+
                                         info!(
                                             "Auto-queueing FIDs {} to {} (current highest processed: {})",
                                             start_fid, end_fid, current_highest
                                         );
-                                        
-                                        match self.queue.add_job(BackfillJob {
-                                            fids: batch_fids,
-                                            priority: JobPriority::Normal,
-                                            state: JobState::Pending,
-                                            visibility_timeout: None,
-                                            attempts: 0,
-                                            created_at: chrono::Utc::now(),
-                                            id: String::new(),
-                                        }).await {
+
+                                        match self
+                                            .queue
+                                            .add_job(BackfillJob {
+                                                fids: batch_fids,
+                                                priority: JobPriority::Normal,
+                                                state: JobState::Pending,
+                                                visibility_timeout: None,
+                                                attempts: 0,
+                                                created_at: chrono::Utc::now(),
+                                                id: String::new(),
+                                            })
+                                            .await
+                                        {
                                             Ok(_) => {
-                                                info!("Successfully auto-queued FIDs {} to {}", start_fid, end_fid);
+                                                info!(
+                                                    "Successfully auto-queued FIDs {} to {}",
+                                                    start_fid, end_fid
+                                                );
                                             },
                                             Err(e) => {
                                                 error!("Failed to auto-queue FIDs: {:?}", e);
-                                            }
+                                            },
                                         }
                                     } else {
-                                        info!("Backfill complete. Highest FID processed: {}, Max FID: {}", current_highest, max_fid);
+                                        info!(
+                                            "Backfill complete. Highest FID processed: {}, Max FID: {}",
+                                            current_highest, max_fid
+                                        );
                                     }
                                 }
                             } else {
@@ -894,7 +931,7 @@ impl Worker {
                             }
                         } else {
                             debug!(
-                                "No jobs available but {} jobs still in progress", 
+                                "No jobs available but {} jobs still in progress",
                                 post_metrics.in_progress_queue_size
                             );
                         }
