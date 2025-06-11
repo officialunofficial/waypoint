@@ -1105,7 +1105,7 @@ mod tests {
         // Test conversion from farcaster time to OffsetDateTime
         let farcaster_timestamp = 100000000u32; // Example farcaster timestamp
         let result = DatabaseProcessor::convert_timestamp(farcaster_timestamp);
-        
+
         // Verify it's a valid timestamp
         assert!(result.unix_timestamp() > 0);
     }
@@ -1137,7 +1137,7 @@ mod tests {
         // Verify the event is properly constructed
         assert_eq!(event.r#type, 5);
         assert_eq!(event.fid, 12345);
-        
+
         if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(body)) = &event.body {
             assert_eq!(body.tier_type, TierType::Pro as i32);
             assert_eq!(body.for_days, 365);
@@ -1150,21 +1150,21 @@ mod tests {
     #[test]
     fn test_onchain_event_hash_generation() {
         use std::hash::Hasher;
-        
+
         // Test deterministic hash generation for onchain events
         let tx_hash = vec![0xaa; 32];
         let log_index = 5u32;
-        
+
         let mut hasher1 = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&tx_hash, &mut hasher1);
         std::hash::Hash::hash(&log_index, &mut hasher1);
         let hash1 = hasher1.finish().to_be_bytes().to_vec();
-        
+
         let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&tx_hash, &mut hasher2);
         std::hash::Hash::hash(&log_index, &mut hasher2);
         let hash2 = hasher2.finish().to_be_bytes().to_vec();
-        
+
         // Verify deterministic hashing
         assert_eq!(hash1, hash2);
         assert_eq!(hash1.len(), 8); // 64-bit hash as 8 bytes
