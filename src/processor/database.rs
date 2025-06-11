@@ -499,6 +499,49 @@ impl DatabaseProcessor {
         .execute(&self.resources.database.pool)
         .await?;
 
+        // Handle tier purchase events specifically
+        if event.r#type == 5 {
+            // EVENT_TYPE_TIER_PURCHASE
+            if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(tier_body)) =
+                &event.body
+            {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO tier_purchases (
+                        fid,
+                        tier_type,
+                        for_days,
+                        payer,
+                        timestamp,
+                        block_number,
+                        block_hash,
+                        log_index,
+                        tx_index,
+                        tx_hash,
+                        block_timestamp,
+                        chain_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ON CONFLICT (tx_hash, log_index) DO NOTHING
+                    "#,
+                    event.fid as i64,
+                    tier_body.tier_type as i16,
+                    tier_body.for_days as i64,
+                    &tier_body.payer,
+                    ts,
+                    event.block_number as i64,
+                    &event.block_hash,
+                    event.log_index as i32,
+                    event.tx_index as i32,
+                    &event.transaction_hash,
+                    ts,
+                    event.chain_id as i64
+                )
+                .execute(&self.resources.database.pool)
+                .await?;
+            }
+        }
+
         Ok(())
     }
 

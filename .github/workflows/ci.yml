@@ -45,7 +45,7 @@ jobs:
         ports:
           - 6379:6379
       postgres:
-        image: postgres:14
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
@@ -78,10 +78,14 @@ jobs:
       - name: Verify Postgres Connection
         run: pg_isready -h localhost -p 5432
 
-      - name: Init postgres schema
-        run: psql -h localhost -p 5432 -U postgres -d waypoint -f migrations/init.sql
+      - name: Run database migrations
+        run: ./scripts/run-migrations.sh
         env:
           PGPASSWORD: postgres
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_NAME: waypoint
 
       - name: Build
         run: cargo build

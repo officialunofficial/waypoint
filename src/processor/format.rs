@@ -183,6 +183,9 @@ fn format_user_data(user_data: &UserDataBody) -> String {
             UserDataType::Location => "location",
             UserDataType::Twitter => "twitter",
             UserDataType::Github => "github",
+            UserDataType::Banner => "banner",
+            UserDataType::UserDataPrimaryAddressEthereum => "primary ethereum address",
+            UserDataType::UserDataPrimaryAddressSolana => "primary solana address",
         })
         .unwrap_or("unknown");
 

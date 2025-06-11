@@ -25,10 +25,39 @@ If you prefer to run services manually:
 
 1. Install PostgreSQL 17+ with pgvector extension
 2. Install Redis 7+
-3. Run the database initialization script:
+3. Run the database migrations:
    ```bash
-   psql -U postgres -d waypoint -f migrations/init.sql
+   # Create the database
+   createdb waypoint
+   
+   # Run all migrations using the helper script
+   ./scripts/run-migrations.sh
+   
+   # Or run manually:
+   psql -U postgres -d waypoint -f migrations/001_init.sql
+   psql -U postgres -d waypoint -f migrations/002_add_tier_purchases.sql
    ```
+
+### Database Migrations
+
+Waypoint uses SQLx for compile-time checked queries. When adding new migrations:
+
+1. Create a new migration file in the `migrations/` directory with the format `NNN_description.sql`
+2. Apply the migration to your local database:
+   ```bash
+   psql -U postgres -d waypoint -f migrations/NNN_description.sql
+   ```
+3. If using SQLx compile-time checking, ensure `DATABASE_URL` is set:
+   ```bash
+   export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waypoint
+   ```
+4. Run `cargo sqlx prepare` to update the `.sqlx` directory with query metadata
+5. Commit both the migration file and any `.sqlx` changes
+
+#### Current Migrations
+
+- `001_init.sql` - Initial database schema with all core tables
+- `002_add_tier_purchases.sql` - Adds support for Farcaster Pro tier purchases
 
 ## Building
 
