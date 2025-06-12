@@ -6,8 +6,27 @@ All notable changes to Waypoint will be documented in this file.
 
 ### Bug Fixes
 
+- Resolve backfill job queue exhaustion bug (#37)
+- Increase Redis pool sizes to prevent backfill queue exhaustion
+
+### Features
+
+- Support Farcaster Pro (#36)
+
+### Miscellaneous Tasks
+
+- Version
+
+## [0.6.3] - 2025-06-09
+
+### Bug Fixes
+
 - Proto
 - Redis defaults
+
+### Miscellaneous Tasks
+
+- Changelog
 
 ## [0.6.1] - 2025-05-30
 
