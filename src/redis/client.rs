@@ -414,8 +414,8 @@ impl Redis {
     ) -> Result<Vec<PendingItem>, Error> {
         let mut conn = self.pool.get().await.map_err(|e| Error::PoolError(e.to_string()))?;
 
-        // Use a simpler approach that we know works with Redis
-        let items: RedisResult<Vec<(String, String, String, String)>> =
+        // First try with IDLE parameter (Redis 6.2+)
+        let items_with_idle: RedisResult<Vec<(String, String, String, String)>> =
             bb8_redis::redis::cmd("XPENDING")
                 .arg(key)
                 .arg(group)
@@ -427,18 +427,53 @@ impl Redis {
                 .query_async(&mut *conn)
                 .await;
 
-        items
-            .map(|items| {
-                items
+        match items_with_idle {
+            Ok(items) => {
+                Ok(items
                     .into_iter()
                     .map(|(id, _, idle_time, count)| PendingItem {
                         id,
                         idle_time: idle_time.parse().unwrap_or(0),
                         delivery_count: count.parse().unwrap_or(0),
                     })
-                    .collect()
-            })
-            .map_err(Error::RedisError)
+                    .collect())
+            },
+            Err(_) => {
+                // Fallback to standard XPENDING without IDLE (older Redis versions)
+                // We'll have to filter by idle time manually
+                let items: RedisResult<Vec<(String, String, String, String)>> =
+                    bb8_redis::redis::cmd("XPENDING")
+                        .arg(key)
+                        .arg(group)
+                        .arg("-")
+                        .arg("+")
+                        .arg(count * 2) // Get more to account for filtering
+                        .query_async(&mut *conn)
+                        .await;
+
+                items
+                    .map(|items| {
+                        let idle_threshold = idle.as_millis() as u64;
+                        items
+                            .into_iter()
+                            .filter_map(|(id, _, idle_time, count)| {
+                                let idle_ms = idle_time.parse().unwrap_or(0);
+                                if idle_ms >= idle_threshold {
+                                    Some(PendingItem {
+                                        id,
+                                        idle_time: idle_ms,
+                                        delivery_count: count.parse().unwrap_or(0),
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .take(count as usize)
+                            .collect()
+                    })
+                    .map_err(Error::RedisError)
+            },
+        }
     }
 
     pub async fn xclaim(
