@@ -231,8 +231,9 @@ impl RedisStream {
                                     // Use a larger batch size for all groups for better performance
                                     let batch_size = 100;
 
-                                    let pending_result: Result<
-                                        PendingResult,
+                                    // Get raw response first to handle different formats
+                                    let pending_raw: Result<
+                                        bb8_redis::redis::Value,
                                         bb8_redis::redis::RedisError,
                                     > = bb8_redis::redis::cmd("XPENDING")
                                             .arg(sk)
@@ -243,6 +244,57 @@ impl RedisStream {
                                             .arg(idle_consumer)
                                             .query_async(&mut *conn)
                                             .await;
+
+                                    let pending_result: Result<
+                                        PendingResult,
+                                        bb8_redis::redis::RedisError,
+                                    > = match pending_raw {
+                                        Ok(bb8_redis::redis::Value::Array(arr)) => {
+                                            let mut items = Vec::new();
+                                            for val in arr {
+                                                if let bb8_redis::redis::Value::Array(entry) = val {
+                                                    if entry.len() >= 4 {
+                                                        let id = match &entry[0] {
+                                                            bb8_redis::redis::Value::BulkString(
+                                                                s,
+                                                            ) => String::from_utf8_lossy(s)
+                                                                .to_string(),
+                                                            _ => continue,
+                                                        };
+                                                        let consumer = match &entry[1] {
+                                                            bb8_redis::redis::Value::BulkString(
+                                                                s,
+                                                            ) => String::from_utf8_lossy(s)
+                                                                .to_string(),
+                                                            _ => continue,
+                                                        };
+                                                        let idle_time = match &entry[2] {
+                                                            bb8_redis::redis::Value::Int(i) => {
+                                                                *i as u64
+                                                            },
+                                                            bb8_redis::redis::Value::BulkString(
+                                                                s,
+                                                            ) => String::from_utf8_lossy(s)
+                                                                .parse::<u64>()
+                                                                .unwrap_or(0),
+                                                            _ => 0,
+                                                        };
+                                                        items.push((
+                                                            id,
+                                                            consumer,
+                                                            idle_time,
+                                                            Vec::new(),
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            Ok(items)
+                                        },
+                                        Ok(bb8_redis::redis::Value::Int(0))
+                                        | Ok(bb8_redis::redis::Value::Nil) => Ok(Vec::new()),
+                                        Ok(_) => Ok(Vec::new()),
+                                        Err(e) => Err(e),
+                                    };
 
                                     match pending_result {
                                         Ok(pending_msgs) if !pending_msgs.is_empty() => {
@@ -276,8 +328,8 @@ impl RedisStream {
                                                 // Continue claiming in a loop until no more messages
                                                 let mut claimed_all = false;
                                                 while !claimed_all {
-                                                    let more_pending: Result<
-                                                        PendingResult,
+                                                    let more_raw: Result<
+                                                        bb8_redis::redis::Value,
                                                         bb8_redis::redis::RedisError,
                                                     > = bb8_redis::redis::cmd("XPENDING")
                                                         .arg(sk)
@@ -288,6 +340,44 @@ impl RedisStream {
                                                         .arg(idle_consumer)
                                                         .query_async(&mut *conn)
                                                         .await;
+
+                                                    let more_pending: Result<
+                                                        PendingResult,
+                                                        bb8_redis::redis::RedisError,
+                                                    > = match more_raw {
+                                                        Ok(bb8_redis::redis::Value::Array(arr)) => {
+                                                            let mut items = Vec::new();
+                                                            for val in arr {
+                                                                if let bb8_redis::redis::Value::Array(entry) = val {
+                                                                        if entry.len() >= 4 {
+                                                                            let id = match &entry[0] {
+                                                                                bb8_redis::redis::Value::BulkString(s) => String::from_utf8_lossy(s).to_string(),
+                                                                                _ => continue,
+                                                                            };
+                                                                            let consumer = match &entry[1] {
+                                                                                bb8_redis::redis::Value::BulkString(s) => String::from_utf8_lossy(s).to_string(),
+                                                                                _ => continue,
+                                                                            };
+                                                                            let idle_time = match &entry[2] {
+                                                                                bb8_redis::redis::Value::Int(i) => *i as u64,
+                                                                                bb8_redis::redis::Value::BulkString(s) => {
+                                                                                    String::from_utf8_lossy(s).parse::<u64>().unwrap_or(0)
+                                                                                },
+                                                                                _ => 0,
+                                                                            };
+                                                                            items.push((id, consumer, idle_time, Vec::new()));
+                                                                        }
+                                                                    }
+                                                            }
+                                                            Ok(items)
+                                                        },
+                                                        Ok(bb8_redis::redis::Value::Int(0))
+                                                        | Ok(bb8_redis::redis::Value::Nil) => {
+                                                            Ok(Vec::new())
+                                                        },
+                                                        Ok(_) => Ok(Vec::new()),
+                                                        Err(e) => Err(e),
+                                                    };
 
                                                     match more_pending {
                                                         Ok(more_msgs) if !more_msgs.is_empty() => {
@@ -352,8 +442,8 @@ impl RedisStream {
                             for consumer_id in &extremely_idle_consumers {
                                 // Check if consumer has pending messages after claiming
                                 type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
-                                let pending_check: Result<
-                                    PendingResult,
+                                let pending_check_raw: Result<
+                                    bb8_redis::redis::Value,
                                     bb8_redis::redis::RedisError,
                                 > = bb8_redis::redis::cmd("XPENDING")
                                         .arg(&stream_key)
@@ -364,6 +454,55 @@ impl RedisStream {
                                         .arg(consumer_id)
                                         .query_async(&mut *conn)
                                         .await;
+
+                                let pending_check: Result<
+                                    PendingResult,
+                                    bb8_redis::redis::RedisError,
+                                > = match pending_check_raw {
+                                    Ok(bb8_redis::redis::Value::Array(arr)) => {
+                                        let mut items = Vec::new();
+                                        for val in arr {
+                                            if let bb8_redis::redis::Value::Array(entry) = val {
+                                                if entry.len() >= 4 {
+                                                    let id = match &entry[0] {
+                                                        bb8_redis::redis::Value::BulkString(s) => {
+                                                            String::from_utf8_lossy(s).to_string()
+                                                        },
+                                                        _ => continue,
+                                                    };
+                                                    let consumer = match &entry[1] {
+                                                        bb8_redis::redis::Value::BulkString(s) => {
+                                                            String::from_utf8_lossy(s).to_string()
+                                                        },
+                                                        _ => continue,
+                                                    };
+                                                    let idle_time = match &entry[2] {
+                                                        bb8_redis::redis::Value::Int(i) => {
+                                                            *i as u64
+                                                        },
+                                                        bb8_redis::redis::Value::BulkString(s) => {
+                                                            String::from_utf8_lossy(s)
+                                                                .parse::<u64>()
+                                                                .unwrap_or(0)
+                                                        },
+                                                        _ => 0,
+                                                    };
+                                                    items.push((
+                                                        id,
+                                                        consumer,
+                                                        idle_time,
+                                                        Vec::new(),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        Ok(items)
+                                    },
+                                    Ok(bb8_redis::redis::Value::Int(0))
+                                    | Ok(bb8_redis::redis::Value::Nil) => Ok(Vec::new()),
+                                    Ok(_) => Ok(Vec::new()),
+                                    Err(e) => Err(e),
+                                };
 
                                 let has_pending = match pending_check {
                                     Ok(msgs) => !msgs.is_empty(),

@@ -9,7 +9,7 @@ use tokio::{
     sync::{RwLock, mpsc},
     time,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BackfillJob {
@@ -26,6 +26,8 @@ pub struct BackfillJob {
     pub created_at: chrono::DateTime<chrono::Utc>,
     #[serde(default)]
     pub id: String,
+    #[serde(default)]
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>, // Track when job processing started
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -258,6 +260,7 @@ impl BackfillQueue {
 
                     job.state = JobState::InProgress;
                     job.attempts += 1;
+                    job.started_at = Some(chrono::Utc::now()); // Set the start time
 
                     if job.visibility_timeout.is_none() {
                         job.visibility_timeout = Some(300);
@@ -270,16 +273,8 @@ impl BackfillQueue {
                         .query_async(&mut *conn)
                         .await;
 
-                    if let Some(timeout) = job.visibility_timeout {
-                        let job_key = format!("backfill:job:{}", job.id);
-                        let _: RedisResult<()> = bb8_redis::redis::cmd("SET")
-                            .arg(&job_key)
-                            .arg(&in_progress_data)
-                            .arg("EX")
-                            .arg(timeout)
-                            .query_async(&mut *conn)
-                            .await;
-                    }
+                    // Don't use Redis expiration - we'll handle timeout in cleanup_expired_jobs
+                    // This prevents jobs from being lost when Redis keys expire
 
                     info!(
                         "Retrieved backfill job {} with {} FIDs from queue {} (priority: {:?}, attempt: {}), FID range: {:?}..{:?}",
@@ -345,11 +340,7 @@ impl BackfillQueue {
             }
         }
 
-        // Also remove the job key if it exists
-        let _: RedisResult<()> = bb8_redis::redis::cmd("DEL")
-            .arg(format!("backfill:job:{}", job_id))
-            .query_async(&mut *conn)
-            .await;
+        // No need to remove job key since we're not using Redis expiration anymore
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
@@ -365,9 +356,9 @@ impl BackfillQueue {
 
     /// Move job back to queue after a failure
     pub async fn retry_job(&self, mut job: BackfillJob) -> Result<(), crate::redis::error::Error> {
-        // Reset state and increment attempts in place (no cloning)
+        // Reset state (attempts already incremented when job was picked up)
         job.state = JobState::Pending;
-        job.attempts += 1;
+        // Don't increment attempts here - it was already incremented in get_job
 
         // Reduce priority if job has been retried multiple times
         if job.attempts > 3 {
@@ -420,15 +411,17 @@ impl BackfillQueue {
                 if let Ok(mut job) = serde_json::from_str::<BackfillJob>(&job_data) {
                     // Check if job has exceeded its visibility timeout
                     if let Some(timeout) = job.visibility_timeout {
+                        // Use started_at if available, otherwise fall back to created_at
+                        let reference_time = job.started_at.unwrap_or(job.created_at);
                         let elapsed = chrono::Utc::now()
-                            .signed_duration_since(job.created_at)
+                            .signed_duration_since(reference_time)
                             .num_seconds() as u64;
 
                         if elapsed > timeout {
                             // Job has expired, move it back to queue for retry
-                            trace!(
-                                "Found expired job {} (elapsed: {}s > timeout: {}s), moving back to queue",
-                                job.id, elapsed, timeout
+                            info!(
+                                "Found expired job {} (elapsed: {}s > timeout: {}s), moving back to queue for retry (attempt {})",
+                                job.id, elapsed, timeout, job.attempts
                             );
 
                             // Remove from in-progress queue
@@ -441,6 +434,7 @@ impl BackfillQueue {
 
                             // Reset state and retry
                             job.state = JobState::Pending;
+                            job.started_at = None; // Clear the started_at timestamp
                             self.retry_job(job).await?;
                             expired_count += 1;
                         }
@@ -702,6 +696,7 @@ impl Worker {
                                 attempts: 0, // Reset attempts for the new job
                                 created_at: chrono::Utc::now(),
                                 id: uuid::Uuid::new_v4().to_string(),
+                                started_at: None, // New jobs haven't started yet
                             };
 
                             // Add the remaining job back to the queue with the same priority
@@ -906,6 +901,7 @@ impl Worker {
                                                 attempts: 0,
                                                 created_at: chrono::Utc::now(),
                                                 id: String::new(),
+                                                started_at: None, // New jobs haven't started yet
                                             })
                                             .await
                                         {
