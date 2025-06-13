@@ -453,8 +453,10 @@ impl Consumer {
                                 let mut continue_claims = true;
                                 while continue_claims {
                                     // Get raw response for continuation
-                                    let more_raw: std::result::Result<bb8_redis::redis::Value, bb8_redis::redis::RedisError> =
-                                        bb8_redis::redis::cmd("XPENDING")
+                                    let more_raw: std::result::Result<
+                                        bb8_redis::redis::Value,
+                                        bb8_redis::redis::RedisError,
+                                    > = bb8_redis::redis::cmd("XPENDING")
                                             .arg(stream_key)
                                             .arg(group_name)
                                             .arg("-")  // start ID
@@ -463,39 +465,57 @@ impl Consumer {
                                             .arg(consumer_name)
                                             .query_async(&mut *conn)
                                             .await;
-                                            
-                                    let more_pending: std::result::Result<Vec<PendingItem>, crate::redis::error::Error> =
-                                        match more_raw {
-                                            Ok(bb8_redis::redis::Value::Array(arr)) => {
-                                                let mut items = Vec::new();
-                                                for val in arr {
-                                                    if let bb8_redis::redis::Value::Array(entry) = val {
-                                                        if entry.len() >= 4 {
-                                                            let id = match &entry[0] {
-                                                                bb8_redis::redis::Value::BulkString(s) => String::from_utf8_lossy(s).to_string(),
-                                                                _ => continue,
-                                                            };
-                                                            let consumer = match &entry[1] {
-                                                                bb8_redis::redis::Value::BulkString(s) => String::from_utf8_lossy(s).to_string(),
-                                                                _ => continue,
-                                                            };
-                                                            let idle_time = match &entry[2] {
-                                                                bb8_redis::redis::Value::Int(i) => *i as u64,
-                                                                bb8_redis::redis::Value::BulkString(s) => {
-                                                                    String::from_utf8_lossy(s).parse::<u64>().unwrap_or(0)
-                                                                },
-                                                                _ => 0,
-                                                            };
-                                                            items.push((id, consumer, idle_time, Vec::new()));
-                                                        }
+
+                                    let more_pending: std::result::Result<
+                                        Vec<PendingItem>,
+                                        crate::redis::error::Error,
+                                    > = match more_raw {
+                                        Ok(bb8_redis::redis::Value::Array(arr)) => {
+                                            let mut items = Vec::new();
+                                            for val in arr {
+                                                if let bb8_redis::redis::Value::Array(entry) = val {
+                                                    if entry.len() >= 4 {
+                                                        let id = match &entry[0] {
+                                                            bb8_redis::redis::Value::BulkString(
+                                                                s,
+                                                            ) => String::from_utf8_lossy(s)
+                                                                .to_string(),
+                                                            _ => continue,
+                                                        };
+                                                        let consumer = match &entry[1] {
+                                                            bb8_redis::redis::Value::BulkString(
+                                                                s,
+                                                            ) => String::from_utf8_lossy(s)
+                                                                .to_string(),
+                                                            _ => continue,
+                                                        };
+                                                        let idle_time = match &entry[2] {
+                                                            bb8_redis::redis::Value::Int(i) => {
+                                                                *i as u64
+                                                            },
+                                                            bb8_redis::redis::Value::BulkString(
+                                                                s,
+                                                            ) => String::from_utf8_lossy(s)
+                                                                .parse::<u64>()
+                                                                .unwrap_or(0),
+                                                            _ => 0,
+                                                        };
+                                                        items.push((
+                                                            id,
+                                                            consumer,
+                                                            idle_time,
+                                                            Vec::new(),
+                                                        ));
                                                     }
                                                 }
-                                                Ok(items)
-                                            },
-                                            Ok(bb8_redis::redis::Value::Int(0)) | Ok(bb8_redis::redis::Value::Nil) => Ok(Vec::new()),
-                                            Ok(_) => Ok(Vec::new()),
-                                            Err(e) => Err(Error::RedisError(e)),
-                                        };
+                                            }
+                                            Ok(items)
+                                        },
+                                        Ok(bb8_redis::redis::Value::Int(0))
+                                        | Ok(bb8_redis::redis::Value::Nil) => Ok(Vec::new()),
+                                        Ok(_) => Ok(Vec::new()),
+                                        Err(e) => Err(Error::RedisError(e)),
+                                    };
 
                                     match more_pending {
                                         Ok(more_msgs) if !more_msgs.is_empty() => {
@@ -765,10 +785,12 @@ impl Consumer {
                 type DeliveryTime = u64;
                 type AdditionalInfo = Vec<(String, u64)>;
                 type PendingItem = (String, ConsumerName, DeliveryTime, AdditionalInfo);
-                
+
                 // First try to get the raw response to handle different formats
-                let pending_raw: std::result::Result<bb8_redis::redis::Value, bb8_redis::redis::RedisError> = 
-                    bb8_redis::redis::cmd("XPENDING")
+                let pending_raw: std::result::Result<
+                    bb8_redis::redis::Value,
+                    bb8_redis::redis::RedisError,
+                > = bb8_redis::redis::cmd("XPENDING")
                         .arg(stream_key)
                         .arg(group_name)
                         .arg("-")  // start ID
@@ -778,52 +800,58 @@ impl Consumer {
                         .await;
 
                 // Convert the raw response to our expected format, handling edge cases
-                let pending_details: std::result::Result<Vec<PendingItem>, bb8_redis::redis::RedisError> = 
-                    match pending_raw {
-                        Ok(bb8_redis::redis::Value::Array(arr)) => {
-                            // Parse the array into our expected format
-                            let mut items = Vec::new();
-                            for val in arr {
-                                if let bb8_redis::redis::Value::Array(entry) = val {
-                                    if entry.len() >= 4 {
-                                        // Extract values with proper error handling
-                                        let id = match &entry[0] {
-                                            bb8_redis::redis::Value::BulkString(s) => String::from_utf8_lossy(s).to_string(),
-                                            _ => continue,
-                                        };
-                                        let consumer = match &entry[1] {
-                                            bb8_redis::redis::Value::BulkString(s) => String::from_utf8_lossy(s).to_string(),
-                                            _ => continue,
-                                        };
-                                        let idle_time = match &entry[2] {
-                                            bb8_redis::redis::Value::Int(i) => *i as u64,
-                                            bb8_redis::redis::Value::BulkString(s) => {
-                                                String::from_utf8_lossy(s).parse::<u64>().unwrap_or(0)
-                                            },
-                                            _ => 0,
-                                        };
-                                        // Additional info is optional
-                                        let additional_info = Vec::new();
-                                        items.push((id, consumer, idle_time, additional_info));
-                                    }
+                let pending_details: std::result::Result<
+                    Vec<PendingItem>,
+                    bb8_redis::redis::RedisError,
+                > = match pending_raw {
+                    Ok(bb8_redis::redis::Value::Array(arr)) => {
+                        // Parse the array into our expected format
+                        let mut items = Vec::new();
+                        for val in arr {
+                            if let bb8_redis::redis::Value::Array(entry) = val {
+                                if entry.len() >= 4 {
+                                    // Extract values with proper error handling
+                                    let id = match &entry[0] {
+                                        bb8_redis::redis::Value::BulkString(s) => {
+                                            String::from_utf8_lossy(s).to_string()
+                                        },
+                                        _ => continue,
+                                    };
+                                    let consumer = match &entry[1] {
+                                        bb8_redis::redis::Value::BulkString(s) => {
+                                            String::from_utf8_lossy(s).to_string()
+                                        },
+                                        _ => continue,
+                                    };
+                                    let idle_time = match &entry[2] {
+                                        bb8_redis::redis::Value::Int(i) => *i as u64,
+                                        bb8_redis::redis::Value::BulkString(s) => {
+                                            String::from_utf8_lossy(s).parse::<u64>().unwrap_or(0)
+                                        },
+                                        _ => 0,
+                                    };
+                                    // Additional info is optional
+                                    let additional_info = Vec::new();
+                                    items.push((id, consumer, idle_time, additional_info));
                                 }
                             }
-                            Ok(items)
-                        },
-                        Ok(bb8_redis::redis::Value::Int(0)) => {
-                            // No pending messages
-                            Ok(Vec::new())
-                        },
-                        Ok(bb8_redis::redis::Value::Nil) => {
-                            // Stream or group doesn't exist
-                            Ok(Vec::new())
-                        },
-                        Ok(other) => {
-                            error!("[{}] Unexpected XPENDING response type: {:?}", stream_key, other);
-                            Ok(Vec::new())
-                        },
-                        Err(e) => Err(e),
-                    };
+                        }
+                        Ok(items)
+                    },
+                    Ok(bb8_redis::redis::Value::Int(0)) => {
+                        // No pending messages
+                        Ok(Vec::new())
+                    },
+                    Ok(bb8_redis::redis::Value::Nil) => {
+                        // Stream or group doesn't exist
+                        Ok(Vec::new())
+                    },
+                    Ok(other) => {
+                        error!("[{}] Unexpected XPENDING response type: {:?}", stream_key, other);
+                        Ok(Vec::new())
+                    },
+                    Err(e) => Err(e),
+                };
 
                 match pending_details {
                     Ok(pending_msgs) => {
@@ -915,7 +943,10 @@ impl Consumer {
                         }
                     },
                     Err(e) => {
-                        error!("[{}] Error getting pending message details: {} - Response type not vector compatible", stream_key, e);
+                        error!(
+                            "[{}] Error getting pending message details: {} - Response type not vector compatible",
+                            stream_key, e
+                        );
                         // Continue processing instead of breaking to handle transient errors
                         processed = pending_count; // Exit the loop
                     },

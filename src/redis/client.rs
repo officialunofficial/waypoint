@@ -428,16 +428,14 @@ impl Redis {
                 .await;
 
         match items_with_idle {
-            Ok(items) => {
-                Ok(items
-                    .into_iter()
-                    .map(|(id, _, idle_time, count)| PendingItem {
-                        id,
-                        idle_time: idle_time.parse().unwrap_or(0),
-                        delivery_count: count.parse().unwrap_or(0),
-                    })
-                    .collect())
-            },
+            Ok(items) => Ok(items
+                .into_iter()
+                .map(|(id, _, idle_time, count)| PendingItem {
+                    id,
+                    idle_time: idle_time.parse().unwrap_or(0),
+                    delivery_count: count.parse().unwrap_or(0),
+                })
+                .collect()),
             Err(_) => {
                 // Fallback to standard XPENDING without IDLE (older Redis versions)
                 // We'll have to filter by idle time manually
