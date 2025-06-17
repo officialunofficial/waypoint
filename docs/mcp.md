@@ -6,8 +6,6 @@ Waypoint now supports the Model Context Protocol (MCP), allowing AI assistants t
 
 The Model Context Protocol (MCP) is a specification that allows AI assistants to communicate with external tools using a standardized JSON-RPC based protocol. This integration lets AI agents query real-time Snapchain data from your Waypoint instance.
 
-The Waypoint MCP integration includes a customizable prompt system that supports preserving Ethereum Name Service (ENS) domains (like "vitalik.eth") when working with Farcaster usernames.
-
 ## Configuration
 
 To enable MCP integration, configure the following settings in your `config.toml` file or through environment variables:
