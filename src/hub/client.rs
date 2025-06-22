@@ -9,6 +9,7 @@ use crate::{
 };
 use rand::Rng;
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -151,11 +152,17 @@ impl Hub {
         })
     }
 
+    /// Add custom headers to request
+    fn add_custom_headers<T>(&self, request: tonic::Request<T>) -> tonic::Request<T> {
+        crate::hub::add_custom_headers(request, &self.config.headers)
+    }
+
     /// Create an empty hub instance for testing or mock purposes
     pub fn empty() -> Self {
         // Create default config
         let config = Arc::new(HubConfig {
             url: "snapchain.farcaster.xyz:3383".to_string(),
+            headers: HashMap::new(),
             max_concurrent_connections: 5,
             max_requests_per_second: 10,
             retry_max_attempts: 5,
@@ -217,7 +224,7 @@ impl Hub {
 
         // Test connection with info request
         // Get hub info without middleware first time to avoid double retry
-        let info_request = tonic::Request::new(GetInfoRequest {});
+        let info_request = self.add_custom_headers(tonic::Request::new(GetInfoRequest {}));
         match self.client.as_mut().unwrap().get_info(info_request).await {
             Ok(response) => {
                 let hub_info = response.into_inner();
@@ -349,18 +356,19 @@ impl Hub {
         let max_attempts = self.config.retry_max_attempts;
 
         loop {
-            // Get a mutable reference to the client
-            let client = self.client.as_mut().ok_or(Error::NotConnected)?;
-
             // Create the request
             let request = tonic::Request::new(BlocksRequest {
                 shard_id,
                 start_block_number: start_block,
                 stop_block_number: end_block,
             });
+            let request_with_headers = self.add_custom_headers(request);
+
+            // Get a mutable reference to the client
+            let client = self.client.as_mut().ok_or(Error::NotConnected)?;
 
             // Try to execute the request
-            match client.get_blocks(request).await {
+            match client.get_blocks(request_with_headers).await {
                 Ok(response) => {
                     // Reset error count and update success timestamp
                     self.error_count.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -423,10 +431,12 @@ impl Hub {
 
         // Clone what we need for the closure to avoid borrowing self
         let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
 
         // Use retry_with_backoff
         self.retry_with_backoff(|| {
             let client_clone = client_clone.clone();
+            let headers = headers.clone();
             Box::pin(async move {
                 let mut client = client_clone.ok_or(Error::NotConnected)?;
                 let request = tonic::Request::new(ShardChunksRequest {
@@ -434,7 +444,8 @@ impl Hub {
                     start_block_number: start_block,
                     stop_block_number: end_block,
                 });
-                match client.get_shard_chunks(request).await {
+                let request_with_headers = crate::hub::add_custom_headers(request, &headers);
+                match client.get_shard_chunks(request_with_headers).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -457,14 +468,17 @@ impl Hub {
 
         // Clone what we need for the closure to avoid borrowing self
         let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
 
         // Use retry_with_backoff
         self.retry_with_backoff(|| {
             let client_clone = client_clone.clone();
+            let headers = headers.clone();
             Box::pin(async move {
                 let mut client = client_clone.ok_or(Error::NotConnected)?;
                 let request = tonic::Request::new(GetInfoRequest {});
-                match client.get_info(request).await {
+                let request_with_headers = crate::hub::add_custom_headers(request, &headers);
+                match client.get_info(request_with_headers).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -497,11 +511,13 @@ impl Hub {
 
         // Clone what we need for the closure to avoid borrowing self
         let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
 
         // Use retry_with_backoff
         self.retry_with_backoff(|| {
             let client_clone = client_clone.clone();
             let page_token_clone = page_token.clone();
+            let headers = headers.clone();
             Box::pin(async move {
                 let mut client = client_clone.ok_or(Error::NotConnected)?;
                 let request = tonic::Request::new(FidsRequest {
@@ -510,7 +526,8 @@ impl Hub {
                     reverse,
                     shard_id: 0,
                 });
-                match client.get_fids(request).await {
+                let request_with_headers = crate::hub::add_custom_headers(request, &headers);
+                match client.get_fids(request_with_headers).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }

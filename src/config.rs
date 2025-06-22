@@ -5,6 +5,7 @@ use figment::{
     providers::{Env, Format, Serialized, Toml},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
 
@@ -94,6 +95,10 @@ fn default_metrics_collection_interval() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubConfig {
     pub url: String,
+
+    // Custom headers for authentication and other purposes
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 
     // Connection limits
     #[serde(default = "default_hub_max_concurrent_connections")]
@@ -309,6 +314,7 @@ impl Default for HubConfig {
     fn default() -> Self {
         Self {
             url: "snapchain.farcaster.xyz:3383".to_string(),
+            headers: HashMap::new(),
             max_concurrent_connections: default_hub_max_concurrent_connections(),
             max_requests_per_second: default_hub_max_requests_per_second(),
             retry_max_attempts: default_retry_attempts(),

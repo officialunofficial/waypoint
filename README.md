@@ -100,6 +100,10 @@ WAYPOINT_REDIS__URL=redis://localhost:6379
 
 # Farcaster Hub configuration
 WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383
+# Optional: Custom headers for authenticated hubs
+# Headers with underscores will be converted to hyphens (e.g., x_api_key becomes x-api-key)
+# WAYPOINT_HUB__HEADERS__x_api_key=your_api_key_here
+# WAYPOINT_HUB__HEADERS__authorization=Bearer your_token_here
 
 # MCP service configuration
 WAYPOINT_MCP__ENABLED=true

@@ -115,6 +115,7 @@ impl HubSubscriber {
             // Create a default config if none provided
             Arc::new(HubConfig {
                 url: hub_host.clone(),
+                headers: std::collections::HashMap::new(),
                 max_concurrent_connections: 5,
                 max_requests_per_second: 10,
                 retry_max_attempts: 5,
@@ -162,6 +163,11 @@ impl HubSubscriber {
         self.redis.get_last_processed_event(&self.redis_key).await
     }
 
+    /// Add custom headers to request
+    fn add_custom_headers<T>(&self, request: tonic::Request<T>) -> tonic::Request<T> {
+        crate::hub::add_custom_headers(request, &self.hub_config.headers)
+    }
+
     async fn wait_for_ready(&self) -> Result<(), Error> {
         // Enhanced wait_for_ready with configurable retries and exponential backoff
         let max_attempts = self.hub_config.retry_max_attempts;
@@ -173,8 +179,11 @@ impl HubSubscriber {
         while current_attempt < max_attempts {
             current_attempt += 1;
 
-            // Try to get hub info
-            match self.hub.clone().get_info(tonic::Request::new(GetInfoRequest {})).await {
+            // Try to get hub info with custom headers
+            let request = tonic::Request::new(GetInfoRequest {});
+            let request = self.add_custom_headers(request);
+
+            match self.hub.clone().get_info(request).await {
                 Ok(_) => {
                     // Success - reset error counter and update last success time
                     self.consecutive_errors.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -595,6 +604,7 @@ impl HubSubscriber {
                 event_types: self.event_types.as_ref().to_vec(),
                 shard_index: self.shard_index.map(|s| s as u32),
             });
+            let req = self.add_custom_headers(req);
 
             // Clone hub client before making the call
             let mut hub_clone = self.hub.clone();
