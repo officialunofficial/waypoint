@@ -535,4 +535,207 @@ impl Hub {
         })
         .await
     }
+
+    /// Get casts by FID with retry logic and custom headers
+    pub async fn get_casts_by_fid(
+        &mut self,
+        request: crate::proto::FidRequest,
+    ) -> Result<crate::proto::MessagesResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
+
+        self.retry_with_backoff(|| {
+            let client_clone = client_clone.clone();
+            let request = request.clone();
+            let headers = headers.clone();
+            Box::pin(async move {
+                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_casts_by_fid(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Get reactions by FID with retry logic and custom headers
+    pub async fn get_reactions_by_fid(
+        &mut self,
+        request: crate::proto::ReactionsByFidRequest,
+    ) -> Result<crate::proto::MessagesResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
+
+        self.retry_with_backoff(|| {
+            let client_clone = client_clone.clone();
+            let request = request.clone();
+            let headers = headers.clone();
+            Box::pin(async move {
+                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_reactions_by_fid(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Get links by FID with retry logic and custom headers
+    pub async fn get_links_by_fid(
+        &mut self,
+        request: crate::proto::LinksByFidRequest,
+    ) -> Result<crate::proto::MessagesResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
+
+        self.retry_with_backoff(|| {
+            let client_clone = client_clone.clone();
+            let request = request.clone();
+            let headers = headers.clone();
+            Box::pin(async move {
+                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_links_by_fid(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Get verifications by FID with retry logic and custom headers
+    pub async fn get_verifications_by_fid(
+        &mut self,
+        request: crate::proto::FidRequest,
+    ) -> Result<crate::proto::MessagesResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
+
+        self.retry_with_backoff(|| {
+            let client_clone = client_clone.clone();
+            let request = request.clone();
+            let headers = headers.clone();
+            Box::pin(async move {
+                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_verifications_by_fid(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Get user data by FID with retry logic and custom headers
+    pub async fn get_user_data_by_fid(
+        &mut self,
+        request: crate::proto::FidRequest,
+    ) -> Result<crate::proto::MessagesResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
+
+        self.retry_with_backoff(|| {
+            let client_clone = client_clone.clone();
+            let request = request.clone();
+            let headers = headers.clone();
+            Box::pin(async move {
+                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_user_data_by_fid(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Get all user data messages by FID with retry logic and custom headers
+    pub async fn get_all_user_data_messages_by_fid(
+        &mut self,
+        request: crate::proto::FidTimestampRequest,
+    ) -> Result<crate::proto::MessagesResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
+
+        self.retry_with_backoff(|| {
+            let client_clone = client_clone.clone();
+            let request = request.clone();
+            let headers = headers.clone();
+            Box::pin(async move {
+                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_all_user_data_messages_by_fid(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Get on-chain events with retry logic and custom headers
+    pub async fn get_on_chain_events(
+        &mut self,
+        request: crate::proto::OnChainEventRequest,
+    ) -> Result<crate::proto::OnChainEventResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client_clone = self.client.clone();
+        let headers = self.config.headers.clone();
+
+        self.retry_with_backoff(|| {
+            let client_clone = client_clone.clone();
+            let request = request.clone();
+            let headers = headers.clone();
+            Box::pin(async move {
+                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_on_chain_events(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
 }
