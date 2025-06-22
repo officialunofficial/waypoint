@@ -8,8 +8,12 @@ All notable changes to Waypoint will be documented in this file.
 
 - Resolve backfill job queue exhaustion bug (#37)
 - Increase Redis pool sizes to prevent backfill queue exhaustion (#38)
-- Handle Redis XPENDING response type variations
-- Prevent backfill job loss by removing Redis key expiration
+- Handle Redis XPENDING response variations and prevent backfill job loss (#39)
+
+### Documentation
+
+- Update mcp.md
+- Update docs
 
 ### Features
 
@@ -17,7 +21,11 @@ All notable changes to Waypoint will be documented in this file.
 
 ### Miscellaneous Tasks
 
-- Bump version to 2025.6.3
+- Fmt and version
+
+### Refactor
+
+- Custom headers and unit test
 
 ## [0.6.3] - 2025-06-09
 
