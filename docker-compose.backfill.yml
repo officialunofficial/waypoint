@@ -55,8 +55,8 @@ services:
 
       # Farcaster Hub
       WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
-      # Custom headers for authentication (underscores in env vars will be converted to hyphens)
-      WAYPOINT_HUB__HEADERS__x_api_key: ${WAYPOINT_HUB__HEADERS__x_api_key}
+      # Custom headers for authentication (uppercase env vars will be converted to lowercase headers with hyphens)
+      WAYPOINT_HUB__HEADERS__X_API_KEY: ${WAYPOINT_HUB__HEADERS__X_API_KEY}
       WAYPOINT_HUB__RETRY_MAX_ATTEMPTS: ${WAYPOINT_HUB__RETRY_MAX_ATTEMPTS:-5}
       WAYPOINT_HUB__RETRY_BASE_DELAY_MS: ${WAYPOINT_HUB__RETRY_BASE_DELAY_MS:-100}
       WAYPOINT_HUB__RETRY_MAX_DELAY_MS: ${WAYPOINT_HUB__RETRY_MAX_DELAY_MS:-30000}
@@ -95,8 +95,8 @@ services:
 
       # Farcaster Hub
       WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
-      # Custom headers for authentication (underscores in env vars will be converted to hyphens)
-      WAYPOINT_HUB__HEADERS__x_api_key: ${WAYPOINT_HUB__HEADERS__x_api_key}
+      # Custom headers for authentication (uppercase env vars will be converted to lowercase headers with hyphens)
+      WAYPOINT_HUB__HEADERS__X_API_KEY: ${WAYPOINT_HUB__HEADERS__X_API_KEY}
       WAYPOINT_HUB__RETRY_MAX_ATTEMPTS: ${WAYPOINT_HUB__RETRY_MAX_ATTEMPTS:-5}
       WAYPOINT_HUB__RETRY_BASE_DELAY_MS: ${WAYPOINT_HUB__RETRY_BASE_DELAY_MS:-100}
       WAYPOINT_HUB__RETRY_MAX_DELAY_MS: ${WAYPOINT_HUB__RETRY_MAX_DELAY_MS:-30000}
