@@ -19,37 +19,38 @@ use tracing::warn;
 /// This function converts environment variable naming conventions to proper HTTP header format:
 /// - Converts underscores to hyphens (e.g., `X_API_KEY` -> `x-api-key`)
 /// - Converts to lowercase as per HTTP/2 requirements
-/// 
+///
 /// # Examples
-/// 
+///
 /// Environment variables like `WAYPOINT_HUB__HEADERS__X_API_KEY` will be sent as the `x-api-key` header.
-pub fn add_custom_headers<T>(mut request: tonic::Request<T>, headers: &HashMap<String, String>) -> tonic::Request<T> {
+pub fn add_custom_headers<T>(
+    mut request: tonic::Request<T>,
+    headers: &HashMap<String, String>,
+) -> tonic::Request<T> {
     for (key, value) in headers {
         // Convert to lowercase and replace underscores with hyphens for HTTP header format
         let header_name = key.to_lowercase().replace('_', "-");
-        
+
         match MetadataValue::try_from(value.as_str()) {
-            Ok(metadata_value) => {
-                match MetadataKey::from_bytes(header_name.as_bytes()) {
-                    Ok(header_key) => {
-                        request.metadata_mut().insert(header_key, metadata_value);
-                    }
-                    Err(e) => {
-                        warn!(
-                            header_name = %header_name,
-                            error = %e,
-                            "Failed to create metadata key for custom header"
-                        );
-                    }
-                }
-            }
+            Ok(metadata_value) => match MetadataKey::from_bytes(header_name.as_bytes()) {
+                Ok(header_key) => {
+                    request.metadata_mut().insert(header_key, metadata_value);
+                },
+                Err(e) => {
+                    warn!(
+                        header_name = %header_name,
+                        error = %e,
+                        "Failed to create metadata key for custom header"
+                    );
+                },
+            },
             Err(e) => {
                 warn!(
                     header_name = %header_name,
                     error = %e,
                     "Failed to create metadata value for custom header"
                 );
-            }
+            },
         }
     }
     request
@@ -69,9 +70,9 @@ mod tests {
 
         let request = Request::new(());
         let request = add_custom_headers(request, &headers);
-        
+
         let metadata = request.metadata();
-        
+
         // Check that headers are properly converted to lowercase with hyphens
         assert_eq!(metadata.get("x-api-key").unwrap().to_str().unwrap(), "test-key-123");
         assert_eq!(metadata.get("authorization").unwrap().to_str().unwrap(), "Bearer token123");
@@ -83,7 +84,7 @@ mod tests {
         let headers = HashMap::new();
         let request = Request::new(());
         let request = add_custom_headers(request, &headers);
-        
+
         // Should not panic and should return request unchanged
         assert_eq!(request.metadata().len(), 0);
     }
@@ -97,9 +98,9 @@ mod tests {
 
         let request = Request::new(());
         let request = add_custom_headers(request, &headers);
-        
+
         let metadata = request.metadata();
-        
+
         // Valid header should be added
         assert_eq!(metadata.get("valid-header").unwrap().to_str().unwrap(), "valid-value");
         // Invalid header should be skipped (contains space which isn't valid)
@@ -110,15 +111,14 @@ mod tests {
     fn test_add_custom_headers_preserves_existing_headers() {
         let headers = HashMap::new();
         let mut request = Request::new(());
-        
+
         // Add an existing header
-        request.metadata_mut().insert(
-            "existing-header",
-            MetadataValue::from_static("existing-value")
-        );
-        
+        request
+            .metadata_mut()
+            .insert("existing-header", MetadataValue::from_static("existing-value"));
+
         let request = add_custom_headers(request, &headers);
-        
+
         // Existing header should still be present
         assert_eq!(
             request.metadata().get("existing-header").unwrap().to_str().unwrap(),
@@ -132,12 +132,15 @@ mod tests {
         // Test with various valid header values
         headers.insert("X_BEARER_TOKEN".to_string(), "Bearer abc123-xyz789".to_string());
         headers.insert("X_API_VERSION".to_string(), "v2.0".to_string());
-        
+
         let request = Request::new(());
         let request = add_custom_headers(request, &headers);
-        
+
         let metadata = request.metadata();
-        assert_eq!(metadata.get("x-bearer-token").unwrap().to_str().unwrap(), "Bearer abc123-xyz789");
+        assert_eq!(
+            metadata.get("x-bearer-token").unwrap().to_str().unwrap(),
+            "Bearer abc123-xyz789"
+        );
         assert_eq!(metadata.get("x-api-version").unwrap().to_str().unwrap(), "v2.0");
     }
 }
