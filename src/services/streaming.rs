@@ -1482,6 +1482,8 @@ impl Service for StreamingService {
                 options.spam_filter_enabled = Some(true);
             }
 
+            options.hub_config = Some(Arc::new(context.config.hub.clone()));
+
             HubSubscriber::new(
                 client.clone(),
                 Arc::clone(&context.state.redis),

@@ -1,6 +1,6 @@
 use crate::{
     database::client::Database,
-    hub::error::Error,
+    hub::client::{Error, Hub},
     processor::consumer::EventProcessor,
     proto::{
         self, FidRequest, FidTimestampRequest, HubEvent, HubEventType, LinksByFidRequest,
@@ -9,11 +9,11 @@ use crate::{
     },
 };
 use std::{sync::Arc, time::Duration};
-use tonic::transport::Channel;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace};
 
 pub struct MessageReconciler {
-    hub_client: proto::hub_service_client::HubServiceClient<Channel>,
+    hub: Arc<Mutex<Hub>>,
     _database: Arc<Database>, // Prefixed with underscore to indicate intentionally unused
     _connection_timeout: Duration, // Prefixed with underscore to indicate intentionally unused
     _use_streaming_rpcs: bool, // Prefixed with underscore to indicate intentionally unused
@@ -45,10 +45,10 @@ impl MessageReconciler {
 
             // Fetch data for all FIDs in this chunk concurrently
             for &fid in fid_chunk {
-                let hub_client = self.hub_client.clone();
+                let hub = self.hub.clone();
                 let task = tokio::spawn(async move {
                     let reconciler = MessageReconciler {
-                        hub_client,
+                        hub,
                         _database: Arc::new(crate::database::Database::empty()), // Placeholder
                         _connection_timeout: std::time::Duration::from_secs(30),
                         _use_streaming_rpcs: false,
@@ -188,13 +188,13 @@ impl MessageReconciler {
         Ok((total_success, total_errors))
     }
     pub fn new(
-        hub_client: proto::hub_service_client::HubServiceClient<Channel>,
+        hub: Arc<Mutex<Hub>>,
         database: Arc<Database>,
         connection_timeout: Duration,
         use_streaming_rpcs: bool,
     ) -> Self {
         Self {
-            hub_client,
+            hub,
             _database: database,
             _connection_timeout: connection_timeout,
             _use_streaming_rpcs: use_streaming_rpcs,
@@ -570,10 +570,10 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response =
-                self.hub_client.clone().get_casts_by_fid(tonic::Request::new(request)).await?;
-
-            let response = response.into_inner();
+            let response = {
+                let mut hub_guard = self.hub.lock().await;
+                hub_guard.get_casts_by_fid(request).await?
+            };
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -619,10 +619,10 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response =
-                self.hub_client.clone().get_reactions_by_fid(tonic::Request::new(request)).await?;
-
-            let response = response.into_inner();
+            let response = {
+                let mut hub_guard = self.hub.lock().await;
+                hub_guard.get_reactions_by_fid(request).await?
+            };
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -668,10 +668,10 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response =
-                self.hub_client.clone().get_links_by_fid(tonic::Request::new(request)).await?;
-
-            let response = response.into_inner();
+            let response = {
+                let mut hub_guard = self.hub.lock().await;
+                hub_guard.get_links_by_fid(request).await?
+            };
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -716,13 +716,10 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = self
-                .hub_client
-                .clone()
-                .get_verifications_by_fid(tonic::Request::new(request))
-                .await?;
-
-            let response = response.into_inner();
+            let response = {
+                let mut hub_guard = self.hub.lock().await;
+                hub_guard.get_verifications_by_fid(request).await?
+            };
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -767,10 +764,10 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response =
-                self.hub_client.clone().get_user_data_by_fid(tonic::Request::new(request)).await?;
-
-            let response = response.into_inner();
+            let response = {
+                let mut hub_guard = self.hub.lock().await;
+                hub_guard.get_user_data_by_fid(request).await?
+            };
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -827,22 +824,17 @@ impl MessageReconciler {
                 stop_timestamp: None,
             };
 
-            let response = match self
-                .hub_client
-                .clone()
-                .get_all_user_data_messages_by_fid(tonic::Request::new(ts_request))
-                .await
-            {
-                Ok(resp) => resp.into_inner(),
+            let get_all_result = {
+                let mut hub_guard = self.hub.lock().await;
+                hub_guard.get_all_user_data_messages_by_fid(ts_request).await
+            };
+            let response = match get_all_result {
+                Ok(resp) => resp,
                 Err(e) => {
                     debug!("Error getting username proof messages: {}", e);
                     // Try regular user data as fallback
-                    let resp = self
-                        .hub_client
-                        .clone()
-                        .get_user_data_by_fid(tonic::Request::new(request))
-                        .await?;
-                    resp.into_inner()
+                    let mut hub_guard = self.hub.lock().await;
+                    hub_guard.get_user_data_by_fid(request).await?
                 },
             };
 
@@ -919,13 +911,12 @@ impl MessageReconciler {
                     reverse: Some(false),
                 };
 
-                let response = match self
-                    .hub_client
-                    .clone()
-                    .get_on_chain_events(tonic::Request::new(request))
-                    .await
-                {
-                    Ok(resp) => resp.into_inner(),
+                let on_chain_result = {
+                    let mut hub_guard = self.hub.lock().await;
+                    hub_guard.get_on_chain_events(request).await
+                };
+                let response = match on_chain_result {
+                    Ok(resp) => resp,
                     Err(e) => {
                         debug!("Error fetching onchain events of type {:?}: {}", event_type, e);
                         break;
