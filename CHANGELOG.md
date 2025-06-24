@@ -18,14 +18,8 @@ All notable changes to Waypoint will be documented in this file.
 ### Features
 
 - Support Farcaster Pro (#36)
-
-### Miscellaneous Tasks
-
-- Fmt and version
-
-### Refactor
-
-- Custom headers and unit test
+- Custom headers (#42)
+- Update proto to 0.3.1
 
 ## [0.6.3] - 2025-06-09
 
