@@ -1,5 +1,5 @@
 use crate::{
-    core::root_parent_hub::{find_root_parent_hub, RootParentInfo},
+    core::root_parent_hub::{RootParentInfo, find_root_parent_hub},
     hub::providers::FarcasterHubClient,
     proto::{Message, cast_add_body::Parent, message_data::Body::CastAddBody},
 };
@@ -16,10 +16,7 @@ pub struct RootParentProcessor {
 
 impl RootParentProcessor {
     pub fn new(db_pool: PgPool, hub: Arc<Mutex<crate::hub::client::Hub>>) -> Self {
-        Self { 
-            db_pool,
-            hub_client: FarcasterHubClient::new(hub),
-        }
+        Self { db_pool, hub_client: FarcasterHubClient::new(hub) }
     }
 
     /// Process a single cast message to update its root parent information
@@ -36,14 +33,15 @@ impl RootParentProcessor {
                 let (parent_fid, parent_hash, parent_url) = match &cast_body.parent {
                     Some(Parent::ParentCastId(cast_id)) => {
                         (Some(cast_id.fid as i64), Some(cast_id.hash.as_slice()), None)
-                    }
+                    },
                     Some(Parent::ParentUrl(url)) => (None, None, Some(url.as_str())),
                     None => (None, None, None),
                 };
 
                 // Find root parent if this cast has a parent
                 let root_info = if parent_fid.is_some() || parent_url.is_some() {
-                    find_root_parent_hub(&self.hub_client, parent_fid, parent_hash, parent_url).await?
+                    find_root_parent_hub(&self.hub_client, parent_fid, parent_hash, parent_url)
+                        .await?
                 } else {
                     None
                 };
@@ -126,13 +124,13 @@ impl RootParentProcessor {
                             if let Err(e) = self.update_cast_root_parent(&hash, &root_info).await {
                                 error!("Failed to update root parent for cast {:?}: {}", hash, e);
                             }
-                        }
+                        },
                         Ok(None) => {
                             // Cast has no parent, it's a root itself
-                        }
+                        },
                         Err(e) => {
                             error!("Failed to find root parent for cast {:?}: {}", hash, e);
-                        }
+                        },
                     }
                 }
             }

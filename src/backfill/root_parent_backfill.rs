@@ -1,6 +1,5 @@
 use crate::{
-    core::root_parent_hub::find_root_parent_hub,
-    database::client::Database,
+    core::root_parent_hub::find_root_parent_hub, database::client::Database,
     hub::providers::FarcasterHubClient,
 };
 use std::sync::Arc;
@@ -16,11 +15,7 @@ pub struct RootParentBackfill {
 
 impl RootParentBackfill {
     pub fn new(database: Arc<Database>, hub: Arc<Mutex<crate::hub::client::Hub>>) -> Self {
-        Self {
-            database,
-            hub_client: FarcasterHubClient::new(hub),
-            batch_size: 100,
-        }
+        Self { database, hub_client: FarcasterHubClient::new(hub), batch_size: 100 }
     }
 
     pub fn with_batch_size(mut self, batch_size: i64) -> Self {
@@ -38,7 +33,7 @@ impl RootParentBackfill {
         loop {
             // Find casts that need root parent information
             let casts = self.find_casts_needing_update().await?;
-            
+
             if casts.is_empty() {
                 info!("No more casts to process");
                 break;
@@ -48,40 +43,37 @@ impl RootParentBackfill {
 
             for cast in &casts {
                 total_processed += 1;
-                
+
                 match self.process_cast(cast).await {
                     Ok(updated) => {
                         if updated {
                             total_updated += 1;
                         }
-                    }
+                    },
                     Err(e) => {
                         error!("Failed to process cast {:?}: {}", cast.hash, e);
-                    }
+                    },
                 }
 
                 // Log progress every 1000 casts
                 if total_processed % 1000 == 0 {
-                    info!(
-                        "Progress: processed={}, updated={}", 
-                        total_processed, 
-                        total_updated
-                    );
+                    info!("Progress: processed={}, updated={}", total_processed, total_updated);
                 }
             }
         }
 
         info!(
-            "Root parent backfill completed: processed={}, updated={}", 
-            total_processed, 
-            total_updated
+            "Root parent backfill completed: processed={}, updated={}",
+            total_processed, total_updated
         );
 
         Ok(())
     }
 
     /// Find casts that need root parent information updated
-    async fn find_casts_needing_update(&self) -> Result<Vec<CastInfo>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn find_casts_needing_update(
+        &self,
+    ) -> Result<Vec<CastInfo>, Box<dyn std::error::Error + Send + Sync>> {
         let results = sqlx::query_as!(
             CastInfo,
             r#"
@@ -110,19 +102,24 @@ impl RootParentBackfill {
     }
 
     /// Process a single cast to update its root parent information
-    async fn process_cast(&self, cast: &CastInfo) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    async fn process_cast(
+        &self,
+        cast: &CastInfo,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         // Find root parent
         let root_info = match find_root_parent_hub(
             &self.hub_client,
             cast.parent_fid,
             cast.parent_hash.as_deref(),
             cast.parent_url.as_deref(),
-        ).await {
+        )
+        .await
+        {
             Ok(info) => info,
             Err(e) => {
                 warn!("Failed to find root parent for cast {:?}: {}", cast.hash, e);
                 return Ok(false);
-            }
+            },
         };
 
         // Update the database if we found root parent info

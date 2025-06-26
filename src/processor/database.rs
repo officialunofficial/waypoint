@@ -1,5 +1,8 @@
 use crate::{
-    core::{normalize::NormalizedEmbed, root_parent_hub::find_root_parent_hub, util::from_farcaster_time},
+    core::{
+        normalize::NormalizedEmbed, root_parent_hub::find_root_parent_hub,
+        util::from_farcaster_time,
+    },
     database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
     processor::consumer::EventProcessor,
@@ -64,33 +67,35 @@ impl DatabaseProcessor {
                 let ts = Self::convert_timestamp(data.timestamp);
 
                 // Find root parent information if this cast has a parent
-                let (root_parent_fid, root_parent_hash, root_parent_url) = 
+                let (root_parent_fid, root_parent_hash, root_parent_url) =
                     if parent_fid.is_some() || parent_url.is_some() {
                         // Create a hub client from resources
                         let hub_client = crate::hub::providers::FarcasterHubClient::new(
-                            Arc::clone(&self.resources.hub)
+                            Arc::clone(&self.resources.hub),
                         );
-                        
+
                         match find_root_parent_hub(
                             &hub_client,
                             parent_fid,
                             parent_hash.map(|h| h.as_slice()),
                             parent_url,
-                        ).await {
-                            Ok(Some(root_info)) => {
-                                (root_info.root_parent_fid, 
-                                 root_info.root_parent_hash, 
-                                 root_info.root_parent_url)
-                            }
+                        )
+                        .await
+                        {
+                            Ok(Some(root_info)) => (
+                                root_info.root_parent_fid,
+                                root_info.root_parent_hash,
+                                root_info.root_parent_url,
+                            ),
                             Ok(None) => {
                                 // No parent, this cast is a root
                                 (None, None, None)
-                            }
+                            },
                             Err(e) => {
                                 warn!("Failed to find root parent for cast: {}", e);
                                 // Continue without root parent info rather than failing
                                 (None, None, None)
-                            }
+                            },
                         }
                     } else {
                         // No parent, this cast is a root
@@ -98,7 +103,7 @@ impl DatabaseProcessor {
                     };
 
                 sqlx::query!(
-                r#"
+                    r#"
                 INSERT INTO casts (
                     fid, hash, text, parent_fid, parent_hash, parent_url, 
                     root_parent_fid, root_parent_hash, root_parent_url,
@@ -118,25 +123,28 @@ impl DatabaseProcessor {
                     mentions = EXCLUDED.mentions,
                     mentions_positions = EXCLUDED.mentions_positions
                 "#,
-                data.fid as i64,
-                &msg.hash,
-                &cast_body.text,
-                parent_fid,
-                parent_hash,
-                parent_url,
-                root_parent_fid,
-                root_parent_hash.as_deref(),
-                root_parent_url.as_deref(),
-                ts,
-                serde_json::to_value(
-                    cast_body.embeds
-                        .iter()
-                        .map(NormalizedEmbed::from_protobuf_embed)
-                        .collect::<Vec<_>>()
-                )?,
-                serde_json::to_value(&cast_body.mentions)?,
-                serde_json::to_value(&cast_body.mentions_positions)?,
-            ).execute(pool).await?;
+                    data.fid as i64,
+                    &msg.hash,
+                    &cast_body.text,
+                    parent_fid,
+                    parent_hash,
+                    parent_url,
+                    root_parent_fid,
+                    root_parent_hash.as_deref(),
+                    root_parent_url.as_deref(),
+                    ts,
+                    serde_json::to_value(
+                        cast_body
+                            .embeds
+                            .iter()
+                            .map(NormalizedEmbed::from_protobuf_embed)
+                            .collect::<Vec<_>>()
+                    )?,
+                    serde_json::to_value(&cast_body.mentions)?,
+                    serde_json::to_value(&cast_body.mentions_positions)?,
+                )
+                .execute(pool)
+                .await?;
             }
         }
         Ok(())

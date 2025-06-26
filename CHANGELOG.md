@@ -9,12 +9,12 @@ All notable changes to Waypoint will be documented in this file.
 - Resolve backfill job queue exhaustion bug (#37)
 - Increase Redis pool sizes to prevent backfill queue exhaustion (#38)
 - Handle Redis XPENDING response variations and prevent backfill job loss (#39)
-- Fix backfill early termination in Docker Compose environments by increasing BRPOP timeout
 
 ### Documentation
 
 - Update mcp.md
 - Update docs
+- Add root parent tracking documentation
 
 ### Features
 
@@ -23,9 +23,13 @@ All notable changes to Waypoint will be documented in this file.
 - Update proto to 0.3.1
 - Add root parent tracking for cast threads
 
+### Miscellaneous Tasks
+
+- Version and changelog
+
 ### Refactor
 
-- Simplify backfill queue system to use only normal and inprogress queues (remove unused priority queues)
+- Simplify backfill queue to use only normal and inprogress q… (#43)
 
 ## [0.6.3] - 2025-06-09
 

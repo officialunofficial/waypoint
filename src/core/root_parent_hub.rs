@@ -1,10 +1,6 @@
 use crate::{
     core::{data_context::HubClient, types::Fid},
-    proto::{
-        cast_add_body::Parent,
-        message_data::Body,
-        MessageData,
-    },
+    proto::{MessageData, cast_add_body::Parent, message_data::Body},
 };
 use prost::Message as ProstMessage;
 use std::collections::HashSet;
@@ -49,7 +45,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
         _ => {
             warn!("Invalid parent cast reference: missing fid or hash");
             return Ok(None);
-        }
+        },
     };
 
     // Track visited casts to detect cycles
@@ -60,7 +56,9 @@ pub async fn find_root_parent_hub<H: HubClient>(
     for depth in 0..MAX_DEPTH {
         debug!(
             "Finding root parent: depth={}, current_fid={}, current_hash={:?}",
-            depth, current_fid, hex::encode(&current_hash)
+            depth,
+            current_fid,
+            hex::encode(&current_hash)
         );
 
         // Get the cast from the Hub
@@ -78,7 +76,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
                                 root_parent_hash: Some(current_hash),
                                 root_parent_url: None,
                             }));
-                        }
+                        },
                     }
                 } else {
                     warn!("Empty message payload");
@@ -95,7 +93,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
                         Some(Parent::ParentCastId(parent_cast_id)) => {
                             let parent_fid = parent_cast_id.fid as i64;
                             let parent_hash = parent_cast_id.hash.clone();
-                            
+
                             // Check for cycles
                             if visited.contains(&(parent_fid, parent_hash.clone())) {
                                 warn!("Cycle detected in cast parent chain at fid={}", parent_fid);
@@ -111,7 +109,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
                             visited.insert((parent_fid, parent_hash.clone()));
                             current_fid = parent_fid;
                             current_hash = parent_hash;
-                        }
+                        },
                         Some(Parent::ParentUrl(url)) => {
                             // Parent is a URL, this is the root
                             return Ok(Some(RootParentInfo {
@@ -119,7 +117,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
                                 root_parent_hash: None,
                                 root_parent_url: Some(url.clone()),
                             }));
-                        }
+                        },
                         None => {
                             // No parent, this cast is the root
                             return Ok(Some(RootParentInfo {
@@ -127,7 +125,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
                                 root_parent_hash: Some(current_hash),
                                 root_parent_url: None,
                             }));
-                        }
+                        },
                     }
                 } else {
                     // Not a cast message, treat current as root
@@ -137,19 +135,20 @@ pub async fn find_root_parent_hub<H: HubClient>(
                         root_parent_url: None,
                     }));
                 }
-            }
+            },
             Ok(None) => {
                 // Cast not found, treat it as root
                 warn!(
                     "Cast not found in hub: fid={}, hash={}",
-                    current_fid, hex::encode(&current_hash)
+                    current_fid,
+                    hex::encode(&current_hash)
                 );
                 return Ok(Some(RootParentInfo {
                     root_parent_fid: Some(current_fid),
                     root_parent_hash: Some(current_hash),
                     root_parent_url: None,
                 }));
-            }
+            },
             Err(e) => {
                 warn!("Error fetching cast from hub: {}", e);
                 // On error, treat the current cast as root
@@ -158,7 +157,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
                     root_parent_hash: Some(current_hash),
                     root_parent_url: None,
                 }));
-            }
+            },
         }
     }
 
