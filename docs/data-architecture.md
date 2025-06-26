@@ -230,3 +230,53 @@ This is particularly useful for deployments that:
 - Only need the structured data in the type-specific tables
 
 The processed data (casts, reactions, etc.) remains fully available regardless of this setting.
+
+### Root Parent Tracking
+
+Waypoint automatically tracks the root parent of cast threads to enable efficient thread/conversation queries. This feature is essential for:
+
+1. **Thread Muting**: Users can mute entire threads/conversations from notifications
+2. **Conversation Discovery**: Teams can quickly find all casts in a conversation
+3. **Thread Analysis**: Understanding conversation structure and participation
+
+#### How It Works
+
+When a cast is processed, Waypoint:
+
+1. **Detects Parent Relationships**: Checks if the cast has a parent (either another cast or a URL)
+2. **Recursively Finds Root**: Uses the Hub API to traverse up the parent chain until finding the root cast
+3. **Stores Root Information**: Saves the root parent's FID, hash, and URL in the database
+
+#### Database Schema
+
+The `casts` table includes these columns for root parent tracking:
+
+```sql
+root_parent_fid    BIGINT  -- The FID of the root cast author
+root_parent_hash   BYTEA   -- The hash of the root cast
+root_parent_url    TEXT    -- The URL if the root is an external link
+```
+
+#### Query Examples
+
+Find all casts in a thread:
+```sql
+-- Find all casts in the same thread as a given cast
+SELECT * FROM casts 
+WHERE root_parent_hash = (
+    SELECT root_parent_hash FROM casts WHERE hash = '\xabcd...'
+);
+
+-- Find all threads a user has participated in
+SELECT DISTINCT root_parent_hash, COUNT(*) as reply_count
+FROM casts 
+WHERE fid = 12345 
+GROUP BY root_parent_hash;
+```
+
+#### Performance Considerations
+
+- Root parent calculation happens synchronously during cast insertion
+- Indexes are created on root parent columns for efficient queries
+- The Hub API is used exclusively (no database recursion) to ensure data consistency
+- A backfill processor is available to update existing casts with root parent data

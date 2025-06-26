@@ -21,6 +21,7 @@ All notable changes to Waypoint will be documented in this file.
 - Support Farcaster Pro (#36)
 - Custom headers (#42)
 - Update proto to 0.3.1
+- Add root parent tracking for cast threads
 
 ### Refactor
 

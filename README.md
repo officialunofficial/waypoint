@@ -11,6 +11,7 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 
 ### Main Service
 - **Streaming Service**: Subscribes to real-time Snapchain events and processes them
+- **Root Parent Tracking**: Automatically tracks thread roots for efficient conversation queries
 - **Commands**: Run with `./waypoint start` or `make run`
 
 ### Backfill System
