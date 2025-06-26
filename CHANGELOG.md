@@ -9,6 +9,7 @@ All notable changes to Waypoint will be documented in this file.
 - Resolve backfill job queue exhaustion bug (#37)
 - Increase Redis pool sizes to prevent backfill queue exhaustion (#38)
 - Handle Redis XPENDING response variations and prevent backfill job loss (#39)
+- Fix backfill early termination in Docker Compose environments by increasing BRPOP timeout
 
 ### Documentation
 
@@ -20,6 +21,10 @@ All notable changes to Waypoint will be documented in this file.
 - Support Farcaster Pro (#36)
 - Custom headers (#42)
 - Update proto to 0.3.1
+
+### Refactor
+
+- Simplify backfill queue system to use only normal and inprogress queues (remove unused priority queues)
 
 ## [0.6.3] - 2025-06-09
 

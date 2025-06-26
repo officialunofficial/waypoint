@@ -60,8 +60,6 @@ impl Default for JobState {
 pub struct BackfillQueue {
     redis: Arc<Redis>,
     queue_key: String,
-    high_priority_queue_key: String,
-    low_priority_queue_key: String,
     in_progress_queue_key: String,
     metrics: Arc<tokio::sync::RwLock<QueueMetrics>>,
 }
@@ -73,9 +71,7 @@ pub struct QueueMetrics {
     pub jobs_failed: u64,
     pub fids_processed: u64,
     pub avg_job_time_ms: f64,
-    pub high_priority_queue_size: u64,
     pub normal_priority_queue_size: u64,
-    pub low_priority_queue_size: u64,
     pub in_progress_queue_size: u64,
 }
 
@@ -90,8 +86,6 @@ impl BackfillQueue {
         Self {
             redis,
             queue_key: format!("{}:normal", base_key),
-            high_priority_queue_key: format!("{}:high", base_key),
-            low_priority_queue_key: format!("{}:low", base_key),
             in_progress_queue_key: format!("{}:inprogress", base_key),
             metrics: Arc::new(tokio::sync::RwLock::new(QueueMetrics::default())),
         }
@@ -101,9 +95,7 @@ impl BackfillQueue {
     /// Uses more efficient pattern without unnecessary cloning
     pub async fn get_metrics(&self) -> QueueMetrics {
         // First fetch the queue sizes without holding the lock
-        let high = self.get_queue_length_for_key(&self.high_priority_queue_key).await.unwrap_or(0);
         let normal = self.get_queue_length_for_key(&self.queue_key).await.unwrap_or(0);
-        let low = self.get_queue_length_for_key(&self.low_priority_queue_key).await.unwrap_or(0);
         let in_progress =
             self.get_queue_length_for_key(&self.in_progress_queue_key).await.unwrap_or(0);
 
@@ -117,9 +109,7 @@ impl BackfillQueue {
             jobs_failed: metrics_guard.jobs_failed,
             fids_processed: metrics_guard.fids_processed,
             avg_job_time_ms: metrics_guard.avg_job_time_ms,
-            high_priority_queue_size: high as u64,
             normal_priority_queue_size: normal as u64,
-            low_priority_queue_size: low as u64,
             in_progress_queue_size: in_progress as u64,
         }
     }
@@ -156,12 +146,8 @@ impl BackfillQueue {
             job.id = uuid::Uuid::new_v4().to_string();
         }
 
-        // Select appropriate queue based on priority
-        let queue_key = match job.priority {
-            JobPriority::High => &self.high_priority_queue_key,
-            JobPriority::Normal => &self.queue_key,
-            JobPriority::Low => &self.low_priority_queue_key,
-        };
+        // Always use the normal queue now
+        let queue_key = &self.queue_key;
 
         // Serialize job once to avoid cloning
         let job_data = serde_json::to_string(&job)
@@ -169,15 +155,12 @@ impl BackfillQueue {
 
         let fid_count = job.fids.len();
         let job_id = job.id.clone();
-        // Use a reference to avoid copying non-Copy type
-        let priority = &job.priority;
 
         info!(
-            "Adding backfill job {} with {} FIDs to queue: {} (priority: {:?}), FID range: {:?}..{:?}",
+            "Adding backfill job {} with {} FIDs to queue: {}, FID range: {:?}..{:?}",
             job_id,
             fid_count,
             queue_key,
-            priority,
             job.fids.first(),
             job.fids.last()
         );
@@ -239,67 +222,60 @@ impl BackfillQueue {
             .get_connection_with_timeout(2000) // 2 second timeout
             .await?;
 
-        // Try queues in priority order: high, normal, low
-        let queue_keys =
-            [&self.high_priority_queue_key, &self.queue_key, &self.low_priority_queue_key];
+        // Only check the normal queue now
+        // Use longer timeout for BRPOP in containerized environments
+        let result: RedisResult<Option<Vec<String>>> = bb8_redis::redis::cmd("BRPOP")
+            .arg(&self.queue_key)
+            .arg(5.0) // 5 second timeout for better Docker compatibility
+            .query_async(&mut *conn)
+            .await;
 
-        for queue_key in &queue_keys {
-            // Use shorter timeout for BRPOP to avoid holding connections too long
-            let result: RedisResult<Option<Vec<String>>> = bb8_redis::redis::cmd("BRPOP")
-                .arg(queue_key)
-                .arg(0.5) // Reduced timeout to 500ms
-                .query_async(&mut *conn)
-                .await;
+        match result {
+            Ok(Some(values)) if values.len() >= 2 => {
+                let job_data = &values[1];
+                let mut job: BackfillJob = serde_json::from_str(job_data)
+                    .map_err(|e| crate::redis::error::Error::DeserializationError(e.to_string()))?;
 
-            match result {
-                Ok(Some(values)) if values.len() >= 2 => {
-                    let job_data = &values[1];
-                    let mut job: BackfillJob = serde_json::from_str(job_data).map_err(|e| {
-                        crate::redis::error::Error::DeserializationError(e.to_string())
-                    })?;
+                job.state = JobState::InProgress;
+                job.attempts += 1;
+                job.started_at = Some(chrono::Utc::now()); // Set the start time
 
-                    job.state = JobState::InProgress;
-                    job.attempts += 1;
-                    job.started_at = Some(chrono::Utc::now()); // Set the start time
+                if job.visibility_timeout.is_none() {
+                    job.visibility_timeout = Some(300);
+                }
 
-                    if job.visibility_timeout.is_none() {
-                        job.visibility_timeout = Some(300);
-                    }
+                let in_progress_data = serde_json::to_string(&job).unwrap();
+                let _: RedisResult<()> = bb8_redis::redis::cmd("LPUSH")
+                    .arg(&self.in_progress_queue_key)
+                    .arg(&in_progress_data)
+                    .query_async(&mut *conn)
+                    .await;
 
-                    let in_progress_data = serde_json::to_string(&job).unwrap();
-                    let _: RedisResult<()> = bb8_redis::redis::cmd("LPUSH")
-                        .arg(&self.in_progress_queue_key)
-                        .arg(&in_progress_data)
-                        .query_async(&mut *conn)
-                        .await;
+                // Don't use Redis expiration - we'll handle timeout in cleanup_expired_jobs
+                // This prevents jobs from being lost when Redis keys expire
 
-                    // Don't use Redis expiration - we'll handle timeout in cleanup_expired_jobs
-                    // This prevents jobs from being lost when Redis keys expire
+                info!(
+                    "Retrieved backfill job {} with {} FIDs from queue {} (attempt: {}), FID range: {:?}..{:?}",
+                    job.id,
+                    job.fids.len(),
+                    &self.queue_key,
+                    job.attempts,
+                    job.fids.first(),
+                    job.fids.last()
+                );
+                debug!("FIDs in retrieved job: {:?}", job.fids);
 
-                    info!(
-                        "Retrieved backfill job {} with {} FIDs from queue {} (priority: {:?}, attempt: {}), FID range: {:?}..{:?}",
-                        job.id,
-                        job.fids.len(),
-                        queue_key,
-                        job.priority,
-                        job.attempts,
-                        job.fids.first(),
-                        job.fids.last()
-                    );
-                    debug!("FIDs in retrieved job: {:?}", job.fids);
-
-                    return Ok(Some(job));
-                },
-                Ok(_) => continue,
-                Err(e) => {
-                    error!("Error retrieving job from queue {}: {:?}", queue_key, e);
-                    return Err(crate::redis::error::Error::RedisError(e));
-                },
-            }
+                Ok(Some(job))
+            },
+            Ok(_) => {
+                debug!("No jobs found in queue");
+                Ok(None)
+            },
+            Err(e) => {
+                error!("Error retrieving job from queue {}: {:?}", &self.queue_key, e);
+                Err(crate::redis::error::Error::RedisError(e))
+            },
         }
-
-        debug!("No jobs found in any queue after checking all priority levels");
-        Ok(None)
     }
 
     /// Mark a job as completed
@@ -360,11 +336,6 @@ impl BackfillQueue {
         job.state = JobState::Pending;
         // Don't increment attempts here - it was already incremented in get_job
 
-        // Reduce priority if job has been retried multiple times
-        if job.attempts > 3 {
-            job.priority = JobPriority::Low;
-        }
-
         // Add job back to queue (reusing the job object)
         self.add_job(job).await?;
 
@@ -378,13 +349,9 @@ impl BackfillQueue {
     }
 
     pub async fn get_queue_length(&self) -> Result<usize, crate::redis::error::Error> {
-        let high = self.get_queue_length_for_key(&self.high_priority_queue_key).await?;
         let normal = self.get_queue_length_for_key(&self.queue_key).await?;
-        let low = self.get_queue_length_for_key(&self.low_priority_queue_key).await?;
-
-        let total = high + normal + low;
-        info!("Total queue length: {} (High: {}, Normal: {}, Low: {})", total, high, normal, low);
-        Ok(total)
+        info!("Total queue length: {}", normal);
+        Ok(normal)
     }
 
     /// Clean up expired jobs from the in-progress queue
@@ -649,17 +616,13 @@ impl Worker {
             if last_progress_log.elapsed() > Duration::from_secs(10) {
                 let metrics = self.queue.get_metrics().await;
                 info!(
-                    "Queue state - High: {}, Normal: {}, Low: {}, In Progress: {}, Total processed: {}",
-                    metrics.high_priority_queue_size,
+                    "Queue state - Normal: {}, In Progress: {}, Total processed: {}",
                     metrics.normal_priority_queue_size,
-                    metrics.low_priority_queue_size,
                     metrics.in_progress_queue_size,
                     metrics.jobs_processed
                 );
 
-                let total_queue_length = metrics.high_priority_queue_size
-                    + metrics.normal_priority_queue_size
-                    + metrics.low_priority_queue_size;
+                let total_queue_length = metrics.normal_priority_queue_size;
                 self.log_stats(total_queue_length as usize).await;
                 last_progress_log = std::time::Instant::now();
             }
@@ -668,11 +631,8 @@ impl Worker {
             if active_tasks < self.concurrency {
                 let pre_metrics = self.queue.get_metrics().await;
                 debug!(
-                    "Attempting to get job. Current queue state - High: {}, Normal: {}, Low: {}, In Progress: {}",
-                    pre_metrics.high_priority_queue_size,
-                    pre_metrics.normal_priority_queue_size,
-                    pre_metrics.low_priority_queue_size,
-                    pre_metrics.in_progress_queue_size
+                    "Attempting to get job. Current queue state - Normal: {}, In Progress: {}",
+                    pre_metrics.normal_priority_queue_size, pre_metrics.in_progress_queue_size
                 );
 
                 match self.queue.get_job().await {
@@ -869,9 +829,15 @@ impl Worker {
                     },
                     Ok(None) => {
                         let post_metrics = self.queue.get_metrics().await;
-                        let total_queued = post_metrics.high_priority_queue_size
-                            + post_metrics.normal_priority_queue_size
-                            + post_metrics.low_priority_queue_size;
+                        let total_queued = post_metrics.normal_priority_queue_size;
+
+                        // Log detailed state when no jobs found
+                        debug!(
+                            "No jobs retrieved. Queue state - Normal: {}, In Progress: {}, Active tasks: {}",
+                            post_metrics.normal_priority_queue_size,
+                            post_metrics.in_progress_queue_size,
+                            active_tasks
+                        );
 
                         if total_queued == 0 && post_metrics.in_progress_queue_size == 0 {
                             info!("All queues are empty and no jobs in progress.");
