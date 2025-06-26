@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE casts \n            SET \n                root_parent_fid = $2,\n                root_parent_hash = $3,\n                root_parent_url = $4\n            WHERE hash = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int8",
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7775ec0e8eed633ea7d073c3673d45d041b626d9eb02093e9fe5fcf579c8774a"
+}
