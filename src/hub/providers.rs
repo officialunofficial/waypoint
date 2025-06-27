@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use prost::Message as ProstMessage;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, trace};
 
 /// Farcaster Hub data provider
 #[derive(Clone)]
@@ -304,7 +304,7 @@ impl HubClient for FarcasterHubClient {
 
     /// Get a specific cast by ID
     async fn get_cast(&self, fid: Fid, hash: &[u8]) -> Result<Option<Message>> {
-        info!("Fetching specific cast with FID: {} and hash: {}", fid, hex::encode(hash));
+        trace!("Fetching specific cast with FID: {} and hash: {}", fid, hex::encode(hash));
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected

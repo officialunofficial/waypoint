@@ -4,7 +4,7 @@ use crate::{
 };
 use prost::Message as ProstMessage;
 use std::collections::HashSet;
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 
 /// Maximum depth to traverse when finding root parent to prevent infinite loops
 const MAX_DEPTH: usize = 100;
@@ -54,7 +54,7 @@ pub async fn find_root_parent_hub<H: HubClient>(
 
     // Traverse up the parent chain
     for depth in 0..MAX_DEPTH {
-        debug!(
+        trace!(
             "Finding root parent: depth={}, current_fid={}, current_hash={:?}",
             depth,
             current_fid,

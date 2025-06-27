@@ -6,7 +6,7 @@ use crate::{
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{error, trace};
 
 /// Processor that handles updating root parent information for casts
 pub struct RootParentProcessor {
@@ -63,8 +63,8 @@ impl RootParentProcessor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         sqlx::query!(
             r#"
-            UPDATE casts 
-            SET 
+            UPDATE casts
+            SET
                 root_parent_fid = $2,
                 root_parent_hash = $3,
                 root_parent_url = $4
@@ -78,7 +78,7 @@ impl RootParentProcessor {
         .execute(&self.db_pool)
         .await?;
 
-        debug!(
+        trace!(
             "Updated root parent for cast hash={:?}, root_fid={:?}, root_hash={:?}, root_url={:?}",
             cast_hash,
             root_info.root_parent_fid,
@@ -94,14 +94,14 @@ impl RootParentProcessor {
         &self,
         cast_hashes: Vec<Vec<u8>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Processing batch of {} casts for root parent updates", cast_hashes.len());
+        trace!("Processing batch of {} casts for root parent updates", cast_hashes.len());
 
         for hash in cast_hashes {
             // Fetch cast details from database
             let cast_result = sqlx::query!(
                 r#"
-                SELECT fid, parent_fid, parent_hash, parent_url 
-                FROM casts 
+                SELECT fid, parent_fid, parent_hash, parent_url
+                FROM casts
                 WHERE hash = $1 AND deleted_at IS NULL
                 "#,
                 &hash
@@ -146,12 +146,12 @@ impl RootParentProcessor {
     ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
         let results = sqlx::query!(
             r#"
-            SELECT hash 
-            FROM casts 
-            WHERE 
+            SELECT hash
+            FROM casts
+            WHERE
                 (parent_fid IS NOT NULL OR parent_url IS NOT NULL)
-                AND root_parent_fid IS NULL 
-                AND root_parent_hash IS NULL 
+                AND root_parent_fid IS NULL
+                AND root_parent_hash IS NULL
                 AND root_parent_url IS NULL
                 AND deleted_at IS NULL
             ORDER BY timestamp DESC
