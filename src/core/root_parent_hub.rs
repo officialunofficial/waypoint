@@ -30,12 +30,12 @@ pub async fn find_root_parent_hub<H: HubClient>(
         return Ok(None);
     }
 
-    // If parent is a URL, return it as the root
-    if let Some(url) = parent_url {
+    // If parent is only a URL (no cast parent), return just the URL
+    if parent_url.is_some() && parent_fid.is_none() && parent_hash.is_none() {
         return Ok(Some(RootParentInfo {
             root_parent_fid: None,
             root_parent_hash: None,
-            root_parent_url: Some(url.to_string()),
+            root_parent_url: parent_url.map(|s| s.to_string()),
         }));
     }
 
@@ -111,15 +111,15 @@ pub async fn find_root_parent_hub<H: HubClient>(
                             current_hash = parent_hash;
                         },
                         Some(Parent::ParentUrl(url)) => {
-                            // Parent is a URL, this is the root
+                            // This cast has a URL parent but no cast parent, so it's the root
                             return Ok(Some(RootParentInfo {
-                                root_parent_fid: None,
-                                root_parent_hash: None,
+                                root_parent_fid: Some(current_fid),
+                                root_parent_hash: Some(current_hash),
                                 root_parent_url: Some(url.clone()),
                             }));
                         },
                         None => {
-                            // No parent, this cast is the root
+                            // No parent at all, this cast is the root
                             return Ok(Some(RootParentInfo {
                                 root_parent_fid: Some(current_fid),
                                 root_parent_hash: Some(current_hash),
@@ -198,5 +198,37 @@ mod tests {
         assert_eq!(info.root_parent_fid, None);
         assert_eq!(info.root_parent_hash, None);
         assert_eq!(info.root_parent_url, Some("https://example.com".to_string()));
+    }
+    
+    #[test]
+    fn test_combined_root_parent() {
+        let info = RootParentInfo {
+            root_parent_fid: Some(123),
+            root_parent_hash: Some(vec![0xaa, 0xbb]),
+            root_parent_url: Some("https://example.com".to_string()),
+        };
+
+        assert_eq!(info.root_parent_fid, Some(123));
+        assert_eq!(info.root_parent_hash, Some(vec![0xaa, 0xbb]));
+        assert_eq!(info.root_parent_url, Some("https://example.com".to_string()));
+    }
+    
+    #[test]
+    fn test_root_parent_scenarios() {
+        // Scenario 1: Root cast has no parent at all
+        let info1 = RootParentInfo {
+            root_parent_fid: Some(100),
+            root_parent_hash: Some(vec![1, 2, 3]),
+            root_parent_url: None,
+        };
+        assert!(info1.root_parent_url.is_none());
+        
+        // Scenario 2: Root cast has a URL parent
+        let info2 = RootParentInfo {
+            root_parent_fid: Some(200),
+            root_parent_hash: Some(vec![4, 5, 6]),
+            root_parent_url: Some("https://example.com".to_string()),
+        };
+        assert_eq!(info2.root_parent_url, Some("https://example.com".to_string()));
     }
 }
