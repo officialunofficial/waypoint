@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT fid, parent_fid, parent_hash, parent_url \n                FROM casts \n                WHERE hash = $1 AND deleted_at IS NULL\n                ",
+  "query": "\n                SELECT fid, parent_fid, parent_hash, parent_url\n                FROM casts\n                WHERE hash = $1 AND deleted_at IS NULL\n                ",
   "describe": {
     "columns": [
       {
@@ -36,5 +36,5 @@
       true
     ]
   },
-  "hash": "ab18b0b257720c1c498340ed6f765e60f464c79b874b9591725378896af554c4"
+  "hash": "d6bcfe496b72c529d93bbd133506907deff471be343ce90088ac92c6ddac6469"
 }
