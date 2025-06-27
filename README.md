@@ -2,7 +2,6 @@
 
 Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory efficiency. It provides a streaming synchronization service combined with backfill capabilities to process historical data.
 
-[![Docker Build and Publish](https://github.com/officialunofficial/waypoint/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/officialunofficial/waypoint/actions/workflows/docker-publish.yml)
 [![Docker Hub](https://img.shields.io/docker/pulls/officialunofficial/waypoint)](https://hub.docker.com/r/officialunofficial/waypoint)
 
 ![waypoint banner](banner.png)
@@ -11,6 +10,7 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 
 ### Main Service
 - **Streaming Service**: Subscribes to real-time Snapchain events and processes them
+- **Root Parent Tracking**: Automatically tracks thread roots for efficient conversation queries
 - **Commands**: Run with `./waypoint start` or `make run`
 
 ### Backfill System

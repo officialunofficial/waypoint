@@ -3,6 +3,7 @@ pub mod database;
 pub mod error;
 pub mod format;
 pub mod print;
+pub mod root_parent_processor;
 mod stream;
 pub mod types;
 

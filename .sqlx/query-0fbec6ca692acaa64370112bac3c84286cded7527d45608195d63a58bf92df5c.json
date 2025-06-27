@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT hash \n            FROM casts \n            WHERE \n                (parent_fid IS NOT NULL OR parent_url IS NOT NULL)\n                AND root_parent_fid IS NULL \n                AND root_parent_hash IS NULL \n                AND root_parent_url IS NULL\n                AND deleted_at IS NULL\n            ORDER BY timestamp DESC\n            LIMIT $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hash",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0fbec6ca692acaa64370112bac3c84286cded7527d45608195d63a58bf92df5c"
+}
