@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use prost::Message as ProstMessage;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 /// Farcaster Hub data provider
 #[derive(Clone)]
