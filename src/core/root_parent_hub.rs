@@ -24,17 +24,19 @@ pub async fn find_root_parent_hub<H: HubClient>(
     parent_fid: Option<i64>,
     parent_hash: Option<&[u8]>,
     parent_url: Option<&str>,
+    cast_fid: Option<i64>,
+    cast_hash: Option<&[u8]>,
 ) -> Result<Option<RootParentInfo>, Box<dyn std::error::Error + Send + Sync>> {
     // If there's no parent, this cast is a root
     if parent_fid.is_none() && parent_hash.is_none() && parent_url.is_none() {
         return Ok(None);
     }
 
-    // If parent is only a URL (no cast parent), return just the URL
+    // If parent is only a URL (no cast parent), this cast is the root with a URL parent
     if parent_url.is_some() && parent_fid.is_none() && parent_hash.is_none() {
         return Ok(Some(RootParentInfo {
-            root_parent_fid: None,
-            root_parent_hash: None,
+            root_parent_fid: cast_fid,
+            root_parent_hash: cast_hash.map(|h| h.to_vec()),
             root_parent_url: parent_url.map(|s| s.to_string()),
         }));
     }
@@ -199,7 +201,7 @@ mod tests {
         assert_eq!(info.root_parent_hash, None);
         assert_eq!(info.root_parent_url, Some("https://example.com".to_string()));
     }
-    
+
     #[test]
     fn test_combined_root_parent() {
         let info = RootParentInfo {
@@ -212,7 +214,7 @@ mod tests {
         assert_eq!(info.root_parent_hash, Some(vec![0xaa, 0xbb]));
         assert_eq!(info.root_parent_url, Some("https://example.com".to_string()));
     }
-    
+
     #[test]
     fn test_root_parent_scenarios() {
         // Scenario 1: Root cast has no parent at all
@@ -222,7 +224,7 @@ mod tests {
             root_parent_url: None,
         };
         assert!(info1.root_parent_url.is_none());
-        
+
         // Scenario 2: Root cast has a URL parent
         let info2 = RootParentInfo {
             root_parent_fid: Some(200),

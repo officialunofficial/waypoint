@@ -79,6 +79,8 @@ impl DatabaseProcessor {
                             parent_fid,
                             parent_hash.map(|h| h.as_slice()),
                             parent_url,
+                            Some(data.fid as i64),
+                            Some(&msg.hash),
                         )
                         .await
                         {

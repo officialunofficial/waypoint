@@ -26,7 +26,7 @@ impl RootParentProcessor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(data) = &msg.data {
             if let Some(CastAddBody(cast_body)) = &data.body {
-                let _fid = data.fid as i64;
+                let fid = data.fid as i64;
                 let hash = &msg.hash;
 
                 // Extract parent information
@@ -40,8 +40,15 @@ impl RootParentProcessor {
 
                 // Find root parent if this cast has a parent
                 let root_info = if parent_fid.is_some() || parent_url.is_some() {
-                    find_root_parent_hub(&self.hub_client, parent_fid, parent_hash, parent_url)
-                        .await?
+                    find_root_parent_hub(
+                        &self.hub_client,
+                        parent_fid,
+                        parent_hash,
+                        parent_url,
+                        Some(fid),
+                        Some(hash),
+                    )
+                    .await?
                 } else {
                     None
                 };
@@ -117,6 +124,8 @@ impl RootParentProcessor {
                         cast.parent_fid,
                         cast.parent_hash.as_deref(),
                         cast.parent_url.as_deref(),
+                        cast.fid,
+                        Some(&hash),
                     )
                     .await
                     {

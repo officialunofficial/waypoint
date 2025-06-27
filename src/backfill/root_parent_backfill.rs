@@ -112,6 +112,8 @@ impl RootParentBackfill {
             cast.parent_fid,
             cast.parent_hash.as_deref(),
             cast.parent_url.as_deref(),
+            Some(cast.fid),
+            Some(&cast.hash),
         )
         .await
         {
