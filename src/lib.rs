@@ -18,6 +18,8 @@ pub mod processor;
 pub mod redis;
 pub mod services;
 pub mod types;
+pub mod contracts;
+pub mod farcaster;
 
 // Include all proto files in the src/proto directory with empty package name
 pub mod proto {
