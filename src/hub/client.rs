@@ -208,8 +208,8 @@ impl Hub {
             (format!("https://{}", self.config.url), true)
         };
 
-        let channel_builder = Channel::from_shared(url_str)
-            .map_err(|e| Error::ConnectionError(e.to_string()))?;
+        let channel_builder =
+            Channel::from_shared(url_str).map_err(|e| Error::ConnectionError(e.to_string()))?;
 
         // Only configure TLS for HTTPS connections
         let channel_builder = if use_tls {
@@ -817,14 +817,14 @@ mod tests {
     #[test]
     fn test_retry_policy_backoff_calculation() {
         let policy = HubRetryPolicy::new(5, 100, 30000, 0.0);
-        
+
         // With 0 jitter factor, we should get predictable exponential backoff
         assert_eq!(policy.calculate_backoff(0), Duration::from_millis(100));
         assert_eq!(policy.calculate_backoff(1), Duration::from_millis(200));
         assert_eq!(policy.calculate_backoff(2), Duration::from_millis(400));
         assert_eq!(policy.calculate_backoff(3), Duration::from_millis(800));
         assert_eq!(policy.calculate_backoff(4), Duration::from_millis(1600));
-        
+
         // Should cap at max_delay
         assert_eq!(policy.calculate_backoff(10), Duration::from_millis(30000));
     }
@@ -872,11 +872,11 @@ mod tests {
         });
 
         let hub = Hub::new(config).unwrap();
-        
+
         // Test that custom headers are properly added to requests
         let request = tonic::Request::new(GetInfoRequest {});
         let request_with_headers = hub.add_custom_headers(request);
-        
+
         let metadata = request_with_headers.metadata();
         assert_eq!(metadata.get("x-api-key").unwrap().to_str().unwrap(), "test-key");
         assert_eq!(metadata.get("x-hub-token").unwrap().to_str().unwrap(), "hub-token-123");
@@ -886,7 +886,7 @@ mod tests {
     async fn test_connect_url_formatting() {
         // This test verifies that URL formatting works correctly during connection
         // Note: This won't actually connect to a real server
-        
+
         // Test HTTPS URL
         let config = Arc::new(HubConfig {
             url: "https://example.com:3383".to_string(),
@@ -904,7 +904,7 @@ mod tests {
         let mut hub = Hub::new(config).unwrap();
         // This will fail to connect but we're just testing URL formatting
         let _ = hub.connect().await;
-        
+
         // Test HTTP URL
         let config = Arc::new(HubConfig {
             url: "http://localhost:3383".to_string(),
@@ -922,7 +922,7 @@ mod tests {
         let mut hub = Hub::new(config).unwrap();
         // This will fail to connect but we're just testing URL formatting
         let _ = hub.connect().await;
-        
+
         // Test URL without protocol (should default to HTTPS)
         let config = Arc::new(HubConfig {
             url: "example.com:3383".to_string(),
