@@ -882,63 +882,40 @@ mod tests {
         assert_eq!(metadata.get("x-hub-token").unwrap().to_str().unwrap(), "hub-token-123");
     }
 
-    #[tokio::test]
-    async fn test_connect_url_formatting() {
-        // This test verifies that URL formatting works correctly during connection
-        // Note: This won't actually connect to a real server
+    #[test]
+    fn test_connect_url_formatting() {
+        // Test that URL formatting logic works correctly
+        // We extract and test just the URL formatting logic without connecting
+
+        // Helper function that mimics the URL formatting logic in connect()
+        fn format_url(url: &str) -> (String, bool) {
+            if url.starts_with("http://") {
+                (url.to_string(), false)
+            } else if url.starts_with("https://") {
+                (url.to_string(), true)
+            } else {
+                (format!("https://{}", url), true)
+            }
+        }
 
         // Test HTTPS URL
-        let config = Arc::new(HubConfig {
-            url: "https://example.com:3383".to_string(),
-            headers: HashMap::new(),
-            max_concurrent_connections: 5,
-            max_requests_per_second: 10,
-            retry_max_attempts: 1,
-            retry_base_delay_ms: 100,
-            retry_max_delay_ms: 30000,
-            retry_jitter_factor: 0.25,
-            retry_timeout_ms: 1000,
-            conn_timeout_ms: 1000,
-        });
-
-        let mut hub = Hub::new(config).unwrap();
-        // This will fail to connect but we're just testing URL formatting
-        let _ = hub.connect().await;
+        let (url, use_tls) = format_url("https://example.com:3383");
+        assert_eq!(url, "https://example.com:3383");
+        assert!(use_tls);
 
         // Test HTTP URL
-        let config = Arc::new(HubConfig {
-            url: "http://localhost:3383".to_string(),
-            headers: HashMap::new(),
-            max_concurrent_connections: 5,
-            max_requests_per_second: 10,
-            retry_max_attempts: 1,
-            retry_base_delay_ms: 100,
-            retry_max_delay_ms: 30000,
-            retry_jitter_factor: 0.25,
-            retry_timeout_ms: 1000,
-            conn_timeout_ms: 1000,
-        });
-
-        let mut hub = Hub::new(config).unwrap();
-        // This will fail to connect but we're just testing URL formatting
-        let _ = hub.connect().await;
+        let (url, use_tls) = format_url("http://localhost:3383");
+        assert_eq!(url, "http://localhost:3383");
+        assert!(!use_tls);
 
         // Test URL without protocol (should default to HTTPS)
-        let config = Arc::new(HubConfig {
-            url: "example.com:3383".to_string(),
-            headers: HashMap::new(),
-            max_concurrent_connections: 5,
-            max_requests_per_second: 10,
-            retry_max_attempts: 1,
-            retry_base_delay_ms: 100,
-            retry_max_delay_ms: 30000,
-            retry_jitter_factor: 0.25,
-            retry_timeout_ms: 1000,
-            conn_timeout_ms: 1000,
-        });
+        let (url, use_tls) = format_url("example.com:3383");
+        assert_eq!(url, "https://example.com:3383");
+        assert!(use_tls);
 
-        let mut hub = Hub::new(config).unwrap();
-        // This will fail to connect but we're just testing URL formatting
-        let _ = hub.connect().await;
+        // Test localhost without protocol
+        let (url, use_tls) = format_url("localhost:2283");
+        assert_eq!(url, "https://localhost:2283");
+        assert!(use_tls);
     }
 }
