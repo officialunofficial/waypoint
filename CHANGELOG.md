@@ -4,6 +4,8 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
+## [2025.7.0] - 2025-07-09
+
 ### Bug Fixes
 
 - Resolve backfill job queue exhaustion bug (#37)
@@ -15,6 +17,7 @@ All notable changes to Waypoint will be documented in this file.
 - Update mcp.md
 - Update docs
 - Add root parent tracking documentation
+- Add comprehensive shard migration guide
 
 ### Features
 
@@ -22,6 +25,11 @@ All notable changes to Waypoint will be documented in this file.
 - Custom headers (#42)
 - Update proto to 0.3.1
 - Add root parent tracking for cast threads
+- Support HTTP/HTTPS protocols for hub client gRPC event streams
+- Add shard_id support for Subscribe API with per-shard event tracking
+- Implement dynamic shard discovery using GetInfo API
+- Support multiple concurrent shard subscriptions in single instance
+- Skip shard 0 (metadata shard) when using subscribe_to_all_shards
 
 ### Miscellaneous Tasks
 

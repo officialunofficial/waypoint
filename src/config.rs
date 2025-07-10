@@ -125,6 +125,20 @@ pub struct HubConfig {
 
     #[serde(default = "default_conn_timeout_ms")]
     pub conn_timeout_ms: u64,
+
+    // Shard configuration
+    // List of shard indices to subscribe to (e.g., [0, 1, 2])
+    // If empty, must set subscribe_to_all_shards=true
+    #[serde(default)]
+    pub shard_indices: Vec<u32>,
+
+    // Optional: subscribe to all shards (temporary migration flag)
+    #[serde(default = "default_subscribe_to_all_shards")]
+    pub subscribe_to_all_shards: bool,
+}
+
+fn default_subscribe_to_all_shards() -> bool {
+    true // Default to subscribing to all shards for backward compatibility
 }
 
 fn default_hub_max_concurrent_connections() -> u32 {
@@ -323,6 +337,8 @@ impl Default for HubConfig {
             retry_jitter_factor: default_retry_jitter_factor(),
             retry_timeout_ms: default_retry_timeout_ms(),
             conn_timeout_ms: default_conn_timeout_ms(),
+            shard_indices: Vec::new(),
+            subscribe_to_all_shards: default_subscribe_to_all_shards(),
         }
     }
 }
