@@ -199,16 +199,26 @@ impl Hub {
 
         // Create channel with connection settings
         // Check if URL already has a scheme (http:// or https://)
-        let url_str =
-            if self.config.url.starts_with("http://") || self.config.url.starts_with("https://") {
-                self.config.url.clone()
-            } else {
-                format!("https://{}", self.config.url)
-            };
+        let (url_str, use_tls) = if self.config.url.starts_with("http://") {
+            (self.config.url.clone(), false)
+        } else if self.config.url.starts_with("https://") {
+            (self.config.url.clone(), true)
+        } else {
+            // Default to HTTPS if no protocol is specified
+            (format!("https://{}", self.config.url), true)
+        };
 
-        let channel = Channel::from_shared(url_str)
-            .map_err(|e| Error::ConnectionError(e.to_string()))?
-            .tls_config(ClientTlsConfig::new().with_native_roots())?
+        let channel_builder =
+            Channel::from_shared(url_str).map_err(|e| Error::ConnectionError(e.to_string()))?;
+
+        // Only configure TLS for HTTPS connections
+        let channel_builder = if use_tls {
+            channel_builder.tls_config(ClientTlsConfig::new().with_native_roots())?
+        } else {
+            channel_builder
+        };
+
+        let channel = channel_builder
             .http2_keep_alive_interval(Duration::from_secs(10))
             .http2_adaptive_window(true)
             .tcp_keepalive(Some(Duration::from_secs(60)))
@@ -737,5 +747,175 @@ impl Hub {
             })
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HubConfig;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_url_protocol_detection_https() {
+        let config = Arc::new(HubConfig {
+            url: "https://snapchain.farcaster.xyz:3383".to_string(),
+            headers: HashMap::new(),
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        });
+
+        let hub = Hub::new(config).unwrap();
+        assert_eq!(hub.host(), "https://snapchain.farcaster.xyz:3383");
+    }
+
+    #[test]
+    fn test_url_protocol_detection_http() {
+        let config = Arc::new(HubConfig {
+            url: "http://localhost:3383".to_string(),
+            headers: HashMap::new(),
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        });
+
+        let hub = Hub::new(config).unwrap();
+        assert_eq!(hub.host(), "http://localhost:3383");
+    }
+
+    #[test]
+    fn test_url_protocol_detection_no_protocol() {
+        let config = Arc::new(HubConfig {
+            url: "snapchain.farcaster.xyz:3383".to_string(),
+            headers: HashMap::new(),
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        });
+
+        let hub = Hub::new(config).unwrap();
+        // URL without protocol should remain as is in the host field
+        assert_eq!(hub.host(), "snapchain.farcaster.xyz:3383");
+    }
+
+    #[test]
+    fn test_retry_policy_backoff_calculation() {
+        let policy = HubRetryPolicy::new(5, 100, 30000, 0.0);
+
+        // With 0 jitter factor, we should get predictable exponential backoff
+        assert_eq!(policy.calculate_backoff(0), Duration::from_millis(100));
+        assert_eq!(policy.calculate_backoff(1), Duration::from_millis(200));
+        assert_eq!(policy.calculate_backoff(2), Duration::from_millis(400));
+        assert_eq!(policy.calculate_backoff(3), Duration::from_millis(800));
+        assert_eq!(policy.calculate_backoff(4), Duration::from_millis(1600));
+
+        // Should cap at max_delay
+        assert_eq!(policy.calculate_backoff(10), Duration::from_millis(30000));
+    }
+
+    #[test]
+    fn test_retry_policy_connection_error_detection() {
+        // Test H2 protocol error
+        let status = Status::internal("h2 protocol error: connection reset");
+        assert!(HubRetryPolicy::is_connection_error(&status));
+
+        // Test body read error
+        let status = Status::internal("error reading a body from connection");
+        assert!(HubRetryPolicy::is_connection_error(&status));
+
+        // Test connection closed
+        let status = Status::unavailable("connection closed");
+        assert!(HubRetryPolicy::is_connection_error(&status));
+
+        // Test timeout
+        let status = Status::deadline_exceeded("request timed out");
+        assert!(HubRetryPolicy::is_connection_error(&status));
+
+        // Test non-connection error
+        let status = Status::invalid_argument("invalid request");
+        assert!(!HubRetryPolicy::is_connection_error(&status));
+    }
+
+    #[test]
+    fn test_custom_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("X_API_KEY".to_string(), "test-key".to_string());
+        headers.insert("X_HUB_TOKEN".to_string(), "hub-token-123".to_string());
+
+        let config = Arc::new(HubConfig {
+            url: "localhost:3383".to_string(),
+            headers,
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        });
+
+        let hub = Hub::new(config).unwrap();
+
+        // Test that custom headers are properly added to requests
+        let request = tonic::Request::new(GetInfoRequest {});
+        let request_with_headers = hub.add_custom_headers(request);
+
+        let metadata = request_with_headers.metadata();
+        assert_eq!(metadata.get("x-api-key").unwrap().to_str().unwrap(), "test-key");
+        assert_eq!(metadata.get("x-hub-token").unwrap().to_str().unwrap(), "hub-token-123");
+    }
+
+    #[test]
+    fn test_connect_url_formatting() {
+        // Test that URL formatting logic works correctly
+        // We extract and test just the URL formatting logic without connecting
+
+        // Helper function that mimics the URL formatting logic in connect()
+        fn format_url(url: &str) -> (String, bool) {
+            if url.starts_with("http://") {
+                (url.to_string(), false)
+            } else if url.starts_with("https://") {
+                (url.to_string(), true)
+            } else {
+                (format!("https://{}", url), true)
+            }
+        }
+
+        // Test HTTPS URL
+        let (url, use_tls) = format_url("https://example.com:3383");
+        assert_eq!(url, "https://example.com:3383");
+        assert!(use_tls);
+
+        // Test HTTP URL
+        let (url, use_tls) = format_url("http://localhost:3383");
+        assert_eq!(url, "http://localhost:3383");
+        assert!(!use_tls);
+
+        // Test URL without protocol (should default to HTTPS)
+        let (url, use_tls) = format_url("example.com:3383");
+        assert_eq!(url, "https://example.com:3383");
+        assert!(use_tls);
+
+        // Test localhost without protocol
+        let (url, use_tls) = format_url("localhost:2283");
+        assert_eq!(url, "https://localhost:2283");
+        assert!(use_tls);
     }
 }

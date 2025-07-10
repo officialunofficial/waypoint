@@ -99,7 +99,12 @@ WAYPOINT_DATABASE__URL=${DATABASE_URL}
 WAYPOINT_REDIS__URL=redis://localhost:6379
 
 # Farcaster Hub configuration
-WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383
+WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383  # HTTPS is used by default
+# For local development with HTTP:
+# WAYPOINT_HUB__URL=http://localhost:2283
+# Explicit HTTPS:
+# WAYPOINT_HUB__URL=https://snapchain.farcaster.xyz:3383
+
 # Optional: Custom headers for authenticated hubs
 # Note: Environment variable names use uppercase with underscores, but the actual header names
 # sent will be lowercase with hyphens (e.g., X_API_KEY becomes x-api-key header)
