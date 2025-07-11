@@ -171,6 +171,8 @@ impl Hub {
             retry_jitter_factor: 0.25,
             retry_timeout_ms: 60000,
             conn_timeout_ms: 30000,
+            shard_indices: Vec::new(),
+            subscribe_to_all_shards: false,
         });
 
         // Create empty hub with default config
@@ -769,6 +771,8 @@ mod tests {
             retry_jitter_factor: 0.25,
             retry_timeout_ms: 60000,
             conn_timeout_ms: 30000,
+            shard_indices: vec![],
+            subscribe_to_all_shards: false,
         });
 
         let hub = Hub::new(config).unwrap();
@@ -788,6 +792,8 @@ mod tests {
             retry_jitter_factor: 0.25,
             retry_timeout_ms: 60000,
             conn_timeout_ms: 30000,
+            shard_indices: vec![],
+            subscribe_to_all_shards: false,
         });
 
         let hub = Hub::new(config).unwrap();
@@ -807,6 +813,8 @@ mod tests {
             retry_jitter_factor: 0.25,
             retry_timeout_ms: 60000,
             conn_timeout_ms: 30000,
+            shard_indices: vec![],
+            subscribe_to_all_shards: false,
         });
 
         let hub = Hub::new(config).unwrap();
@@ -869,6 +877,8 @@ mod tests {
             retry_jitter_factor: 0.25,
             retry_timeout_ms: 60000,
             conn_timeout_ms: 30000,
+            shard_indices: vec![],
+            subscribe_to_all_shards: false,
         });
 
         let hub = Hub::new(config).unwrap();

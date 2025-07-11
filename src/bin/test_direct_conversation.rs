@@ -33,6 +33,8 @@ async fn main() {
         retry_jitter_factor: 0.25,
         retry_timeout_ms: 60000,
         conn_timeout_ms: 30000,
+        shard_indices: vec![0],
+        subscribe_to_all_shards: false,
     }))
     .expect("Failed to create hub client");
 
