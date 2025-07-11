@@ -24,12 +24,14 @@ struct RetryData {
 }
 
 /// Retry worker for processing failed cast insertions
+#[allow(dead_code)]
 pub struct CastRetryWorker {
     redis: Arc<Redis>,
     database: Arc<Database>,
     hub_client: FarcasterHubClient,
 }
 
+#[allow(dead_code)]
 impl CastRetryWorker {
     pub fn new(redis: Arc<Redis>, database: Arc<Database>, hub: Arc<Mutex<Hub>>) -> Self {
         let hub_client = FarcasterHubClient::new(hub);
@@ -210,10 +212,12 @@ impl CastRetryWorker {
 }
 
 /// Admin functions for managing the retry system
+#[allow(dead_code)]
 pub struct CastRetryAdmin {
     redis: Arc<Redis>,
 }
 
+#[allow(dead_code)]
 impl CastRetryAdmin {
     pub fn new(redis: Arc<Redis>) -> Self {
         Self { redis }
@@ -238,6 +242,7 @@ impl CastRetryAdmin {
         // Read all messages from dead letter queue
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
 
+        #[allow(clippy::type_complexity)]
         let messages: Result<Vec<(String, Vec<(String, Vec<u8>)>)>, _> =
             bb8_redis::redis::cmd("XRANGE")
                 .arg(CAST_RETRY_DEAD)
@@ -314,6 +319,7 @@ impl CastRetryAdmin {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct RetryStats {
     pub retry_queue_length: u64,
     pub dead_letter_length: u64,
