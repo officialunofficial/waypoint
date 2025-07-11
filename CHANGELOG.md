@@ -12,7 +12,8 @@ All notable changes to Waypoint will be documented in this file.
 - Sqlx
 - Traversal
 - Root parent hub
-- Use ConfigurationError instead of internal error
+- Formatting & imports
+- Apply cargo fmt formatting
 
 ### Documentation
 
@@ -26,7 +27,8 @@ All notable changes to Waypoint will be documented in this file.
 - Update proto to 0.3.1
 - Add root parent tracking for cast threads (#44)
 - Add HTTP/HTTPS protocol support for hub client gRPC connections (#45)
-- Add shard_id support for Subscribe API with dynamic discovery
+- Add shard_id support for Subscribe API with dynamic discovery (#46)
+- Implement cast retry system with negative caching and background processing
 
 ### Miscellaneous Tasks
 
@@ -35,6 +37,7 @@ All notable changes to Waypoint will be documented in this file.
 ### Refactor
 
 - Simplify backfill queue to use only normal and inprogress q… (#43)
+- Integrate cast retry worker into main application service to avoid dead code warnings
 
 ## [0.6.3] - 2025-06-09
 
