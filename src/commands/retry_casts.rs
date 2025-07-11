@@ -1,12 +1,27 @@
-use crate::{
-    core::root_parent_hub::{find_root_parent_hub_with_retry, CAST_RETRY_STREAM, CAST_RETRY_DEAD, MAX_RETRY_ATTEMPTS},
+use waypoint::core::root_parent_hub::{
+    CAST_RETRY_DEAD, CAST_RETRY_STREAM, MAX_RETRY_ATTEMPTS, find_root_parent_hub_with_retry,
+};
+use waypoint::{
     database::client::Database,
-    hub::providers::FarcasterHubClient,
+    hub::{client::Hub, providers::FarcasterHubClient},
     redis::client::Redis,
 };
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
+
+/// Data structure for retry queue messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RetryData {
+    cast_fid: Option<i64>,
+    cast_hash: Option<Vec<u8>>,
+    parent_fid: Option<i64>,
+    parent_hash: Option<Vec<u8>>,
+    parent_url: Option<String>,
+    attempt: u64,
+    error: String,
+}
 
 /// Retry worker for processing failed cast insertions
 pub struct CastRetryWorker {
@@ -19,14 +34,10 @@ impl CastRetryWorker {
     pub fn new(
         redis: Arc<Redis>,
         database: Arc<Database>,
-        hub: Arc<Mutex<crate::hub::client::Hub>>,
+        hub: Arc<Mutex<Hub>>,
     ) -> Self {
         let hub_client = FarcasterHubClient::new(hub);
-        Self {
-            redis,
-            database,
-            hub_client,
-        }
+        Self { redis, database, hub_client }
     }
 
     /// Run the retry worker
@@ -48,12 +59,15 @@ impl CastRetryWorker {
     /// Process a batch of retry messages
     async fn process_retry_batch(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Read messages from retry stream
-        let messages = self.redis.xreadgroup(
-            "retry_workers",
-            "worker_1", 
-            CAST_RETRY_STREAM,
-            10  // Process 10 at a time
-        ).await?;
+        let messages = self
+            .redis
+            .xreadgroup(
+                "retry_workers",
+                "worker_1",
+                CAST_RETRY_STREAM,
+                10, // Process 10 at a time
+            )
+            .await?;
 
         if messages.is_empty() {
             return Ok(());
@@ -81,34 +95,28 @@ impl CastRetryWorker {
         msg_id: &str,
         msg_data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Parse the message data (in real implementation, you'd use proper serialization)
-        let msg_str = String::from_utf8_lossy(msg_data);
-        debug!("Processing retry message {}: {}", msg_id, msg_str);
+        // Parse the message data from JSON serialization
+        let retry_data: RetryData = serde_json::from_slice(msg_data)?;
+        debug!("Processing retry message {}: {:?}", msg_id, retry_data);
 
-        // For now, just parse the basic fields from the Redis stream
-        // In a real implementation, you'd use proper JSON or protobuf serialization
-        let fields: Vec<&str> = msg_str.split('|').collect();
-        if fields.len() < 6 {
-            return Err("Invalid message format".into());
-        }
-
-        let cast_fid: Option<i64> = fields[0].parse().ok();
-        let cast_hash = if fields[1].is_empty() { None } else { Some(hex::decode(fields[1])?) };
-        let parent_fid: Option<i64> = fields[2].parse().ok();
-        let parent_hash = if fields[3].is_empty() { None } else { Some(hex::decode(fields[3])?) };
-        let parent_url = if fields[4].is_empty() { None } else { Some(fields[4]) };
-        let attempt: u64 = fields[5].parse().unwrap_or(1);
+        let cast_fid = retry_data.cast_fid;
+        let cast_hash = &retry_data.cast_hash;
+        let parent_fid = retry_data.parent_fid;
+        let parent_hash = &retry_data.parent_hash;
+        let parent_url = retry_data.parent_url.as_deref();
+        let attempt = retry_data.attempt;
 
         // Try to resolve the root parent again
         let result = find_root_parent_hub_with_retry(
             &self.hub_client,
-            &*self.redis,
+            &self.redis,
             parent_fid,
             parent_hash.as_ref().map(|h| h.as_slice()),
             parent_url,
             cast_fid,
             cast_hash.as_ref().map(|h| h.as_slice()),
-        ).await;
+        )
+        .await;
 
         match result {
             Ok(Some(_root_info)) => {
@@ -124,92 +132,72 @@ impl CastRetryWorker {
             Err(e) => {
                 let new_attempt = attempt + 1;
                 warn!("Retry attempt {} failed: {}", new_attempt, e);
-                
+
                 if new_attempt >= MAX_RETRY_ATTEMPTS {
                     // Move to dead letter queue
                     warn!("Moving cast to dead letter queue after {} attempts", new_attempt);
-                    self.move_to_dead_letter(cast_fid, &cast_hash, parent_fid, &parent_hash, parent_url, &e.to_string()).await?;
+                    self.move_to_dead_letter(&retry_data, &e.to_string()).await?;
                 } else {
                     // Add back to retry queue with incremented attempt
-                    self.add_back_to_retry(cast_fid, &cast_hash, parent_fid, &parent_hash, parent_url, new_attempt).await?;
+                    let mut new_retry_data = retry_data;
+                    new_retry_data.attempt = new_attempt;
+                    self.add_back_to_retry(&new_retry_data).await?;
                 }
-                
+
                 Err(e)
-            }
+            },
         }
     }
 
     /// Move failed cast to dead letter queue
     async fn move_to_dead_letter(
         &self,
-        cast_fid: Option<i64>,
-        cast_hash: &Option<Vec<u8>>,
-        parent_fid: Option<i64>,
-        parent_hash: &Option<Vec<u8>>,
-        parent_url: Option<&str>,
-        error: &str,
+        retry_data: &RetryData,
+        final_error: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let cast_hash_hex = cast_hash.as_ref().map(hex::encode).unwrap_or_default();
-        let parent_hash_hex = parent_hash.as_ref().map(hex::encode).unwrap_or_default();
+        let mut dead_data = retry_data.clone();
+        dead_data.error = final_error.to_string();
         
+        let serialized_data = serde_json::to_vec(&dead_data)?;
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
-        
+
         let _: Result<String, _> = bb8_redis::redis::cmd("XADD")
             .arg(CAST_RETRY_DEAD)
             .arg("*")
-            .arg("cast_fid").arg(cast_fid.unwrap_or(0))
-            .arg("cast_hash").arg(&cast_hash_hex)
-            .arg("parent_fid").arg(parent_fid.unwrap_or(0))
-            .arg("parent_hash").arg(&parent_hash_hex)
-            .arg("parent_url").arg(parent_url.unwrap_or(""))
-            .arg("final_error").arg(error)
-            .arg("timestamp").arg(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+            .arg("d")
+            .arg(&serialized_data)
             .query_async(&mut *conn)
             .await;
-        
+
         Ok(())
     }
 
     /// Add cast back to retry queue with incremented attempt count
     async fn add_back_to_retry(
         &self,
-        cast_fid: Option<i64>,
-        cast_hash: &Option<Vec<u8>>,
-        parent_fid: Option<i64>,
-        parent_hash: &Option<Vec<u8>>,
-        parent_url: Option<&str>,
-        attempt: u64,
+        retry_data: &RetryData,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let cast_hash_hex = cast_hash.as_ref().map(hex::encode).unwrap_or_default();
-        let parent_hash_hex = parent_hash.as_ref().map(hex::encode).unwrap_or_default();
-        
-        // Add exponential backoff delay
-        let delay_seconds = 2_u64.pow((attempt - 1) as u32).min(300); // Max 5 minutes
-        let retry_after = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + delay_seconds;
-        
+        let serialized_data = serde_json::to_vec(retry_data)?;
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
-        
+
         let _: Result<String, _> = bb8_redis::redis::cmd("XADD")
             .arg(CAST_RETRY_STREAM)
             .arg("*")
-            .arg("cast_fid").arg(cast_fid.unwrap_or(0))
-            .arg("cast_hash").arg(&cast_hash_hex)
-            .arg("parent_fid").arg(parent_fid.unwrap_or(0))
-            .arg("parent_hash").arg(&parent_hash_hex)
-            .arg("parent_url").arg(parent_url.unwrap_or(""))
-            .arg("attempt").arg(attempt)
-            .arg("retry_after").arg(retry_after)
+            .arg("d")
+            .arg(&serialized_data)
             .query_async(&mut *conn)
             .await;
-        
-        debug!("Added cast back to retry queue: attempt={}, retry_after={}", attempt, retry_after);
+
+        debug!("Added cast back to retry queue: attempt={}", retry_data.attempt);
         Ok(())
     }
 
     /// Create consumer group if it doesn't exist
-    pub async fn ensure_consumer_group(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn ensure_consumer_group(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
-        
+
         // Try to create consumer group, ignore error if it already exists
         let _: Result<String, _> = bb8_redis::redis::cmd("XGROUP")
             .arg("CREATE")
@@ -219,7 +207,7 @@ impl CastRetryWorker {
             .arg("MKSTREAM")
             .query_async(&mut *conn)
             .await;
-        
+
         info!("Consumer group 'retry_workers' ensured for stream '{}'", CAST_RETRY_STREAM);
         Ok(())
     }
@@ -236,30 +224,32 @@ impl CastRetryAdmin {
     }
 
     /// Get retry queue statistics
-    pub async fn get_retry_stats(&self) -> Result<RetryStats, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_retry_stats(
+        &self,
+    ) -> Result<RetryStats, Box<dyn std::error::Error + Send + Sync>> {
         let retry_count = self.redis.xlen(CAST_RETRY_STREAM).await.unwrap_or(0);
         let dead_count = self.redis.xlen(CAST_RETRY_DEAD).await.unwrap_or(0);
-        
-        Ok(RetryStats {
-            retry_queue_length: retry_count,
-            dead_letter_length: dead_count,
-        })
+
+        Ok(RetryStats { retry_queue_length: retry_count, dead_letter_length: dead_count })
     }
 
     /// Reprocess all dead letter messages (move them back to retry queue)
-    pub async fn reprocess_dead_letters(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn reprocess_dead_letters(
+        &self,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         info!("Reprocessing all dead letter messages");
-        
+
         // Read all messages from dead letter queue
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
-        
-        let messages: Result<Vec<(String, Vec<(String, Vec<u8>)>)>, _> = bb8_redis::redis::cmd("XRANGE")
-            .arg(CAST_RETRY_DEAD)
-            .arg("-")
-            .arg("+")
-            .query_async(&mut *conn)
-            .await;
-        
+
+        let messages: Result<Vec<(String, Vec<(String, Vec<u8>)>)>, _> =
+            bb8_redis::redis::cmd("XRANGE")
+                .arg(CAST_RETRY_DEAD)
+                .arg("-")
+                .arg("+")
+                .query_async(&mut *conn)
+                .await;
+
         let mut moved_count = 0;
         if let Ok(messages) = messages {
             for (msg_id, _fields) in messages {
@@ -267,30 +257,34 @@ impl CastRetryAdmin {
                 let _: Result<String, _> = bb8_redis::redis::cmd("XADD")
                     .arg(CAST_RETRY_STREAM)
                     .arg("*")
-                    .arg("reprocessed_from").arg(&msg_id)
-                    .arg("attempt").arg(1)
+                    .arg("reprocessed_from")
+                    .arg(&msg_id)
+                    .arg("attempt")
+                    .arg(1)
                     .query_async(&mut *conn)
                     .await;
-                
+
                 // Delete from dead letter queue
                 let _: Result<u64, _> = bb8_redis::redis::cmd("XDEL")
                     .arg(CAST_RETRY_DEAD)
                     .arg(&msg_id)
                     .query_async(&mut *conn)
                     .await;
-                
+
                 moved_count += 1;
             }
         }
-        
+
         info!("Moved {} messages from dead letter to retry queue", moved_count);
         Ok(moved_count)
     }
 
     /// Clear negative cache (force retry of all cached failures)
-    pub async fn clear_negative_cache(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn clear_negative_cache(
+        &self,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
-        
+
         // Use SCAN to find all failed_lookup keys
         let keys: Result<Vec<String>, _> = bb8_redis::redis::cmd("SCAN")
             .arg("0")
@@ -300,13 +294,14 @@ impl CastRetryAdmin {
             .arg("1000")
             .query_async(&mut *conn)
             .await;
-        
+
         let mut deleted_count = 0;
         if let Ok(scan_result) = keys {
             // scan_result is [cursor, [key1, key2, ...]]
             // For simplicity, just delete what we found in this scan
             if scan_result.len() > 1 {
-                let keys_to_delete: Vec<&str> = scan_result[1..].iter().map(|s| s.as_str()).collect();
+                let keys_to_delete: Vec<&str> =
+                    scan_result[1..].iter().map(|s| s.as_str()).collect();
                 if !keys_to_delete.is_empty() {
                     let result: Result<u64, _> = bb8_redis::redis::cmd("DEL")
                         .arg(&keys_to_delete)
@@ -316,7 +311,7 @@ impl CastRetryAdmin {
                 }
             }
         }
-        
+
         info!("Cleared {} negative cache entries", deleted_count);
         Ok(deleted_count)
     }

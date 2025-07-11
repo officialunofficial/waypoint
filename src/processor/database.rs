@@ -76,7 +76,7 @@ impl DatabaseProcessor {
 
                         match find_root_parent_hub_with_retry(
                             &hub_client,
-                            &*self.resources.redis,
+                            &self.resources.redis,
                             parent_fid,
                             parent_hash.map(|h| h.as_slice()),
                             parent_url,
