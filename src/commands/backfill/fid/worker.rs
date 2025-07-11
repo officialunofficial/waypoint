@@ -25,15 +25,11 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
     let database = Arc::new(waypoint::database::client::Database::new(&config.database).await?);
     let fid_queue = Arc::new(BackfillQueue::new(redis.clone(), "backfill:fid:queue".to_string()));
 
-    // Clone the hub client first
-    let hub_client = {
+    // Ensure hub is connected
+    {
         let mut hub_guard = hub.lock().await;
         hub_guard.connect().await?;
-        hub_guard
-            .client()
-            .ok_or_else(|| color_eyre::eyre::eyre!("No hub client available"))?
-            .clone()
-    };
+    }
 
     // Create shared application resources
     let app_resources = Arc::new(AppResources::new(hub.clone(), redis.clone(), database.clone()));
@@ -43,7 +39,7 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
 
     // Create reconciler
     let reconciler = Arc::new(MessageReconciler::new(
-        hub_client,
+        hub.clone(),
         database,
         std::time::Duration::from_secs(30),
         true,

@@ -48,24 +48,19 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     let concurrency = args.get_one::<usize>("concurrency").copied().unwrap_or(25);
 
     // Initialize hub client
-    let mut hub_guard = hub.lock().await;
-    hub_guard.connect().await?;
-    let hub_client =
-        hub_guard.client().ok_or_else(|| color_eyre::eyre::eyre!("No hub client available"))?;
+    {
+        let mut hub_guard = hub.lock().await;
+        hub_guard.connect().await?;
+    }
 
     // Get max FID from hub if not specified
     let hub_max_fid = if max_fid_str.is_none() {
-        let fids_response = hub_client
-            .clone()
-            .get_fids(tonic::Request::new(waypoint::proto::FidsRequest {
-                page_size: Some(1),
-                page_token: None,
-                reverse: Some(true),
-                shard_id: 0,
-            }))
-            .await?;
+        let fids_response = {
+            let mut hub_guard = hub.lock().await;
+            hub_guard.get_fids(Some(1), None, Some(true)).await?
+        };
 
-        fids_response.into_inner().fids.first().copied().unwrap_or(1000)
+        fids_response.fids.first().copied().unwrap_or(1000)
     } else {
         max_fid_str.and_then(|s| s.parse().ok()).unwrap_or(1000)
     };
@@ -80,7 +75,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
 
     // Create reconciler for user_data operations
     let reconciler = Arc::new(MessageReconciler::new(
-        hub_client.clone(),
+        hub.clone(),
         database.clone(),
         std::time::Duration::from_secs(30),
         true,
@@ -194,7 +189,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     );
 
     // Disconnect hub client when done
-    hub_guard.disconnect().await?;
+    hub.lock().await.disconnect().await?;
 
     Ok(())
 }

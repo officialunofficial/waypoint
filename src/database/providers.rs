@@ -41,6 +41,7 @@ impl PostgresDatabaseClient {
             MessageType::OnchainSignerMigrated => "onchain_events",
             MessageType::OnchainIdRegister => "onchain_events",
             MessageType::OnchainStorageRent => "onchain_events",
+            MessageType::OnchainTierPurchase => "tier_purchases",
         }
     }
 }

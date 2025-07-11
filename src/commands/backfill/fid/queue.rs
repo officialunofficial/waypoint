@@ -121,6 +121,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                     attempts: 0,
                     created_at: chrono::Utc::now(),
                     id: String::new(),
+                    started_at: None,
                 })
                 .await?;
 
@@ -157,6 +158,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                 attempts: 0,
                 created_at: chrono::Utc::now(),
                 id: String::new(),
+                started_at: None,
             })
             .await?;
         info!("Queued specific FIDs: {:?}", fid_list);
@@ -181,6 +183,7 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                     attempts: 0,
                     created_at: chrono::Utc::now(),
                     id: String::new(),
+                    started_at: None,
                 })
                 .await?;
 

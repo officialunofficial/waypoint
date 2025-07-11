@@ -2,7 +2,6 @@
 
 Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory efficiency. It provides a streaming synchronization service combined with backfill capabilities to process historical data.
 
-[![Docker Build and Publish](https://github.com/officialunofficial/waypoint/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/officialunofficial/waypoint/actions/workflows/docker-publish.yml)
 [![Docker Hub](https://img.shields.io/docker/pulls/officialunofficial/waypoint)](https://hub.docker.com/r/officialunofficial/waypoint)
 
 ![waypoint banner](banner.png)
@@ -11,6 +10,7 @@ Waypoint is a Snapchain synchronization tool built in Rust, optimized for memory
 
 ### Main Service
 - **Streaming Service**: Subscribes to real-time Snapchain events and processes them
+- **Root Parent Tracking**: Automatically tracks thread roots for efficient conversation queries
 - **Commands**: Run with `./waypoint start` or `make run`
 
 ### Backfill System
@@ -99,7 +99,17 @@ WAYPOINT_DATABASE__URL=${DATABASE_URL}
 WAYPOINT_REDIS__URL=redis://localhost:6379
 
 # Farcaster Hub configuration
-WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383
+WAYPOINT_HUB__URL=snapchain.farcaster.xyz:3383  # HTTPS is used by default
+# For local development with HTTP:
+# WAYPOINT_HUB__URL=http://localhost:2283
+# Explicit HTTPS:
+# WAYPOINT_HUB__URL=https://snapchain.farcaster.xyz:3383
+
+# Optional: Custom headers for authenticated hubs
+# Note: Environment variable names use uppercase with underscores, but the actual header names
+# sent will be lowercase with hyphens (e.g., X_API_KEY becomes x-api-key header)
+# WAYPOINT_HUB__HEADERS__X_API_KEY=your_api_key_here
+# WAYPOINT_HUB__HEADERS__AUTHORIZATION=Bearer your_token_here
 
 # MCP service configuration
 WAYPOINT_MCP__ENABLED=true

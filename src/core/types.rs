@@ -114,6 +114,8 @@ pub enum MessageType {
     OnchainIdRegister,
     /// On-chain storage rent messages
     OnchainStorageRent,
+    /// On-chain tier purchase messages
+    OnchainTierPurchase,
 }
 
 impl MessageType {
@@ -130,6 +132,7 @@ impl MessageType {
             Self::OnchainSignerMigrated => "onchain:signer_migrated",
             Self::OnchainIdRegister => "onchain:id_register",
             Self::OnchainStorageRent => "onchain:storage_rent",
+            Self::OnchainTierPurchase => "onchain:tier_purchase",
         }
     }
 
@@ -145,7 +148,8 @@ impl MessageType {
             Self::OnchainSigner
             | Self::OnchainSignerMigrated
             | Self::OnchainIdRegister
-            | Self::OnchainStorageRent => "onchain",
+            | Self::OnchainStorageRent
+            | Self::OnchainTierPurchase => "onchain",
         }
     }
 
@@ -162,6 +166,7 @@ impl MessageType {
             Self::OnchainSignerMigrated,
             Self::OnchainIdRegister,
             Self::OnchainStorageRent,
+            Self::OnchainTierPurchase,
         ]
         .into_iter()
     }
@@ -183,6 +188,7 @@ impl fmt::Display for MessageType {
                 Self::OnchainSignerMigrated => "onchain_signer_migrated",
                 Self::OnchainIdRegister => "onchain_id_register",
                 Self::OnchainStorageRent => "onchain_storage_rent",
+                Self::OnchainTierPurchase => "onchain_tier_purchase",
             }
         )
     }

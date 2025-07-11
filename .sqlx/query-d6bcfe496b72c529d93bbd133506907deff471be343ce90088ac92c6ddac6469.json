@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT fid, parent_fid, parent_hash, parent_url\n                FROM casts\n                WHERE hash = $1 AND deleted_at IS NULL\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "fid",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "parent_fid",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "parent_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_url",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "d6bcfe496b72c529d93bbd133506907deff471be343ce90088ac92c6ddac6469"
+}

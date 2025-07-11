@@ -1,5 +1,8 @@
 use crate::{
-    core::{normalize::NormalizedEmbed, util::from_farcaster_time},
+    core::{
+        normalize::NormalizedEmbed, root_parent_hub::find_root_parent_hub,
+        util::from_farcaster_time,
+    },
     database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
     processor::consumer::EventProcessor,
@@ -21,7 +24,7 @@ use rayon::prelude::*;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
 use std::hash::Hasher;
 use std::sync::Arc;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 #[derive(Clone)]
 pub struct DatabaseProcessor {
@@ -56,36 +59,94 @@ impl DatabaseProcessor {
                     _ => None,
                 };
 
+                let parent_fid = match &cast_body.parent {
+                    Some(Parent::ParentCastId(cast_id)) => Some(cast_id.fid as i64),
+                    _ => None,
+                };
+
                 let ts = Self::convert_timestamp(data.timestamp);
 
+                // Find root parent information if this cast has a parent
+                let (root_parent_fid, root_parent_hash, root_parent_url) =
+                    if parent_fid.is_some() || parent_url.is_some() {
+                        // Create a hub client from resources
+                        let hub_client = crate::hub::providers::FarcasterHubClient::new(
+                            Arc::clone(&self.resources.hub),
+                        );
+
+                        match find_root_parent_hub(
+                            &hub_client,
+                            parent_fid,
+                            parent_hash.map(|h| h.as_slice()),
+                            parent_url,
+                            Some(data.fid as i64),
+                            Some(&msg.hash),
+                        )
+                        .await
+                        {
+                            Ok(Some(root_info)) => (
+                                root_info.root_parent_fid,
+                                root_info.root_parent_hash,
+                                root_info.root_parent_url,
+                            ),
+                            Ok(None) => {
+                                // No parent, this cast is a root
+                                (None, None, None)
+                            },
+                            Err(e) => {
+                                warn!("Failed to find root parent for cast: {}", e);
+                                // Continue without root parent info rather than failing
+                                (None, None, None)
+                            },
+                        }
+                    } else {
+                        // No parent, this cast is a root
+                        (None, None, None)
+                    };
+
                 sqlx::query!(
-                r#"
-                INSERT INTO casts (fid, hash, text, parent_hash, parent_url, timestamp, embeds, mentions, mentions_positions)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    r#"
+                INSERT INTO casts (
+                    fid, hash, text, parent_fid, parent_hash, parent_url, 
+                    root_parent_fid, root_parent_hash, root_parent_url,
+                    timestamp, embeds, mentions, mentions_positions
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT (hash) DO UPDATE SET
                     text = EXCLUDED.text,
+                    parent_fid = EXCLUDED.parent_fid,
                     parent_hash = EXCLUDED.parent_hash,
                     parent_url = EXCLUDED.parent_url,
+                    root_parent_fid = EXCLUDED.root_parent_fid,
+                    root_parent_hash = EXCLUDED.root_parent_hash,
+                    root_parent_url = EXCLUDED.root_parent_url,
                     timestamp = EXCLUDED.timestamp,
                     embeds = EXCLUDED.embeds,
                     mentions = EXCLUDED.mentions,
                     mentions_positions = EXCLUDED.mentions_positions
                 "#,
-                data.fid as i64,
-                &msg.hash,
-                &cast_body.text,
-                parent_hash,
-                parent_url,
-                ts,
-                serde_json::to_value(
-                    cast_body.embeds
-                        .iter()
-                        .map(NormalizedEmbed::from_protobuf_embed)
-                        .collect::<Vec<_>>()
-                )?,
-                serde_json::to_value(&cast_body.mentions)?,
-                serde_json::to_value(&cast_body.mentions_positions)?,
-            ).execute(pool).await?;
+                    data.fid as i64,
+                    &msg.hash,
+                    &cast_body.text,
+                    parent_fid,
+                    parent_hash,
+                    parent_url,
+                    root_parent_fid,
+                    root_parent_hash.as_deref(),
+                    root_parent_url.as_deref(),
+                    ts,
+                    serde_json::to_value(
+                        cast_body
+                            .embeds
+                            .iter()
+                            .map(NormalizedEmbed::from_protobuf_embed)
+                            .collect::<Vec<_>>()
+                    )?,
+                    serde_json::to_value(&cast_body.mentions)?,
+                    serde_json::to_value(&cast_body.mentions_positions)?,
+                )
+                .execute(pool)
+                .await?;
             }
         }
         Ok(())
@@ -106,8 +167,8 @@ impl DatabaseProcessor {
                 // - Handles out-of-order messages where removals arrive before additions
                 sqlx::query!(
                     r#"
-                INSERT INTO casts (fid, hash, deleted_at, timestamp, text, embeds, mentions, mentions_positions)
-                VALUES ($1, $2, $3, $4, '', '[]'::json, '[]'::json, '[]'::json)
+                INSERT INTO casts (fid, hash, deleted_at, timestamp, text, embeds, mentions, mentions_positions, parent_fid)
+                VALUES ($1, $2, $3, $4, '', '[]'::json, '[]'::json, '[]'::json, NULL)
                 ON CONFLICT (hash) DO UPDATE SET
                     deleted_at = CASE
                         WHEN EXCLUDED.timestamp >= COALESCE(casts.timestamp, EXCLUDED.timestamp) THEN EXCLUDED.deleted_at
@@ -498,6 +559,49 @@ impl DatabaseProcessor {
         )
         .execute(&self.resources.database.pool)
         .await?;
+
+        // Handle tier purchase events specifically
+        if event.r#type == 5 {
+            // EVENT_TYPE_TIER_PURCHASE
+            if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(tier_body)) =
+                &event.body
+            {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO tier_purchases (
+                        fid,
+                        tier_type,
+                        for_days,
+                        payer,
+                        timestamp,
+                        block_number,
+                        block_hash,
+                        log_index,
+                        tx_index,
+                        tx_hash,
+                        block_timestamp,
+                        chain_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ON CONFLICT (tx_hash, log_index) DO NOTHING
+                    "#,
+                    event.fid as i64,
+                    tier_body.tier_type as i16,
+                    tier_body.for_days as i64,
+                    &tier_body.payer,
+                    ts,
+                    event.block_number as i64,
+                    &event.block_hash,
+                    event.log_index as i32,
+                    event.tx_index as i32,
+                    &event.transaction_hash,
+                    ts,
+                    event.chain_id as i64
+                )
+                .execute(&self.resources.database.pool)
+                .await?;
+            }
+        }
 
         Ok(())
     }
@@ -1049,5 +1153,81 @@ impl EventProcessor for DatabaseProcessor {
             _ => {},
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::{TierPurchaseBody, TierType};
+
+    #[test]
+    fn test_convert_timestamp() {
+        // Test conversion from farcaster time to OffsetDateTime
+        let farcaster_timestamp = 100000000u32; // Example farcaster timestamp
+        let result = DatabaseProcessor::convert_timestamp(farcaster_timestamp);
+
+        // Verify it's a valid timestamp
+        assert!(result.unix_timestamp() > 0);
+    }
+
+    #[test]
+    fn test_tier_purchase_event_creation() {
+        // Create a tier purchase body
+        let tier_body = TierPurchaseBody {
+            tier_type: TierType::Pro as i32,
+            for_days: 365,
+            payer: vec![0x01, 0x02, 0x03], // Example payer address
+        };
+
+        // Create an onchain event with tier purchase
+        let event = OnChainEvent {
+            r#type: 5, // EVENT_TYPE_TIER_PURCHASE
+            fid: 12345,
+            chain_id: 10, // Optimism
+            block_number: 1000000,
+            block_hash: vec![0xaa; 32],
+            block_timestamp: 1700000000,
+            transaction_hash: vec![0xbb; 32],
+            log_index: 5,
+            tx_index: 10,
+            version: 1,
+            body: Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(tier_body)),
+        };
+
+        // Verify the event is properly constructed
+        assert_eq!(event.r#type, 5);
+        assert_eq!(event.fid, 12345);
+
+        if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(body)) = &event.body {
+            assert_eq!(body.tier_type, TierType::Pro as i32);
+            assert_eq!(body.for_days, 365);
+            assert_eq!(body.payer, vec![0x01, 0x02, 0x03]);
+        } else {
+            panic!("Expected tier purchase body");
+        }
+    }
+
+    #[test]
+    fn test_onchain_event_hash_generation() {
+        use std::hash::Hasher;
+
+        // Test deterministic hash generation for onchain events
+        let tx_hash = vec![0xaa; 32];
+        let log_index = 5u32;
+
+        let mut hasher1 = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&tx_hash, &mut hasher1);
+        std::hash::Hash::hash(&log_index, &mut hasher1);
+        let hash1 = hasher1.finish().to_be_bytes().to_vec();
+
+        let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&tx_hash, &mut hasher2);
+        std::hash::Hash::hash(&log_index, &mut hasher2);
+        let hash2 = hasher2.finish().to_be_bytes().to_vec();
+
+        // Verify deterministic hashing
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 8); // 64-bit hash as 8 bytes
     }
 }

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO casts (fid, hash, deleted_at, timestamp, text, embeds, mentions, mentions_positions, parent_fid)\n                VALUES ($1, $2, $3, $4, '', '[]'::json, '[]'::json, '[]'::json, NULL)\n                ON CONFLICT (hash) DO UPDATE SET\n                    deleted_at = CASE\n                        WHEN EXCLUDED.timestamp >= COALESCE(casts.timestamp, EXCLUDED.timestamp) THEN EXCLUDED.deleted_at\n                        ELSE casts.deleted_at\n                    END,\n                    timestamp = LEAST(COALESCE(casts.timestamp, EXCLUDED.timestamp), EXCLUDED.timestamp)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5ecc2135270ff9b030f9c7f92984800c2783316844dde93c7535b1d77260ae5e"
+}

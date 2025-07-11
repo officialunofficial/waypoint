@@ -6,8 +6,41 @@ All notable changes to Waypoint will be documented in this file.
 
 ### Bug Fixes
 
+- Resolve backfill job queue exhaustion bug (#37)
+- Increase Redis pool sizes to prevent backfill queue exhaustion (#38)
+- Handle Redis XPENDING response variations and prevent backfill job loss (#39)
+
+### Documentation
+
+- Update mcp.md
+- Update docs
+- Add root parent tracking documentation
+
+### Features
+
+- Support Farcaster Pro (#36)
+- Custom headers (#42)
+- Update proto to 0.3.1
+- Add root parent tracking for cast threads
+
+### Miscellaneous Tasks
+
+- Version and changelog
+
+### Refactor
+
+- Simplify backfill queue to use only normal and inprogress q… (#43)
+
+## [0.6.3] - 2025-06-09
+
+### Bug Fixes
+
 - Proto
 - Redis defaults
+
+### Miscellaneous Tasks
+
+- Changelog
 
 ## [0.6.1] - 2025-05-30
 

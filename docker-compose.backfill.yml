@@ -45,16 +45,18 @@ services:
     environment:
       # Database
       WAYPOINT_DATABASE__URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-waypoint}
-      WAYPOINT_DATABASE__MAX_CONNECTIONS: ${WAYPOINT_DATABASE__MAX_CONNECTIONS:-5}
+      WAYPOINT_DATABASE__MAX_CONNECTIONS: ${WAYPOINT_DATABASE__MAX_CONNECTIONS:-30}
       WAYPOINT_DATABASE__TIMEOUT_SECONDS: ${WAYPOINT_DATABASE__TIMEOUT_SECONDS:-30}
       WAYPOINT_DATABASE__STORE_MESSAGES: ${WAYPOINT_DATABASE__STORE_MESSAGES:-false}
 
       # Redis
       WAYPOINT_REDIS__URL: redis://redis:6379
-      WAYPOINT_REDIS__POOL_SIZE: ${WAYPOINT_REDIS__POOL_SIZE:-5}
+      WAYPOINT_REDIS__POOL_SIZE: ${WAYPOINT_REDIS__POOL_SIZE:-100}
 
       # Farcaster Hub
       WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
+      # Custom headers for authentication (uppercase env vars will be converted to lowercase headers with hyphens)
+      WAYPOINT_HUB__HEADERS__X_API_KEY: ${WAYPOINT_HUB__HEADERS__X_API_KEY}
       WAYPOINT_HUB__RETRY_MAX_ATTEMPTS: ${WAYPOINT_HUB__RETRY_MAX_ATTEMPTS:-5}
       WAYPOINT_HUB__RETRY_BASE_DELAY_MS: ${WAYPOINT_HUB__RETRY_BASE_DELAY_MS:-100}
       WAYPOINT_HUB__RETRY_MAX_DELAY_MS: ${WAYPOINT_HUB__RETRY_MAX_DELAY_MS:-30000}
@@ -89,10 +91,12 @@ services:
 
       # Redis
       WAYPOINT_REDIS__URL: redis://redis:6379
-      WAYPOINT_REDIS__POOL_SIZE: ${WAYPOINT_REDIS__POOL_SIZE:-5}
+      WAYPOINT_REDIS__POOL_SIZE: ${WAYPOINT_REDIS__POOL_SIZE:-100}
 
       # Farcaster Hub
       WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
+      # Custom headers for authentication (uppercase env vars will be converted to lowercase headers with hyphens)
+      WAYPOINT_HUB__HEADERS__X_API_KEY: ${WAYPOINT_HUB__HEADERS__X_API_KEY}
       WAYPOINT_HUB__RETRY_MAX_ATTEMPTS: ${WAYPOINT_HUB__RETRY_MAX_ATTEMPTS:-5}
       WAYPOINT_HUB__RETRY_BASE_DELAY_MS: ${WAYPOINT_HUB__RETRY_BASE_DELAY_MS:-100}
       WAYPOINT_HUB__RETRY_MAX_DELAY_MS: ${WAYPOINT_HUB__RETRY_MAX_DELAY_MS:-30000}
@@ -113,8 +117,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      backfill-queue:
-        condition: service_started
     networks:
       - waypoint-network
 

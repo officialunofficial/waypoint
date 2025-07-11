@@ -28,14 +28,10 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
     info!("  Average job time: {:.2}ms", metrics.avg_job_time_ms);
     info!("");
     info!("Queue Sizes:");
-    info!("  High priority queue: {} jobs", metrics.high_priority_queue_size);
-    info!("  Normal priority queue: {} jobs", metrics.normal_priority_queue_size);
-    info!("  Low priority queue: {} jobs", metrics.low_priority_queue_size);
+    info!("  Normal queue: {} jobs", metrics.normal_priority_queue_size);
     info!("  In-progress queue: {} jobs", metrics.in_progress_queue_size);
 
-    let total_pending = metrics.high_priority_queue_size
-        + metrics.normal_priority_queue_size
-        + metrics.low_priority_queue_size;
+    let total_pending = metrics.normal_priority_queue_size;
     info!("");
     info!("Total pending jobs: {}", total_pending);
 
