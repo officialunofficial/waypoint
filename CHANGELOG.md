@@ -4,32 +4,29 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
-## [2025.7.0] - 2025-07-09
-
 ### Bug Fixes
 
 - Resolve backfill job queue exhaustion bug (#37)
 - Increase Redis pool sizes to prevent backfill queue exhaustion (#38)
 - Handle Redis XPENDING response variations and prevent backfill job loss (#39)
+- Sqlx
+- Traversal
+- Root parent hub
+- Use ConfigurationError instead of internal error
 
 ### Documentation
 
 - Update mcp.md
 - Update docs
-- Add root parent tracking documentation
-- Add comprehensive shard migration guide
 
 ### Features
 
 - Support Farcaster Pro (#36)
 - Custom headers (#42)
 - Update proto to 0.3.1
-- Add root parent tracking for cast threads
-- Support HTTP/HTTPS protocols for hub client gRPC event streams
-- Add shard_id support for Subscribe API with per-shard event tracking
-- Implement dynamic shard discovery using GetInfo API
-- Support multiple concurrent shard subscriptions in single instance
-- Skip shard 0 (metadata shard) when using subscribe_to_all_shards
+- Add root parent tracking for cast threads (#44)
+- Add HTTP/HTTPS protocol support for hub client gRPC connections (#45)
+- Add shard_id support for Subscribe API with dynamic discovery
 
 ### Miscellaneous Tasks
 
