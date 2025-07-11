@@ -105,7 +105,8 @@ async fn add_to_retry_queue(
     };
 
     let serialized_data = serde_json::to_vec(&retry_data)?;
-    let stream_key = if attempt >= MAX_RETRY_ATTEMPTS { CAST_RETRY_DEAD } else { CAST_RETRY_STREAM };
+    let stream_key =
+        if attempt >= MAX_RETRY_ATTEMPTS { CAST_RETRY_DEAD } else { CAST_RETRY_STREAM };
 
     let mut conn = redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
 

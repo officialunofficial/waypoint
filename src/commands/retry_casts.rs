@@ -1,3 +1,7 @@
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn};
 use waypoint::core::root_parent_hub::{
     CAST_RETRY_DEAD, CAST_RETRY_STREAM, MAX_RETRY_ATTEMPTS, find_root_parent_hub_with_retry,
 };
@@ -6,10 +10,6 @@ use waypoint::{
     hub::{client::Hub, providers::FarcasterHubClient},
     redis::client::Redis,
 };
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
 
 /// Data structure for retry queue messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,11 +31,7 @@ pub struct CastRetryWorker {
 }
 
 impl CastRetryWorker {
-    pub fn new(
-        redis: Arc<Redis>,
-        database: Arc<Database>,
-        hub: Arc<Mutex<Hub>>,
-    ) -> Self {
+    pub fn new(redis: Arc<Redis>, database: Arc<Database>, hub: Arc<Mutex<Hub>>) -> Self {
         let hub_client = FarcasterHubClient::new(hub);
         Self { redis, database, hub_client }
     }
@@ -157,7 +153,7 @@ impl CastRetryWorker {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut dead_data = retry_data.clone();
         dead_data.error = final_error.to_string();
-        
+
         let serialized_data = serde_json::to_vec(&dead_data)?;
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
 
