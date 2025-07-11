@@ -1,15 +1,18 @@
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
-use waypoint::core::root_parent_hub::{
-    CAST_RETRY_DEAD, CAST_RETRY_STREAM, MAX_RETRY_ATTEMPTS, find_root_parent_hub_with_retry,
-};
-use waypoint::{
+//! Cast retry service for background processing of failed casts
+use crate::{
+    app::{Result, Service, ServiceContext, ServiceHandle},
+    core::root_parent_hub::{
+        CAST_RETRY_DEAD, CAST_RETRY_STREAM, MAX_RETRY_ATTEMPTS, find_root_parent_hub_with_retry,
+    },
     database::client::Database,
     hub::{client::Hub, providers::FarcasterHubClient},
     redis::client::Redis,
 };
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::{Mutex, oneshot};
+use tracing::{debug, error, info, warn};
 
 /// Data structure for retry queue messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,14 +27,13 @@ struct RetryData {
 }
 
 /// Retry worker for processing failed cast insertions
-#[allow(dead_code)]
 pub struct CastRetryWorker {
     redis: Arc<Redis>,
+    #[allow(dead_code)]
     database: Arc<Database>,
     hub_client: FarcasterHubClient,
 }
 
-#[allow(dead_code)]
 impl CastRetryWorker {
     pub fn new(redis: Arc<Redis>, database: Arc<Database>, hub: Arc<Mutex<Hub>>) -> Self {
         let hub_client = FarcasterHubClient::new(hub);
@@ -39,8 +41,11 @@ impl CastRetryWorker {
     }
 
     /// Run the retry worker
-    pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn run(&self) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Starting cast retry worker");
+
+        // Ensure consumer group exists
+        self.ensure_consumer_group().await?;
 
         loop {
             if let Err(e) = self.process_retry_batch().await {
@@ -55,7 +60,9 @@ impl CastRetryWorker {
     }
 
     /// Process a batch of retry messages
-    async fn process_retry_batch(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn process_retry_batch(
+        &self,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Read messages from retry stream
         let messages = self
             .redis
@@ -92,7 +99,7 @@ impl CastRetryWorker {
         &self,
         msg_id: &str,
         msg_data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Parse the message data from JSON serialization
         let retry_data: RetryData = serde_json::from_slice(msg_data)?;
         debug!("Processing retry message {}: {:?}", msg_id, retry_data);
@@ -119,7 +126,7 @@ impl CastRetryWorker {
         match result {
             Ok(Some(_root_info)) => {
                 info!("Successfully resolved root parent for cast on retry attempt {}", attempt);
-                // In a real implementation, you'd update the database with the resolved parent info
+                // TODO: Update the database with the resolved parent info
                 Ok(())
             },
             Ok(None) => {
@@ -152,14 +159,14 @@ impl CastRetryWorker {
         &self,
         retry_data: &RetryData,
         final_error: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut dead_data = retry_data.clone();
         dead_data.error = final_error.to_string();
 
         let serialized_data = serde_json::to_vec(&dead_data)?;
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
 
-        let _: Result<String, _> = bb8_redis::redis::cmd("XADD")
+        let _: std::result::Result<String, _> = bb8_redis::redis::cmd("XADD")
             .arg(CAST_RETRY_DEAD)
             .arg("*")
             .arg("d")
@@ -174,11 +181,11 @@ impl CastRetryWorker {
     async fn add_back_to_retry(
         &self,
         retry_data: &RetryData,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let serialized_data = serde_json::to_vec(retry_data)?;
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
 
-        let _: Result<String, _> = bb8_redis::redis::cmd("XADD")
+        let _: std::result::Result<String, _> = bb8_redis::redis::cmd("XADD")
             .arg(CAST_RETRY_STREAM)
             .arg("*")
             .arg("d")
@@ -191,13 +198,13 @@ impl CastRetryWorker {
     }
 
     /// Create consumer group if it doesn't exist
-    pub async fn ensure_consumer_group(
+    async fn ensure_consumer_group(
         &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
 
         // Try to create consumer group, ignore error if it already exists
-        let _: Result<String, _> = bb8_redis::redis::cmd("XGROUP")
+        let _: std::result::Result<String, _> = bb8_redis::redis::cmd("XGROUP")
             .arg("CREATE")
             .arg(CAST_RETRY_STREAM)
             .arg("retry_workers")
@@ -211,116 +218,81 @@ impl CastRetryWorker {
     }
 }
 
-/// Admin functions for managing the retry system
-#[allow(dead_code)]
-pub struct CastRetryAdmin {
-    redis: Arc<Redis>,
+/// Service for processing failed cast retries in the background
+pub struct CastRetryService {
+    enabled: bool,
 }
 
-#[allow(dead_code)]
-impl CastRetryAdmin {
-    pub fn new(redis: Arc<Redis>) -> Self {
-        Self { redis }
+impl CastRetryService {
+    /// Create a new cast retry service
+    pub fn new() -> Self {
+        Self { enabled: true }
     }
 
-    /// Get retry queue statistics
-    pub async fn get_retry_stats(
-        &self,
-    ) -> Result<RetryStats, Box<dyn std::error::Error + Send + Sync>> {
-        let retry_count = self.redis.xlen(CAST_RETRY_STREAM).await.unwrap_or(0);
-        let dead_count = self.redis.xlen(CAST_RETRY_DEAD).await.unwrap_or(0);
+    /// Configure whether the retry service is enabled
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
 
-        Ok(RetryStats { retry_queue_length: retry_count, dead_letter_length: dead_count })
+impl Default for CastRetryService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Service for CastRetryService {
+    fn name(&self) -> &str {
+        "cast_retry"
     }
 
-    /// Reprocess all dead letter messages (move them back to retry queue)
-    pub async fn reprocess_dead_letters(
-        &self,
-    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        info!("Reprocessing all dead letter messages");
-
-        // Read all messages from dead letter queue
-        let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
-
-        #[allow(clippy::type_complexity)]
-        let messages: Result<Vec<(String, Vec<(String, Vec<u8>)>)>, _> =
-            bb8_redis::redis::cmd("XRANGE")
-                .arg(CAST_RETRY_DEAD)
-                .arg("-")
-                .arg("+")
-                .query_async(&mut *conn)
-                .await;
-
-        let mut moved_count = 0;
-        if let Ok(messages) = messages {
-            for (msg_id, _fields) in messages {
-                // Move message to retry queue (simplified)
-                let _: Result<String, _> = bb8_redis::redis::cmd("XADD")
-                    .arg(CAST_RETRY_STREAM)
-                    .arg("*")
-                    .arg("reprocessed_from")
-                    .arg(&msg_id)
-                    .arg("attempt")
-                    .arg(1)
-                    .query_async(&mut *conn)
-                    .await;
-
-                // Delete from dead letter queue
-                let _: Result<u64, _> = bb8_redis::redis::cmd("XDEL")
-                    .arg(CAST_RETRY_DEAD)
-                    .arg(&msg_id)
-                    .query_async(&mut *conn)
-                    .await;
-
-                moved_count += 1;
-            }
+    async fn start<'a>(&'a self, context: ServiceContext<'a>) -> Result<ServiceHandle> {
+        if !self.enabled {
+            info!("Cast retry service disabled");
+            let (stop_tx, stop_rx) = oneshot::channel();
+            let join_handle = tokio::spawn(async move {
+                let _ = stop_rx.await;
+            });
+            return Ok(ServiceHandle::new(stop_tx, join_handle));
         }
 
-        info!("Moved {} messages from dead letter to retry queue", moved_count);
-        Ok(moved_count)
-    }
+        info!("Starting cast retry service");
 
-    /// Clear negative cache (force retry of all cached failures)
-    pub async fn clear_negative_cache(
-        &self,
-    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        let mut conn = self.redis.pool.get().await.map_err(|e| format!("Redis error: {}", e))?;
+        // Get resources from the service context
+        let redis = Arc::clone(&context.state.redis);
+        let database = Arc::clone(&context.state.database);
+        let hub = Arc::clone(&context.state.hub);
 
-        // Use SCAN to find all failed_lookup keys
-        let keys: Result<Vec<String>, _> = bb8_redis::redis::cmd("SCAN")
-            .arg("0")
-            .arg("MATCH")
-            .arg("failed_lookup:*")
-            .arg("COUNT")
-            .arg("1000")
-            .query_async(&mut *conn)
-            .await;
+        // Create the retry worker
+        let worker = CastRetryWorker::new(redis, database, hub);
 
-        let mut deleted_count = 0;
-        if let Ok(scan_result) = keys {
-            // scan_result is [cursor, [key1, key2, ...]]
-            // For simplicity, just delete what we found in this scan
-            if scan_result.len() > 1 {
-                let keys_to_delete: Vec<&str> =
-                    scan_result[1..].iter().map(|s| s.as_str()).collect();
-                if !keys_to_delete.is_empty() {
-                    let result: Result<u64, _> = bb8_redis::redis::cmd("DEL")
-                        .arg(&keys_to_delete)
-                        .query_async(&mut *conn)
-                        .await;
-                    deleted_count = result.unwrap_or(0);
+        // Set up shutdown channel
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+
+        // Spawn the worker task
+        let join_handle = tokio::spawn(async move {
+            let mut worker_task = tokio::spawn(async move {
+                if let Err(e) = worker.run().await {
+                    error!("Cast retry worker error: {}", e);
+                }
+            });
+
+            // Wait for shutdown signal
+            tokio::select! {
+                _ = &mut stop_rx => {
+                    info!("Cast retry service received shutdown signal");
+                    worker_task.abort();
+                }
+                _ = &mut worker_task => {
+                    error!("Cast retry worker exited unexpectedly");
                 }
             }
-        }
 
-        info!("Cleared {} negative cache entries", deleted_count);
-        Ok(deleted_count)
+            info!("Cast retry service stopped");
+        });
+
+        Ok(ServiceHandle::new(stop_tx, join_handle))
     }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct RetryStats {
-    pub retry_queue_length: u64,
-    pub dead_letter_length: u64,
 }
