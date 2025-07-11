@@ -1,6 +1,8 @@
 //! Streaming service for processing real-time Hub events
 use crate::{
-    app::{ProcessorRegistry, Result, Service, ServiceContext, ServiceError, ServiceHandle},
+    app::{
+        AppError, ProcessorRegistry, Result, Service, ServiceContext, ServiceError, ServiceHandle,
+    },
     core::MessageType,
     hub::subscriber::{HubSubscriber, SubscriberOptions},
     proto::HubEvent,
@@ -13,7 +15,7 @@ use tokio::{
     sync::{Mutex, RwLock, oneshot},
     task::JoinHandle,
 };
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 
 const DEFAULT_BATCH_SIZE: u64 = 10;
 const DEFAULT_CONCURRENCY: usize = 200;
@@ -1465,42 +1467,163 @@ impl Service for StreamingService {
         // We need to wrap in Arc because it will be shared across threads
         let redis_stream = Arc::new(RedisStream::new(Arc::clone(&context.state.redis)));
 
-        let subscriber = {
+        // First, get hub info to understand available shards
+        let hub_info = {
             let mut hub_guard = context.state.hub.lock().await;
-            let client = hub_guard.client().ok_or_else(|| {
-                ServiceError::Initialization("No hub client available".to_string())
-            })?;
-
-            let mut options = self.options.subscriber.clone().unwrap_or_default();
-
-            // Configure the subscriber to use spam filter if enabled
-            if !self.enable_spam_filter {
-                info!("Spam filter disabled - all messages will be processed");
-                options.spam_filter_enabled = Some(false);
-            } else {
-                info!("Spam filter enabled - spam messages will be filtered");
-                options.spam_filter_enabled = Some(true);
-            }
-
-            options.hub_config = Some(Arc::new(context.config.hub.clone()));
-
-            HubSubscriber::new(
-                client.clone(),
-                Arc::clone(&context.state.redis),
-                RedisStream::new(Arc::clone(&context.state.redis)), // Can't use Arc<RedisStream> here
-                hub_guard.host().to_string(),
-                "default".to_string(),
-                options,
-            )
-            .await
+            hub_guard.get_hub_info().await.map_err(|e| {
+                AppError::Service(ServiceError::Initialization(format!(
+                    "Failed to get hub info: {}",
+                    e
+                )))
+            })?
         };
 
-        // Create consumer - reuse the same Redis stream
+        // Use the actual number of shards from shard_infos, not num_shards
+        // num_shards appears to count only data shards (excluding metadata shard 0)
+        let available_shards = if !hub_info.shard_infos.is_empty() {
+            hub_info.shard_infos.len() as u32
+        } else {
+            // Fallback to num_shards + 1 if shard_infos is empty
+            hub_info.num_shards + 1
+        };
+
+        info!(
+            "Hub reports num_shards: {}, but has {} total shards (including metadata shard 0)",
+            hub_info.num_shards, available_shards
+        );
+
+        // Debug configuration values
+        info!(
+            "Shard configuration - shard_indices: {:?}, subscribe_to_all_shards: {}",
+            context.config.hub.shard_indices, context.config.hub.subscribe_to_all_shards
+        );
+
+        // Determine which shards to subscribe to
+        let shard_indices = if !context.config.hub.shard_indices.is_empty() {
+            // Use explicitly configured shards, but validate them
+            info!("Using configured shard indices: {:?}", context.config.hub.shard_indices);
+
+            // Validate that all configured shards exist
+            for &shard_idx in &context.config.hub.shard_indices {
+                if shard_idx >= available_shards {
+                    return Err(AppError::Service(ServiceError::Initialization(format!(
+                        "Configured shard {} does not exist (hub has {} shards, valid indices are 0-{})",
+                        shard_idx,
+                        available_shards,
+                        available_shards - 1
+                    ))));
+                }
+
+                if shard_idx == 0 {
+                    warn!(
+                        "Shard 0 is configured but is typically used only for metadata. Consider removing it from shard_indices unless you specifically need metadata events."
+                    );
+                }
+            }
+
+            context.config.hub.shard_indices.clone()
+        } else if context.config.hub.subscribe_to_all_shards {
+            // Use all available shards except shard 0 (metadata shard)
+            info!(
+                "subscribe_to_all_shards is set - subscribing to shards 1-{} (skipping metadata shard 0)",
+                available_shards - 1
+            );
+
+            // Create list of shard indices from 1 to num_shards-1 (skip shard 0)
+            let shards: Vec<u32> = (1..available_shards).collect();
+
+            info!(
+                "Available shards: {}, subscribing to shards: {:?} (range 1..{})",
+                available_shards, shards, available_shards
+            );
+
+            if shards.is_empty() && available_shards == 1 {
+                return Err(AppError::Service(ServiceError::Initialization(
+                    "Hub only has shard 0 (metadata shard) available. No event shards to subscribe to.".into()
+                )));
+            }
+
+            // Log detailed shard information if available
+            if !hub_info.shard_infos.is_empty() {
+                for shard_info in &hub_info.shard_infos {
+                    info!(
+                        "Shard {}: {} messages, max_height: {}, mempool_size: {}",
+                        shard_info.shard_id,
+                        shard_info.num_messages,
+                        shard_info.max_height,
+                        shard_info.mempool_size
+                    );
+                }
+            }
+
+            shards
+        } else {
+            return Err(AppError::Service(ServiceError::Initialization(
+                "No shard indices configured. Set hub.shard_indices or hub.subscribe_to_all_shards"
+                    .into(),
+            )));
+        };
+
+        info!("Starting subscriptions for shards: {:?}", shard_indices);
+
+        // Create multiple subscribers, one per shard
+        let mut subscriber_handles = Vec::new();
+        let mut subscriber_arcs = Vec::new();
+
+        for shard_index in shard_indices {
+            let shard_key = format!("shard_{}", shard_index);
+
+            let subscriber = {
+                let mut hub_guard = context.state.hub.lock().await;
+                let client = hub_guard.client().ok_or_else(|| {
+                    ServiceError::Initialization("No hub client available".to_string())
+                })?;
+
+                let mut options = self.options.subscriber.clone().unwrap_or_default();
+
+                // Configure the subscriber to use spam filter if enabled
+                if !self.enable_spam_filter {
+                    options.spam_filter_enabled = Some(false);
+                } else {
+                    options.spam_filter_enabled = Some(true);
+                }
+
+                options.hub_config = Some(Arc::new(context.config.hub.clone()));
+                options.shard_index = Some(shard_index as u64);
+
+                HubSubscriber::new(
+                    client.clone(),
+                    Arc::clone(&context.state.redis),
+                    RedisStream::new(Arc::clone(&context.state.redis)),
+                    hub_guard.host().to_string(),
+                    shard_key.clone(),
+                    options,
+                )
+                .await
+            };
+
+            let subscriber_arc = Arc::new(Mutex::new(subscriber));
+            subscriber_arcs.push(Arc::clone(&subscriber_arc));
+
+            let subscriber_clone = Arc::clone(&subscriber_arc);
+            let handle = tokio::spawn(async move {
+                let subscriber = subscriber_clone.lock().await;
+                info!("Starting subscriber for shard {}", shard_index);
+                if let Err(e) = subscriber.start().await {
+                    error!("Subscriber error for shard {}: {}", shard_index, e);
+                }
+            });
+
+            subscriber_handles.push(handle);
+        }
+
+        // Create a single consumer that processes events from all shards
+        // The consumer reads from Redis streams that are populated by all subscribers
         let consumer = Consumer::new(
-            redis_stream, // Reuse the stream - no need to create a new one
+            redis_stream,
             Arc::new(processor_registry),
             hub_host,
-            "default".to_string(),
+            "all".to_string(), // Consumer processes events from all shards
         );
 
         // Apply options from config
@@ -1512,17 +1635,8 @@ impl Service for StreamingService {
         let consumer =
             consumer.with_retention(self.options.retention.unwrap_or(DEFAULT_EVENT_RETENTION));
 
-        // Start consumer and subscriber
+        // Start consumer
         let consumer_handle = consumer.start().await;
-        let subscriber_arc = Arc::new(Mutex::new(subscriber));
-
-        let subscriber_clone = Arc::clone(&subscriber_arc);
-        let subscriber_handle = tokio::spawn(async move {
-            let subscriber = subscriber_clone.lock().await;
-            if let Err(e) = subscriber.start().await {
-                error!("Subscriber error: {}", e);
-            }
-        });
 
         // Create stop channel
         let (stop_tx, stop_rx) = oneshot::channel();
@@ -1532,28 +1646,30 @@ impl Service for StreamingService {
             // Wait for stop signal
             let _ = stop_rx.await;
 
-            info!("Stopping streaming service (subscriber first, then consumer)...");
+            info!("Stopping streaming service (subscribers first, then consumer)...");
 
-            // First stop the subscriber to prevent new events from entering the system
-            {
+            // First stop all subscribers to prevent new events from entering the system
+            for (i, subscriber_arc) in subscriber_arcs.iter().enumerate() {
                 let subscriber = subscriber_arc.lock().await;
                 if let Err(e) = subscriber.stop().await {
-                    error!("Error stopping subscriber: {}", e);
+                    error!("Error stopping subscriber {}: {}", i, e);
                 } else {
-                    info!("Subscriber shutdown signal sent successfully");
+                    info!("Subscriber {} shutdown signal sent successfully", i);
                 }
             }
 
-            // Give the subscriber a moment to complete any in-flight operations
+            // Give the subscribers a moment to complete any in-flight operations
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             // Then stop the consumer (which will handle remaining events already in Redis)
             info!("Aborting consumer tasks...");
             consumer_handle.abort();
 
-            // Finally stop the subscriber background task
-            info!("Aborting subscriber task...");
-            subscriber_handle.abort();
+            // Finally stop all subscriber background tasks
+            info!("Aborting {} subscriber tasks...", subscriber_handles.len());
+            for handle in subscriber_handles {
+                handle.abort();
+            }
 
             info!("Streaming service stopped completely");
         });

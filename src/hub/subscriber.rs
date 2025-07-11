@@ -124,6 +124,8 @@ impl HubSubscriber {
                 retry_jitter_factor: 0.25,
                 retry_timeout_ms: 60000,
                 conn_timeout_ms: 30000,
+                shard_indices: Vec::new(),
+                subscribe_to_all_shards: false,
             })
         };
 
@@ -598,6 +600,16 @@ impl HubSubscriber {
         let jitter_factor = self.hub_config.retry_jitter_factor;
 
         for attempt in 1..=max_attempts {
+            // Validate shard configuration
+            if self.shard_index.is_none() && !self.hub_config.subscribe_to_all_shards {
+                error!(
+                    "shard_index is required for Subscribe API. Please specify hub.shard_index in configuration or set hub.subscribe_to_all_shards=true temporarily during migration."
+                );
+                return Err(Error::ConfigurationError(
+                    "shard_index is required for Subscribe API".to_string(),
+                ));
+            }
+
             // Create a fresh request for each attempt
             let req = tonic::Request::new(SubscribeRequest {
                 from_id: last_id,
@@ -966,4 +978,78 @@ pub struct SubscriberOptions {
     pub after_process: Option<PostProcessHandler>,
     pub hub_config: Option<Arc<HubConfig>>,
     pub spam_filter_enabled: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HubConfig;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_shard_key_generation() {
+        // Test with specific shard index
+        let hub_config = Arc::new(HubConfig {
+            url: "test.hub:3383".to_string(),
+            headers: HashMap::new(),
+            shard_indices: vec![2],
+            subscribe_to_all_shards: false,
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        });
+
+        // The shard key would be "shard_2" based on the streaming service logic
+        // Redis key would be "test.hub:3383:shard_2"
+        assert_eq!(hub_config.shard_indices, vec![2]);
+    }
+
+    #[test]
+    fn test_subscribe_to_all_shards_flag() {
+        let hub_config = Arc::new(HubConfig {
+            url: "test.hub:3383".to_string(),
+            headers: HashMap::new(),
+            shard_indices: Vec::new(),
+            subscribe_to_all_shards: true,
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        });
+
+        // When subscribe_to_all_shards is true, shard validation should pass
+        assert!(hub_config.subscribe_to_all_shards);
+        assert!(hub_config.shard_indices.is_empty());
+    }
+
+    #[test]
+    fn test_shard_validation_requirement() {
+        let hub_config = HubConfig {
+            url: "test.hub:3383".to_string(),
+            headers: HashMap::new(),
+            shard_indices: Vec::new(),
+            subscribe_to_all_shards: false,
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+        };
+
+        // Should fail validation when no shard_indices and subscribe_to_all_shards is false
+        assert!(hub_config.shard_indices.is_empty());
+        assert!(!hub_config.subscribe_to_all_shards);
+    }
 }

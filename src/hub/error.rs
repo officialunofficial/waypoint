@@ -15,4 +15,8 @@ pub enum Error {
     ProcessingError(String),
     #[error("Channel send error: {0}")]
     ChannelError(#[from] Box<mpsc::error::SendError<HubEvent>>),
+    #[error("Configuration error: {0}")]
+    ConfigurationError(String),
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
