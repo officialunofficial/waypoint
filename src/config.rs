@@ -60,7 +60,7 @@ pub struct RedisConfig {
 }
 
 fn default_redis_pool_size() -> u32 {
-    50 // Increased pool size to handle multiple stream consumers
+    100 // Increased pool size to handle multiple stream consumers
 }
 
 fn default_redis_batch_size() -> usize {
@@ -68,7 +68,7 @@ fn default_redis_batch_size() -> usize {
 }
 
 fn default_connection_timeout_ms() -> u64 {
-    5000 // 5 second connection timeout - more time for busy pools
+    3000 // 3 second connection timeout - reduced from 5s for faster failure detection
 }
 
 fn default_idle_timeout_secs() -> u64 {
@@ -128,11 +128,11 @@ pub struct HubConfig {
 }
 
 fn default_hub_max_concurrent_connections() -> u32 {
-    5 // Conservative limit to avoid overwhelming hub
+    20 // Increased from 5 to handle multiple concurrent stream reservations
 }
 
 fn default_hub_max_requests_per_second() -> u32 {
-    10 // Conservative rate limit
+    50 // Increased from 10 to handle multiple concurrent stream reservations
 }
 
 fn default_retry_attempts() -> u32 {

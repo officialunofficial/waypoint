@@ -1,6 +1,6 @@
 use crate::{
     core::{
-        normalize::NormalizedEmbed, root_parent_hub::find_root_parent_hub,
+        normalize::NormalizedEmbed, root_parent_hub::find_root_parent_hub_with_retry,
         util::from_farcaster_time,
     },
     database::batch::BatchInserter,
@@ -74,8 +74,9 @@ impl DatabaseProcessor {
                             Arc::clone(&self.resources.hub),
                         );
 
-                        match find_root_parent_hub(
+                        match find_root_parent_hub_with_retry(
                             &hub_client,
+                            &*self.resources.redis,
                             parent_fid,
                             parent_hash.map(|h| h.as_slice()),
                             parent_url,
