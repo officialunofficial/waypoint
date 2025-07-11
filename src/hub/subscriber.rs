@@ -605,7 +605,7 @@ impl HubSubscriber {
                 error!(
                     "shard_index is required for Subscribe API. Please specify hub.shard_index in configuration or set hub.subscribe_to_all_shards=true temporarily during migration."
                 );
-                return Err(Error::InternalError(
+                return Err(Error::ConfigurationError(
                     "shard_index is required for Subscribe API".to_string(),
                 ));
             }
