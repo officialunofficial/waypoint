@@ -1,8 +1,5 @@
 use crate::{
-    core::{
-        normalize::NormalizedEmbed,
-        util::from_farcaster_time,
-    },
+    core::{normalize::NormalizedEmbed, util::from_farcaster_time},
     database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
     processor::consumer::EventProcessor,
