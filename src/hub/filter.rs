@@ -86,7 +86,7 @@ impl SpamFilter {
 
     async fn fetch_spam_list(client: &Client) -> Result<HashSet<u64>> {
         let response = client
-            .get("https://raw.githubusercontent.com/warpcast/labels/refs/heads/main/spam.jsonl")
+            .get("https://raw.githubusercontent.com/merkle-team/labels/refs/heads/main/spam.jsonl")
             .send()
             .await
             .context("Failed to fetch spam list")?
@@ -97,8 +97,7 @@ impl SpamFilter {
         let mut spam_fids = HashSet::new();
         for line in response.lines() {
             if let Ok(label) = serde_json::from_str::<SpamLabel>(line) {
-                if label.label_type == "spam" && (label.label_value == 0 || label.label_value == 1)
-                {
+                if label.label_type == "spam" && label.label_value == 0 {
                     spam_fids.insert(label.type_info.fid);
                 }
             }
