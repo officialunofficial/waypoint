@@ -17,6 +17,8 @@ All notable changes to Waypoint will be documented in this file.
 - Add missing dead code attributes and clippy allow directives
 - Update spam filter URL and correct label value logic (#48)
 - Use Git LFS media URL directly for spam list
+- Remove root parent tracking feature
+- Remove root parent migration files
 
 ### Documentation
 
@@ -38,6 +40,8 @@ All notable changes to Waypoint will be documented in this file.
 - Version and changelog
 - Version tick + changelog
 - Cargo.lock
+- Changelog
+- Version bump to 2025.7.3 and update sqlx queries
 
 ### Refactor
 
