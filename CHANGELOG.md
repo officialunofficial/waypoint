@@ -14,6 +14,9 @@ All notable changes to Waypoint will be documented in this file.
 - Root parent hub
 - Formatting & imports
 - Apply cargo fmt formatting
+- Add missing dead code attributes and clippy allow directives
+- Update spam filter URL and correct label value logic (#48)
+- Use Git LFS media URL directly for spam list
 
 ### Documentation
 
@@ -27,12 +30,14 @@ All notable changes to Waypoint will be documented in this file.
 - Update proto to 0.3.1
 - Add root parent tracking for cast threads (#44)
 - Add HTTP/HTTPS protocol support for hub client gRPC connections (#45)
-- Add shard_id support for Subscribe API with dynamic discovery (#46)
 - Implement cast retry system with negative caching and background processing
+- Add shard_id support for Subscribe API with dynamic discovery (#46)
 
 ### Miscellaneous Tasks
 
 - Version and changelog
+- Version tick + changelog
+- Cargo.lock
 
 ### Refactor
 
