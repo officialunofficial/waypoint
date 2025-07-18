@@ -1,8 +1,5 @@
 use crate::{
-    core::{
-        normalize::NormalizedEmbed, root_parent_hub::find_root_parent_hub_with_retry,
-        util::from_farcaster_time,
-    },
+    core::{normalize::NormalizedEmbed, util::from_farcaster_time},
     database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
     processor::consumer::EventProcessor,
@@ -24,7 +21,7 @@ use rayon::prelude::*;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
 use std::hash::Hasher;
 use std::sync::Arc;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, trace};
 
 #[derive(Clone)]
 pub struct DatabaseProcessor {
@@ -66,61 +63,18 @@ impl DatabaseProcessor {
 
                 let ts = Self::convert_timestamp(data.timestamp);
 
-                // Find root parent information if this cast has a parent
-                let (root_parent_fid, root_parent_hash, root_parent_url) =
-                    if parent_fid.is_some() || parent_url.is_some() {
-                        // Create a hub client from resources
-                        let hub_client = crate::hub::providers::FarcasterHubClient::new(
-                            Arc::clone(&self.resources.hub),
-                        );
-
-                        match find_root_parent_hub_with_retry(
-                            &hub_client,
-                            &self.resources.redis,
-                            parent_fid,
-                            parent_hash.map(|h| h.as_slice()),
-                            parent_url,
-                            Some(data.fid as i64),
-                            Some(&msg.hash),
-                        )
-                        .await
-                        {
-                            Ok(Some(root_info)) => (
-                                root_info.root_parent_fid,
-                                root_info.root_parent_hash,
-                                root_info.root_parent_url,
-                            ),
-                            Ok(None) => {
-                                // No parent, this cast is a root
-                                (None, None, None)
-                            },
-                            Err(e) => {
-                                warn!("Failed to find root parent for cast: {}", e);
-                                // Continue without root parent info rather than failing
-                                (None, None, None)
-                            },
-                        }
-                    } else {
-                        // No parent, this cast is a root
-                        (None, None, None)
-                    };
-
                 sqlx::query!(
                     r#"
                 INSERT INTO casts (
                     fid, hash, text, parent_fid, parent_hash, parent_url, 
-                    root_parent_fid, root_parent_hash, root_parent_url,
                     timestamp, embeds, mentions, mentions_positions
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (hash) DO UPDATE SET
                     text = EXCLUDED.text,
                     parent_fid = EXCLUDED.parent_fid,
                     parent_hash = EXCLUDED.parent_hash,
                     parent_url = EXCLUDED.parent_url,
-                    root_parent_fid = EXCLUDED.root_parent_fid,
-                    root_parent_hash = EXCLUDED.root_parent_hash,
-                    root_parent_url = EXCLUDED.root_parent_url,
                     timestamp = EXCLUDED.timestamp,
                     embeds = EXCLUDED.embeds,
                     mentions = EXCLUDED.mentions,
@@ -132,9 +86,6 @@ impl DatabaseProcessor {
                     parent_fid,
                     parent_hash,
                     parent_url,
-                    root_parent_fid,
-                    root_parent_hash.as_deref(),
-                    root_parent_url.as_deref(),
                     ts,
                     serde_json::to_value(
                         cast_body

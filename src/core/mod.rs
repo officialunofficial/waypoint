@@ -1,7 +1,6 @@
 //! Core domain modules
 pub mod data_context;
 pub mod normalize;
-pub mod root_parent_hub;
 pub mod types;
 pub mod util;
 

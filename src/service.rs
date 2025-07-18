@@ -4,7 +4,7 @@ use tracing::info;
 use waypoint::{
     app::App,
     config::Config,
-    services::{mcp::McpService, retry::CastRetryService, streaming::StreamingService},
+    services::{mcp::McpService, streaming::StreamingService},
 };
 
 /// Run the main streaming service
@@ -40,10 +40,7 @@ pub async fn run_service(config: &Config) -> Result<()> {
 
     app.register_service(streaming_service);
 
-    // Register cast retry service
-    let retry_service = CastRetryService::new();
-    app.register_service(retry_service);
-    info!("Cast retry service registered");
+    // Cast retry service removed - no longer needed
 
     // Register MCP service if enabled
     if config.mcp.enabled {
