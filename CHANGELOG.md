@@ -9,27 +9,44 @@ All notable changes to Waypoint will be documented in this file.
 - Resolve backfill job queue exhaustion bug (#37)
 - Increase Redis pool sizes to prevent backfill queue exhaustion (#38)
 - Handle Redis XPENDING response variations and prevent backfill job loss (#39)
+- Sqlx
+- Traversal
+- Root parent hub
+- Formatting & imports
+- Apply cargo fmt formatting
+- Add missing dead code attributes and clippy allow directives
+- Update spam filter URL and correct label value logic (#48)
+- Use Git LFS media URL directly for spam list
+- Remove root parent tracking feature
+- Remove root parent migration files
 
 ### Documentation
 
 - Update mcp.md
 - Update docs
-- Add root parent tracking documentation
 
 ### Features
 
 - Support Farcaster Pro (#36)
 - Custom headers (#42)
 - Update proto to 0.3.1
-- Add root parent tracking for cast threads
+- Add root parent tracking for cast threads (#44)
+- Add HTTP/HTTPS protocol support for hub client gRPC connections (#45)
+- Implement cast retry system with negative caching and background processing
+- Add shard_id support for Subscribe API with dynamic discovery (#46)
 
 ### Miscellaneous Tasks
 
 - Version and changelog
+- Version tick + changelog
+- Cargo.lock
+- Changelog
+- Version bump to 2025.7.3 and update sqlx queries
 
 ### Refactor
 
 - Simplify backfill queue to use only normal and inprogress q… (#43)
+- Integrate cast retry worker into main application service to avoid dead code warnings
 
 ## [0.6.3] - 2025-06-09
 

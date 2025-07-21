@@ -85,8 +85,10 @@ impl SpamFilter {
     }
 
     async fn fetch_spam_list(client: &Client) -> Result<HashSet<u64>> {
+        // Directly use the Git LFS media URL
+        let url = "https://media.githubusercontent.com/media/merkle-team/labels/main/spam.jsonl";
         let response = client
-            .get("https://raw.githubusercontent.com/warpcast/labels/refs/heads/main/spam.jsonl")
+            .get(url)
             .send()
             .await
             .context("Failed to fetch spam list")?
@@ -97,8 +99,7 @@ impl SpamFilter {
         let mut spam_fids = HashSet::new();
         for line in response.lines() {
             if let Ok(label) = serde_json::from_str::<SpamLabel>(line) {
-                if label.label_type == "spam" && (label.label_value == 0 || label.label_value == 1)
-                {
+                if label.label_type == "spam" && label.label_value == 0 {
                     spam_fids.insert(label.type_info.fid);
                 }
             }
@@ -145,5 +146,56 @@ impl SpamFilter {
         }
 
         keep_indices
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_spam_filter_loads_fids() {
+        let filter = SpamFilter::new();
+
+        // Start the updater which will load the initial spam list
+        let result = filter.start_updater().await;
+
+        // Should not error
+        assert!(result.is_ok(), "Failed to start spam filter: {:?}", result.err());
+
+        // Give it a moment to ensure the write lock is released
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Check that we loaded some FIDs
+        let fid_count = filter.spam_fids.read().await.len();
+        println!("Loaded {} spam FIDs", fid_count);
+
+        // We expect to load hundreds of thousands of FIDs
+        assert!(
+            fid_count > 100000,
+            "Expected to load more than 100k FIDs, but only loaded {}",
+            fid_count
+        );
+
+        // Test that a known spam FID is detected
+        // Using a FID from the sample data you provided
+        assert!(filter.is_spam(568763).await, "Expected FID 568763 to be marked as spam");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_spam_list_directly() {
+        let client = Client::new();
+        let result = SpamFilter::fetch_spam_list(&client).await;
+
+        assert!(result.is_ok(), "Failed to fetch spam list: {:?}", result.err());
+
+        let fids = result.unwrap();
+        println!("Fetched {} spam FIDs directly", fids.len());
+
+        // Should have loaded many FIDs
+        assert!(fids.len() > 100000, "Expected more than 100k FIDs, got {}", fids.len());
+
+        // Check for a specific FID from the data
+        assert!(fids.contains(&568763), "Expected to find FID 568763 in spam list");
     }
 }

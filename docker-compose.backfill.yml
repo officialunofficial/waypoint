@@ -55,6 +55,10 @@ services:
 
       # Farcaster Hub
       WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
+      # Shard configuration (defaults to subscribe_to_all_shards=true)
+      # To subscribe to specific shards, set WAYPOINT_HUB__SHARD_INDICES=1,2,3
+      WAYPOINT_HUB__SHARD_INDICES: ${WAYPOINT_HUB__SHARD_INDICES}
+      WAYPOINT_HUB__SUBSCRIBE_TO_ALL_SHARDS: ${WAYPOINT_HUB__SUBSCRIBE_TO_ALL_SHARDS}
       # Custom headers for authentication (uppercase env vars will be converted to lowercase headers with hyphens)
       WAYPOINT_HUB__HEADERS__X_API_KEY: ${WAYPOINT_HUB__HEADERS__X_API_KEY}
       WAYPOINT_HUB__RETRY_MAX_ATTEMPTS: ${WAYPOINT_HUB__RETRY_MAX_ATTEMPTS:-5}
@@ -95,6 +99,10 @@ services:
 
       # Farcaster Hub
       WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
+      # Shard configuration (defaults to subscribe_to_all_shards=true)
+      # To subscribe to specific shards, set WAYPOINT_HUB__SHARD_INDICES=1,2,3
+      WAYPOINT_HUB__SHARD_INDICES: ${WAYPOINT_HUB__SHARD_INDICES}
+      WAYPOINT_HUB__SUBSCRIBE_TO_ALL_SHARDS: ${WAYPOINT_HUB__SUBSCRIBE_TO_ALL_SHARDS}
       # Custom headers for authentication (uppercase env vars will be converted to lowercase headers with hyphens)
       WAYPOINT_HUB__HEADERS__X_API_KEY: ${WAYPOINT_HUB__HEADERS__X_API_KEY}
       WAYPOINT_HUB__RETRY_MAX_ATTEMPTS: ${WAYPOINT_HUB__RETRY_MAX_ATTEMPTS:-5}

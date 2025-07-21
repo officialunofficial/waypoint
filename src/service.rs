@@ -40,6 +40,8 @@ pub async fn run_service(config: &Config) -> Result<()> {
 
     app.register_service(streaming_service);
 
+    // Cast retry service removed - no longer needed
+
     // Register MCP service if enabled
     if config.mcp.enabled {
         let mcp_service =

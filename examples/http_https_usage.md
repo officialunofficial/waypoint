@@ -9,12 +9,17 @@ When no protocol is specified, HTTPS is used by default:
 ```toml
 [hub]
 url = "snapchain.farcaster.xyz:3383"
+# Shard configuration (defaults to subscribe_to_all_shards=true)
+# shard_indices = [1, 2, 3]  # Subscribe to specific shards
+# subscribe_to_all_shards = true  # Or subscribe to all available shards
 ```
 
 Or explicitly specify HTTPS:
 ```toml
 [hub]
 url = "https://snapchain.farcaster.xyz:3383"
+# Shard configuration
+shard_indices = [1]  # Subscribe to a single shard
 ```
 
 ### Using HTTP (for local development)
@@ -29,6 +34,10 @@ You can also configure via environment variables:
 ```bash
 # HTTPS (default)
 export WAYPOINT_HUB__URL="snapchain.farcaster.xyz:3383"
+# Shard configuration
+export WAYPOINT_HUB__SHARD_INDICES="1,2,3"  # Subscribe to specific shards
+# Or subscribe to all shards (default is true)
+export WAYPOINT_HUB__SUBSCRIBE_TO_ALL_SHARDS="true"
 
 # HTTP (for local development)
 export WAYPOINT_HUB__URL="http://localhost:3383"

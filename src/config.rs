@@ -60,7 +60,7 @@ pub struct RedisConfig {
 }
 
 fn default_redis_pool_size() -> u32 {
-    50 // Increased pool size to handle multiple stream consumers
+    100 // Increased pool size to handle multiple stream consumers
 }
 
 fn default_redis_batch_size() -> usize {
@@ -68,7 +68,7 @@ fn default_redis_batch_size() -> usize {
 }
 
 fn default_connection_timeout_ms() -> u64 {
-    5000 // 5 second connection timeout - more time for busy pools
+    3000 // 3 second connection timeout - reduced from 5s for faster failure detection
 }
 
 fn default_idle_timeout_secs() -> u64 {
@@ -125,14 +125,28 @@ pub struct HubConfig {
 
     #[serde(default = "default_conn_timeout_ms")]
     pub conn_timeout_ms: u64,
+
+    // Shard configuration
+    // List of shard indices to subscribe to (e.g., [0, 1, 2])
+    // If empty, must set subscribe_to_all_shards=true
+    #[serde(default)]
+    pub shard_indices: Vec<u32>,
+
+    // Optional: subscribe to all shards (temporary migration flag)
+    #[serde(default = "default_subscribe_to_all_shards")]
+    pub subscribe_to_all_shards: bool,
+}
+
+fn default_subscribe_to_all_shards() -> bool {
+    true // Default to subscribing to all shards for backward compatibility
 }
 
 fn default_hub_max_concurrent_connections() -> u32 {
-    5 // Conservative limit to avoid overwhelming hub
+    20 // Increased from 5 to handle multiple concurrent stream reservations
 }
 
 fn default_hub_max_requests_per_second() -> u32 {
-    10 // Conservative rate limit
+    50 // Increased from 10 to handle multiple concurrent stream reservations
 }
 
 fn default_retry_attempts() -> u32 {
@@ -323,6 +337,8 @@ impl Default for HubConfig {
             retry_jitter_factor: default_retry_jitter_factor(),
             retry_timeout_ms: default_retry_timeout_ms(),
             conn_timeout_ms: default_conn_timeout_ms(),
+            shard_indices: Vec::new(),
+            subscribe_to_all_shards: default_subscribe_to_all_shards(),
         }
     }
 }
