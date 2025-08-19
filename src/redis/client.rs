@@ -583,11 +583,21 @@ impl Redis {
         let result: RedisResult<Option<String>> =
             bb8_redis::redis::cmd("GET").arg(key).query_async(&mut *conn).await;
 
-        info!("key, {}, result: {:?}", key, result);
-
         match result {
-            Ok(Some(val)) => Ok(Some(val.parse().unwrap_or(0))),
-            Ok(None) => Ok(None),
+            Ok(Some(val)) => {
+                let event_id = val.parse().unwrap_or(0);
+                if event_id > 0 {
+                    info!(
+                        "Retrieved last processed event ID from Redis (key: {}): {}",
+                        key, event_id
+                    );
+                }
+                Ok(Some(event_id))
+            },
+            Ok(None) => {
+                info!("No last processed event ID found in Redis for key: {}", key);
+                Ok(None)
+            },
             Err(e) => Err(Error::RedisError(e)),
         }
     }

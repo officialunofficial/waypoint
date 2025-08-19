@@ -4,6 +4,18 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
+## [2025.8.1] - 2025-08-19
+
+### Bug Fixes
+
+- Resume from checkpoint on restart instead of reprocessing from beginning
+  - Fetch latest checkpoint from Redis before reconnecting stream
+  - Add periodic checkpointing (every 100 events or 10 seconds)
+  - Update last_id variable when reconnecting to use current progress
+  - Improve logging to show checkpoint resumption
+
+## [2025.7.3]
+
 ### Bug Fixes
 
 - Resolve backfill job queue exhaustion bug (#37)
