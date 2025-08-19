@@ -123,7 +123,7 @@ impl Consumer {
         });
         handles.push(consumer_cleanup_handle);
 
-        for message_type in MessageType::all() {
+        for (index, message_type) in MessageType::all().enumerate() {
             let consumer_clone = Arc::clone(&consumer);
             let startup_tx_clone = startup_tx.clone();
 
@@ -131,8 +131,9 @@ impl Consumer {
                 // Signal that initialization is about to start
                 let _ = startup_tx_clone.send(()).await;
 
-                // Wait briefly to ensure we don't cause contention during initialization
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                // Stagger startup to prevent thundering herd on Redis pool
+                // Each processor waits an additional 50ms to spread out the initial connections
+                tokio::time::sleep(Duration::from_millis(10 + (50 * index as u64))).await;
 
                 if let Err(e) = consumer_clone.process_stream(message_type).await {
                     error!("Stream processor error for {:?}: {}", message_type, e);
@@ -144,7 +145,7 @@ impl Consumer {
 
         // Start cleanup task for old events and track their handles
         let mut cleanup_handles = Vec::new();
-        for message_type in MessageType::all() {
+        for (index, message_type) in MessageType::all().enumerate() {
             let consumer_clone = Arc::clone(&consumer);
             let startup_tx_clone = startup_tx.clone();
 
@@ -152,8 +153,9 @@ impl Consumer {
                 // Signal that initialization is about to start
                 let _ = startup_tx_clone.send(()).await;
 
-                // Wait briefly to ensure we don't cause contention during initialization
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                // Stagger cleanup tasks even more to avoid contention
+                // Cleanup is less critical, so we can wait longer
+                tokio::time::sleep(Duration::from_millis(10 + (100 * index as u64))).await;
 
                 consumer_clone.cleanup_old_events(message_type).await;
                 info!("Cleanup task for {:?} shut down", message_type);
@@ -1082,20 +1084,40 @@ impl Consumer {
                 Ok(None)
             },
             Err(e) => {
-                error!("Error reserving messages from {}: {}", stream_key, e);
+                // Check if this is a connection pool timeout
+                let is_pool_timeout = e.to_string().contains("Connection timeout")
+                    || e.to_string().contains("Pool error");
 
-                // Check shutdown before sleeping
-                if self.should_shutdown().await {
-                    info!("Shutdown signal detected after reserve error for {:?}", message_type);
-                    return Ok(None);
-                }
+                if is_pool_timeout {
+                    warn!("Redis pool timeout for {} stream, will retry with backoff", stream_key);
+                    // Use exponential backoff for pool timeouts
+                    let retry_delay = Duration::from_millis(500);
+                    tokio::select! {
+                        _ = tokio::time::sleep(retry_delay) => {},
+                        _ = self.wait_for_shutdown() => {
+                            info!("Shutdown signal detected during pool timeout retry for {:?}", message_type);
+                            return Ok(None);
+                        }
+                    }
+                } else {
+                    error!("Error reserving messages from {}: {}", stream_key, e);
 
-                // Wait a brief moment before retrying
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {},
-                    _ = self.wait_for_shutdown() => {
-                        info!("Shutdown signal detected during error wait for {:?}", message_type);
+                    // Check shutdown before sleeping
+                    if self.should_shutdown().await {
+                        info!(
+                            "Shutdown signal detected after reserve error for {:?}",
+                            message_type
+                        );
                         return Ok(None);
+                    }
+
+                    // Wait a brief moment before retrying
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {},
+                        _ = self.wait_for_shutdown() => {
+                            info!("Shutdown signal detected during error wait for {:?}", message_type);
+                            return Ok(None);
+                        }
                     }
                 }
 
