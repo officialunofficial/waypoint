@@ -489,9 +489,9 @@ impl Redis {
             return Ok(Vec::new());
         }
 
-        // Use xclaim from fred - it returns the claimed messages
+        // Use xclaim from fred - let it return raw RedisValue to avoid parse errors
         use fred::prelude::*;
-        let claimed: Vec<(String, Vec<(String, String)>)> = self
+        let claimed: fred::types::RedisValue = self
             .pool
             .xclaim(
                 key,
@@ -508,42 +508,47 @@ impl Redis {
             .await
             .map_err(Error::RedisError)?;
 
-        // Convert to RedisValue for compatibility
-        let result = fred::types::RedisValue::Array(
-            claimed.into_iter().map(|(id, _)| fred::types::RedisValue::String(id.into())).collect(),
-        );
+        let mut results = Vec::new();
 
-        // Parse the claimed IDs from the response
-        let mut claimed_ids = Vec::new();
-        if let fred::types::RedisValue::Array(ids) = result {
-            for id_val in ids {
-                if let fred::types::RedisValue::String(id) = id_val {
-                    claimed_ids.push(id.to_string());
-                }
-            }
-        }
-
-        if claimed_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Fetch the actual message content
-        let first_id = claimed_ids.first().unwrap();
-        let last_id = claimed_ids.last().unwrap();
-
-        let messages: Vec<(String, Vec<(String, Vec<u8>)>)> = self
-            .pool
-            .xrange(key, first_id.as_str(), last_id.as_str(), None)
-            .await
-            .map_err(Error::RedisError)?;
-
-        let mut results = Vec::with_capacity(messages.len());
-        for (id, fields) in messages {
-            if claimed_ids.contains(&id) {
-                for (field, value) in fields {
-                    if field == "d" {
-                        results.push((id.clone(), value));
-                        break;
+        // Parse the response - it's an array of claimed messages
+        if let fred::types::RedisValue::Array(messages) = claimed {
+            for msg in messages {
+                if let fred::types::RedisValue::Array(msg_data) = msg {
+                    if msg_data.len() >= 2 {
+                        // msg_data[0] is the ID, msg_data[1] is the fields
+                        let id = msg_data[0].as_string().unwrap_or_default().to_string();
+                        
+                        // Extract the "d" field from the fields array
+                        if let fred::types::RedisValue::Array(fields) = &msg_data[1] {
+                            // Fields are key-value pairs
+                            for i in (0..fields.len()).step_by(2) {
+                                if i + 1 < fields.len()
+                                    && fields[i]
+                                        .as_string()
+                                        .map(|s| s == "d")
+                                        .unwrap_or(false)
+                                {
+                                    // Handle both Bytes and String data types
+                                    match &fields[i + 1] {
+                                        fred::types::RedisValue::Bytes(data) => {
+                                            results.push((id.clone(), data.to_vec()));
+                                            break;
+                                        },
+                                        fred::types::RedisValue::String(data) => {
+                                            results.push((id.clone(), data.as_bytes().to_vec()));
+                                            break;
+                                        },
+                                        _ => {
+                                            // Try to convert other types to bytes
+                                            if let Some(data_string) = fields[i + 1].as_string() {
+                                                results.push((id.clone(), data_string.as_bytes().to_vec()));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
