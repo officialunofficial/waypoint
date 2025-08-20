@@ -327,9 +327,9 @@ impl Redis {
         // Use short blocking timeout to balance efficiency and connection availability
         let block_timeout = if self.is_pool_under_pressure() { 0 } else { 10 };
 
-        // Use xreadgroup from fred
+        // Use xreadgroup from fred - let it return raw RedisValue to avoid parse errors
         use fred::prelude::*;
-        let response: Vec<(String, Vec<(String, Vec<(String, String)>)>)> = self
+        let response: fred::types::RedisValue = self
             .pool
             .xreadgroup(
                 group,
@@ -342,39 +342,6 @@ impl Redis {
             )
             .await
             .map_err(Error::RedisError)?;
-
-        // Convert to RedisValue for parsing
-        let response = fred::types::RedisValue::Array(
-            response
-                .into_iter()
-                .map(|(stream_key, entries)| {
-                    fred::types::RedisValue::Array(vec![
-                        fred::types::RedisValue::String(stream_key.into()),
-                        fred::types::RedisValue::Array(
-                            entries
-                                .into_iter()
-                                .map(|(id, fields)| {
-                                    fred::types::RedisValue::Array(vec![
-                                        fred::types::RedisValue::String(id.into()),
-                                        fred::types::RedisValue::Array(
-                                            fields
-                                                .into_iter()
-                                                .flat_map(|(k, v)| {
-                                                    vec![
-                                                        fred::types::RedisValue::String(k.into()),
-                                                        fred::types::RedisValue::String(v.into()),
-                                                    ]
-                                                })
-                                                .collect(),
-                                        ),
-                                    ])
-                                })
-                                .collect(),
-                        ),
-                    ])
-                })
-                .collect(),
-        );
 
         let mut results = Vec::with_capacity(count as usize);
 
