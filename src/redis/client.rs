@@ -403,10 +403,20 @@ impl Redis {
                                                         .map(|s| s == "d")
                                                         .unwrap_or(false)
                                                 {
-                                                    if let fred::types::RedisValue::Bytes(data) =
-                                                        &fields[i + 1]
-                                                    {
-                                                        results.push((id.clone(), data.to_vec()));
+                                                    // Handle both Bytes and String data types
+                                                    match &fields[i + 1] {
+                                                        fred::types::RedisValue::Bytes(data) => {
+                                                            results.push((id.clone(), data.to_vec()));
+                                                        },
+                                                        fred::types::RedisValue::String(data) => {
+                                                            results.push((id.clone(), data.as_bytes().to_vec()));
+                                                        },
+                                                        _ => {
+                                                            // Try to convert other types to bytes
+                                                            if let Some(data_string) = fields[i + 1].as_string() {
+                                                                results.push((id.clone(), data_string.as_bytes().to_vec()));
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
