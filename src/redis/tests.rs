@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod redis_client_tests {
     use super::super::*;
-    use std::sync::Arc;
 
     // Helper to create test configuration
     fn test_config() -> crate::config::RedisConfig {
@@ -76,11 +75,9 @@ mod redis_client_tests {
 #[cfg(test)]
 mod redis_stream_tests {
     use super::super::*;
-    use std::sync::Arc;
-    use std::time::Duration;
 
-    fn mock_redis() -> Arc<client::Redis> {
-        Arc::new(client::Redis::empty())
+    fn mock_redis() -> std::sync::Arc<client::Redis> {
+        std::sync::Arc::new(client::Redis::empty())
     }
 
     #[tokio::test]
@@ -122,9 +119,6 @@ mod redis_stream_tests {
 
 #[cfg(test)]
 mod redis_operation_tests {
-    use super::super::*;
-    use std::sync::Arc;
-    use std::time::Duration;
 
     // These tests verify the core Redis operations that will need to be preserved
     // when migrating to fred. They serve as regression tests.
@@ -132,8 +126,8 @@ mod redis_operation_tests {
     #[tokio::test]
     async fn test_xadd_operation() {
         // Test data
-        let test_data = b"test message";
-        let stream_key = "test:stream";
+        let _test_data = b"test message";
+        let _stream_key = "test:stream";
 
         // This test ensures XADD behavior is preserved
         // When migrating to fred, this test should still pass
@@ -142,10 +136,10 @@ mod redis_operation_tests {
     #[tokio::test]
     async fn test_xreadgroup_operation() {
         // Test parameters
-        let group = "test-group";
-        let consumer = "test-consumer";
-        let stream_key = "test:stream";
-        let count = 10;
+        let _group = "test-group";
+        let _consumer = "test-consumer";
+        let _stream_key = "test:stream";
+        let _count = 10;
 
         // This test ensures XREADGROUP behavior is preserved
         // Including blocking/non-blocking behavior under pool pressure
@@ -153,19 +147,19 @@ mod redis_operation_tests {
 
     #[tokio::test]
     async fn test_xack_operation() {
-        let stream_key = "test:stream";
-        let group = "test-group";
-        let message_id = "1234567890-0";
+        let _stream_key = "test:stream";
+        let _group = "test-group";
+        let _message_id = "1234567890-0";
 
         // Test acknowledgment behavior
     }
 
     #[tokio::test]
     async fn test_xpending_operation() {
-        let stream_key = "test:stream";
-        let group = "test-group";
-        let idle_duration = Duration::from_secs(30);
-        let count = 100;
+        let _stream_key = "test:stream";
+        let _group = "test-group";
+        let _idle_duration = std::time::Duration::from_secs(30);
+        let _count = 100;
 
         // Test pending message retrieval
         // This is critical for message recovery
@@ -173,11 +167,11 @@ mod redis_operation_tests {
 
     #[tokio::test]
     async fn test_xclaim_operation() {
-        let stream_key = "test:stream";
-        let group = "test-group";
-        let consumer = "test-consumer";
-        let min_idle = Duration::from_secs(60);
-        let message_ids = vec!["1234567890-0".to_string()];
+        let _stream_key = "test:stream";
+        let _group = "test-group";
+        let _consumer = "test-consumer";
+        let _min_idle = std::time::Duration::from_secs(60);
+        let _message_ids = vec!["1234567890-0".to_string()];
 
         // Test message claiming behavior
         // Critical for handling stale messages
@@ -185,8 +179,8 @@ mod redis_operation_tests {
 
     #[tokio::test]
     async fn test_xinfo_operations() {
-        let stream_key = "test:stream";
-        let group = "test-group";
+        let _stream_key = "test:stream";
+        let _group = "test-group";
 
         // Test XINFO STREAM and XINFO GROUPS
         // Used for monitoring and health checks
@@ -194,8 +188,8 @@ mod redis_operation_tests {
 
     #[tokio::test]
     async fn test_list_operations() {
-        let queue_key = "test:queue";
-        let test_items = vec!["item1", "item2", "item3"];
+        let _queue_key = "test:queue";
+        let _test_items = vec!["item1", "item2", "item3"];
 
         // Test LPUSH, BRPOP, LLEN, LRANGE, LREM
         // Used in backfill operations
@@ -204,9 +198,6 @@ mod redis_operation_tests {
 
 #[cfg(test)]
 mod integration_tests {
-    use super::super::*;
-    use std::sync::Arc;
-    use std::time::Duration;
 
     #[tokio::test]
     #[ignore] // Run with --ignored flag when Redis is available
@@ -243,7 +234,6 @@ mod integration_tests {
 
 #[cfg(test)]
 mod property_tests {
-    use super::super::*;
 
     // Property-based tests for critical invariants
 
@@ -265,8 +255,6 @@ mod property_tests {
 
 #[cfg(test)]
 mod performance_tests {
-    use super::super::*;
-    use std::time::Instant;
 
     #[tokio::test]
     #[ignore]

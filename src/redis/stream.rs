@@ -14,7 +14,6 @@ const MAX_MESSAGE_RETRIES: u64 = 5;
 pub struct RedisStream {
     pub redis: Arc<Redis>,
     health_check_enabled: bool,
-    batch_size: usize,
     /// Policy for handling messages that exceed max retries
     dead_letter_policy: crate::redis::types::DeadLetterPolicy,
     /// Metric tracking for this stream
@@ -37,16 +36,9 @@ pub struct RedisPipeline {
 
 impl RedisStream {
     pub fn new(redis: Arc<Redis>) -> Self {
-        // Get batch_size from Redis config or use default
-        let batch_size = match redis.config() {
-            Some(config) => config.batch_size,
-            None => 100, // Default if config not available
-        };
-
         Self {
             redis,
             health_check_enabled: false,
-            batch_size,
             dead_letter_policy: crate::redis::types::DeadLetterPolicy::default(),
             metrics: Arc::new(tokio::sync::RwLock::new(
                 crate::redis::types::StreamMetrics::default(),

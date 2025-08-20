@@ -161,35 +161,6 @@ impl Redis {
         Ok(health)
     }
 
-    /// Calculate lag between two Redis stream IDs
-    fn calculate_id_lag(&self, current_id: &str, delivered_id: &str) -> u64 {
-        if delivered_id == "0-0" || current_id.is_empty() || delivered_id.is_empty() {
-            return 0;
-        }
-
-        let parse_id = |id: &str| -> (u64, u64) {
-            let parts: Vec<&str> = id.split('-').collect();
-            if parts.len() == 2 {
-                let timestamp = parts[0].parse::<u64>().unwrap_or(0);
-                let sequence = parts[1].parse::<u64>().unwrap_or(0);
-                (timestamp, sequence)
-            } else {
-                (0, 0)
-            }
-        };
-
-        let (current_ts, current_seq) = parse_id(current_id);
-        let (delivered_ts, delivered_seq) = parse_id(delivered_id);
-
-        if current_ts > delivered_ts {
-            let ts_diff = current_ts - delivered_ts;
-            ts_diff * 10 + (current_seq - delivered_seq).min(100)
-        } else if current_ts == delivered_ts && current_seq > delivered_seq {
-            current_seq - delivered_seq
-        } else {
-            0
-        }
-    }
 
     /// Get detailed stream metrics
     pub async fn get_stream_metrics(
