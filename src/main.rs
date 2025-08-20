@@ -38,7 +38,8 @@ async fn main() -> color_eyre::Result<()> {
     metrics::setup_metrics(&config);
 
     // Apply noisy crates filter including fred
-    let noisy_crates = "h2=warn,tokio_util=warn,mio=warn,hyper=warn,rustls=warn,tonic=info,fred=info";
+    let noisy_crates =
+        "h2=warn,tokio_util=warn,mio=warn,hyper=warn,rustls=warn,tonic=info,fred=info";
     let filter_string = format!("{},{}", env_filter, noisy_crates);
     env_filter = EnvFilter::try_new(&filter_string).unwrap_or(env_filter);
 

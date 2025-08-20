@@ -351,7 +351,6 @@ impl Consumer {
         }
     }
 
-
     /// Clean up idle consumers for a specific stream and group
     ///
     /// This function identifies extremely idle consumers and removes them after ensuring
@@ -424,7 +423,6 @@ impl Consumer {
             // Process in batches for better performance and to avoid timeout issues
             let mut processed = 0;
             while processed < pending_count {
-
                 // Get pending messages with minimal idle time
                 let pending_msgs = self
                     .stream

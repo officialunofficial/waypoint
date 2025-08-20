@@ -161,7 +161,6 @@ impl Redis {
         Ok(health)
     }
 
-
     /// Get detailed stream metrics
     pub async fn get_stream_metrics(
         &self,
@@ -344,17 +343,26 @@ impl Redis {
                                                     // Handle both Bytes and String data types
                                                     match &fields[i + 1] {
                                                         fred::types::RedisValue::Bytes(data) => {
-                                                            results.push((id.clone(), data.to_vec()));
+                                                            results
+                                                                .push((id.clone(), data.to_vec()));
                                                         },
                                                         fred::types::RedisValue::String(data) => {
-                                                            results.push((id.clone(), data.as_bytes().to_vec()));
+                                                            results.push((
+                                                                id.clone(),
+                                                                data.as_bytes().to_vec(),
+                                                            ));
                                                         },
                                                         _ => {
                                                             // Try to convert other types to bytes
-                                                            if let Some(data_string) = fields[i + 1].as_string() {
-                                                                results.push((id.clone(), data_string.as_bytes().to_vec()));
+                                                            if let Some(data_string) =
+                                                                fields[i + 1].as_string()
+                                                            {
+                                                                results.push((
+                                                                    id.clone(),
+                                                                    data_string.as_bytes().to_vec(),
+                                                                ));
                                                             }
-                                                        }
+                                                        },
                                                     }
                                                 }
                                             }
@@ -517,16 +525,13 @@ impl Redis {
                     if msg_data.len() >= 2 {
                         // msg_data[0] is the ID, msg_data[1] is the fields
                         let id = msg_data[0].as_string().unwrap_or_default().to_string();
-                        
+
                         // Extract the "d" field from the fields array
                         if let fred::types::RedisValue::Array(fields) = &msg_data[1] {
                             // Fields are key-value pairs
                             for i in (0..fields.len()).step_by(2) {
                                 if i + 1 < fields.len()
-                                    && fields[i]
-                                        .as_string()
-                                        .map(|s| s == "d")
-                                        .unwrap_or(false)
+                                    && fields[i].as_string().map(|s| s == "d").unwrap_or(false)
                                 {
                                     // Handle both Bytes and String data types
                                     match &fields[i + 1] {
@@ -541,10 +546,13 @@ impl Redis {
                                         _ => {
                                             // Try to convert other types to bytes
                                             if let Some(data_string) = fields[i + 1].as_string() {
-                                                results.push((id.clone(), data_string.as_bytes().to_vec()));
+                                                results.push((
+                                                    id.clone(),
+                                                    data_string.as_bytes().to_vec(),
+                                                ));
                                                 break;
                                             }
-                                        }
+                                        },
                                     }
                                 }
                             }
