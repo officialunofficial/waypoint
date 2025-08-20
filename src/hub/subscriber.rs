@@ -594,7 +594,8 @@ impl HubSubscriber {
             let mut interval = tokio::time::interval(cleanup_interval);
             loop {
                 interval.tick().await;
-                if let Err(e) = stream.trim(&stream_key, Duration::from_secs(24 * 60 * 60)).await {
+                // Keep approximately 100k events (adjust based on your needs)
+                if let Err(e) = stream.trim(&stream_key, 100000).await {
                     error!("Error trimming events: {}", e);
                 }
             }

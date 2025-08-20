@@ -80,12 +80,15 @@ impl ErrorHelpers {
             }
 
             // Check for Redis-specific errors
-            if let Some(redis_err) = frame.downcast_ref::<bb8_redis::redis::RedisError>() {
+            if let Some(redis_err) = frame.downcast_ref::<fred::error::RedisError>() {
+                // Fred errors are simpler - most are recoverable
                 match redis_err.kind() {
-                    bb8_redis::redis::ErrorKind::IoError
-                    | bb8_redis::redis::ErrorKind::BusyLoadingError
-                    | bb8_redis::redis::ErrorKind::TryAgain
-                    | bb8_redis::redis::ErrorKind::ClusterDown => return true,
+                    fred::error::RedisErrorKind::IO
+                    | fred::error::RedisErrorKind::Timeout
+                    | fred::error::RedisErrorKind::Backpressure => return true,
+                    fred::error::RedisErrorKind::Auth | fred::error::RedisErrorKind::Config => {
+                        return false;
+                    },
                     _ => continue,
                 }
             }
@@ -106,11 +109,11 @@ impl ErrorHelpers {
                 }
             }
 
-            if let Some(redis_err) = frame.downcast_ref::<bb8_redis::redis::RedisError>() {
+            if let Some(redis_err) = frame.downcast_ref::<fred::error::RedisError>() {
                 match redis_err.kind() {
-                    bb8_redis::redis::ErrorKind::IoError
-                    | bb8_redis::redis::ErrorKind::AuthenticationFailed
-                    | bb8_redis::redis::ErrorKind::ClientError => return true,
+                    fred::error::RedisErrorKind::IO
+                    | fred::error::RedisErrorKind::Auth
+                    | fred::error::RedisErrorKind::Timeout => return true,
                     _ => continue,
                 }
             }
@@ -131,11 +134,11 @@ impl ErrorHelpers {
                 }
             }
 
-            if let Some(redis_err) = frame.downcast_ref::<bb8_redis::redis::RedisError>() {
+            if let Some(redis_err) = frame.downcast_ref::<fred::error::RedisError>() {
                 match redis_err.kind() {
-                    bb8_redis::redis::ErrorKind::BusyLoadingError => return Some(1000),
-                    bb8_redis::redis::ErrorKind::TryAgain => return Some(100),
-                    bb8_redis::redis::ErrorKind::IoError => return Some(500),
+                    fred::error::RedisErrorKind::Backpressure => return Some(1000),
+                    fred::error::RedisErrorKind::Timeout => return Some(500),
+                    fred::error::RedisErrorKind::IO => return Some(500),
                     _ => continue,
                 }
             }
@@ -170,7 +173,7 @@ pub enum Error {
     #[error("Deserialization error: {0}")]
     DeserializationError(String),
     #[error("Redis error: {0}")]
-    RedisError(#[from] bb8_redis::redis::RedisError),
+    RedisError(#[from] fred::error::RedisError),
     #[error("Pool error: {0}")]
     PoolError(String),
 }

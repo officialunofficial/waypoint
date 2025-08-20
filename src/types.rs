@@ -35,7 +35,7 @@ pub fn get_stream_key(hub_host: &str, event_type: &str, shard_key: Option<&str>)
 
     // Use a simpler, non-redundant format
     match shard_key {
-        Some(_) => format!("hub:{}:stream:{}", clean_host, event_type),
+        Some(suffix) => format!("hub:{}:stream:{}:{}", clean_host, event_type, suffix),
         None => format!("hub:{}:stream:{}", clean_host, event_type),
     }
 }
