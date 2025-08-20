@@ -10,7 +10,7 @@ import "request_response.proto";
 service HubService {
   // Write API
   rpc SubmitMessage(Message) returns (Message);
-//  rpc SubmitBulkMessages(SubmitBulkMessagesRequest) returns (SubmitBulkMessagesResponse);
+  rpc SubmitBulkMessages(SubmitBulkMessagesRequest) returns (SubmitBulkMessagesResponse);
 
   // Validation Methods
   rpc ValidateMessage(Message) returns (ValidationResponse);
@@ -21,6 +21,7 @@ service HubService {
 
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
   rpc GetFids(FidsRequest) returns (FidsResponse);
+  rpc GetConnectedPeers(GetConnectedPeersRequest) returns (GetConnectedPeersResponse);
 
   // Events
   rpc Subscribe(SubscribeRequest) returns (stream HubEvent);
