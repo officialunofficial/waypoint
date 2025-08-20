@@ -54,10 +54,10 @@ pub type Result<T> = error_stack::Result<T, WaypointError>;
 pub fn install_error_handlers() -> color_eyre::Result<()> {
     // Setup color-eyre for compatibility with existing code
     color_eyre::install()?;
-    
+
     // Setup error-stack report configuration
     error_stack::Report::set_color_mode(error_stack::fmt::ColorMode::Emphasis);
-    
+
     // Set custom panic hook
     std::panic::set_hook(Box::new(|panic_info| {
         // Log the panic with tracing
@@ -108,7 +108,7 @@ pub fn install_error_handlers() -> color_eyre::Result<()> {
 pub trait IntoWaypointError<T> {
     /// Convert this error into a WaypointError report
     fn into_waypoint_err(self) -> Result<T>;
-    
+
     /// Convert this error into a WaypointError report with additional context
     fn into_waypoint_err_with_context(self, context: ErrorContext) -> Result<T>;
 }
@@ -120,12 +120,10 @@ where
     fn into_waypoint_err(self) -> Result<T> {
         self.map_err(|e| Report::new(WaypointError).attach_printable(e.to_string()))
     }
-    
+
     fn into_waypoint_err_with_context(self, context: ErrorContext) -> Result<T> {
         self.map_err(|e| {
-            Report::new(WaypointError)
-                .attach_printable(context)
-                .attach_printable(e.to_string())
+            Report::new(WaypointError).attach_printable(context).attach_printable(e.to_string())
         })
     }
 }
@@ -133,15 +131,15 @@ where
 /// Helper functions for working with error-stack
 pub mod helpers {
     use super::*;
-    
+
     /// Create a new error report with context
     pub fn error_with_context<C: Context>(
-        context: C, 
-        message: impl Display + fmt::Debug + Send + Sync + 'static
+        context: C,
+        message: impl Display + fmt::Debug + Send + Sync + 'static,
     ) -> Report<C> {
         Report::new(context).attach_printable(message)
     }
-    
+
     /// Attach additional context to an existing error
     pub fn attach_context<T, C: Context>(
         result: error_stack::Result<T, C>,

@@ -48,7 +48,9 @@ impl Display for RedisErrorKind {
             RedisErrorKind::PoolExhausted => write!(f, "Connection pool exhausted"),
             RedisErrorKind::CircuitBreakerOpen => write!(f, "Circuit breaker is open"),
             RedisErrorKind::RateLimitExceeded => write!(f, "Rate limit exceeded"),
-            RedisErrorKind::BackpressureDetected => write!(f, "Backpressure detected - service degraded"),
+            RedisErrorKind::BackpressureDetected => {
+                write!(f, "Backpressure detected - service degraded")
+            },
         }
     }
 }
@@ -76,7 +78,7 @@ impl ErrorHelpers {
                     _ => continue,
                 }
             }
-            
+
             // Check for Redis-specific errors
             if let Some(redis_err) = frame.downcast_ref::<bb8_redis::redis::RedisError>() {
                 match redis_err.kind() {
@@ -90,7 +92,7 @@ impl ErrorHelpers {
         }
         false
     }
-    
+
     /// Check if error should trigger circuit breaker
     pub fn should_trigger_circuit_breaker(report: &Report<RedisError>) -> bool {
         for frame in report.frames() {
@@ -103,7 +105,7 @@ impl ErrorHelpers {
                     _ => continue,
                 }
             }
-            
+
             if let Some(redis_err) = frame.downcast_ref::<bb8_redis::redis::RedisError>() {
                 match redis_err.kind() {
                     bb8_redis::redis::ErrorKind::IoError
@@ -115,7 +117,7 @@ impl ErrorHelpers {
         }
         false
     }
-    
+
     /// Get suggested retry delay in milliseconds
     pub fn suggested_retry_delay(report: &Report<RedisError>) -> Option<u64> {
         for frame in report.frames() {
@@ -128,7 +130,7 @@ impl ErrorHelpers {
                     _ => continue,
                 }
             }
-            
+
             if let Some(redis_err) = frame.downcast_ref::<bb8_redis::redis::RedisError>() {
                 match redis_err.kind() {
                     bb8_redis::redis::ErrorKind::BusyLoadingError => return Some(1000),
@@ -153,9 +155,7 @@ where
 {
     fn into_redis_error(self, kind: RedisErrorKind) -> Result<T> {
         self.map_err(|e| {
-            Report::new(RedisError)
-                .attach_printable(kind)
-                .attach_printable(e.to_string())
+            Report::new(RedisError).attach_printable(kind).attach_printable(e.to_string())
         })
     }
 }
@@ -182,9 +182,7 @@ impl From<Error> for Report<RedisError> {
             Error::RedisError(_) => RedisErrorKind::Connection,
             Error::PoolError(_) => RedisErrorKind::Pool,
         };
-        
-        Report::new(RedisError)
-            .attach_printable(kind)
-            .attach_printable(err.to_string())
+
+        Report::new(RedisError).attach_printable(kind).attach_printable(err.to_string())
     }
 }
