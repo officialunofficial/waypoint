@@ -1,7 +1,7 @@
 // build.rs
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use out_dir to set a different output directory for admin_rpc.proto
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add an attribute to silence large_enum_variant warnings in generated code
         .type_attribute(".", "#[allow(clippy::large_enum_variant)]")
