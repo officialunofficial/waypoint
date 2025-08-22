@@ -137,8 +137,7 @@ impl HubSubscriber {
             redis_stream: Arc::new(redis_stream),
             stream_key: Arc::new(crate::types::get_stream_key(
                 &hub_host,
-                "",
-                if shard_key.is_empty() { None } else { Some(&shard_key) },
+                ""
             )),
             redis_key: Arc::new(format!("{}:{}", hub_host, shard_key)),
             event_types: Arc::new(event_types),
@@ -962,8 +961,10 @@ impl HubSubscriber {
             let parts: Vec<&str> = self.stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
             let _shard_key = if parts.len() >= 5 { Some(parts[3]) } else { None };
-            // Generate stream key without suffix for correct format
-            let stream_key = crate::types::get_stream_key(hub_host, event_type, None);
+            
+            // Generate stream key
+            let stream_key = crate::types::get_stream_key(hub_host, event_type);
+            
             let redis_stream = self.redis_stream.clone();
             let stream_maxlen = self.stream_maxlen;
 

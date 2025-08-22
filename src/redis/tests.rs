@@ -62,13 +62,8 @@ mod redis_client_tests {
     async fn test_stream_key_generation() {
         let host = "hub.example.com";
         let stream_type = "casts";
-        let suffix = Some("evt");
-
-        let key = crate::types::get_stream_key(host, stream_type, suffix);
-        assert_eq!(key, "hub:hub.example.com:stream:casts:evt");
-
-        let key_no_suffix = crate::types::get_stream_key(host, stream_type, None);
-        assert_eq!(key_no_suffix, "hub:hub.example.com:stream:casts");
+        let key = crate::types::get_stream_key(host, stream_type);
+        assert_eq!(key, "hub:hub.example.com:stream:casts");
     }
 }
 

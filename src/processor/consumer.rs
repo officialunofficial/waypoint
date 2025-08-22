@@ -39,14 +39,12 @@ impl Consumer {
     /// * `stream` - Redis stream for consuming events
     /// * `hub_host` - Hostname of the Hub server
     /// * `shard_key` - Optional shard key for partitioning (empty string means no sharding)
-    pub fn new(stream: Arc<RedisStream>, hub_host: String, shard_key: String) -> Self {
+    pub fn new(stream: Arc<RedisStream>, hub_host: String, _shard_key: String) -> Self {
         // Use the shared stream key generation function with empty event_type
         // since this is just the base key - event types will be added later
-        let shard = if shard_key.is_empty() { None } else { Some(shard_key.as_str()) };
-
         Self {
             stream,
-            base_stream_key: crate::types::get_stream_key(&hub_host, "", shard),
+            base_stream_key: crate::types::get_stream_key(&hub_host, ""),
             processors: Vec::new(),
             shutdown: Arc::new(RwLock::new(false)),
             stream_tasks: Vec::new(),
@@ -87,7 +85,7 @@ impl Consumer {
                 "localhost"
             };
             // Use the same stream key format as in the subscriber
-            let stream_key = crate::types::get_stream_key(hub_host, event_type, None);
+            let stream_key = crate::types::get_stream_key(hub_host, event_type);
             let group_name = format!("{}:{}", BASE_GROUP_NAME, group_suffix);
 
             // Immediately start consumer rebalancing to claim pending messages from idle consumers
@@ -141,7 +139,7 @@ impl Consumer {
             // Extract hub_host for the cleanup key
             let parts: Vec<&str> = self.base_stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
-            let cleanup_key = crate::types::get_stream_key(hub_host, event_type, None);
+            let cleanup_key = crate::types::get_stream_key(hub_host, event_type);
             let _cleanup_threshold = EVENT_DELETION_THRESHOLD;
             let cleanup_shutdown = Arc::clone(&self.shutdown);
 

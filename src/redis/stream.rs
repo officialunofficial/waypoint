@@ -1,7 +1,7 @@
 use crate::redis::{client::Redis, error::Error};
 use std::{sync::Arc, time::Duration};
 use tokio::time::interval;
-use tracing::warn;
+use tracing::{error, trace, warn};
 
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(100);
@@ -162,6 +162,11 @@ impl RedisStream {
         consumer: Option<&str>,
     ) -> Result<Vec<StreamEntry>, Error> {
         let consumer_name = consumer.unwrap_or("default-consumer");
+        
+        trace!(
+            "Reading from key='{}', group='{}', consumer='{}', count={}",
+            key, group, consumer_name, count
+        );
 
         // Use retries for transient failures
         let mut attempts = 0;
@@ -173,6 +178,10 @@ impl RedisStream {
                         .map(|(id, data)| StreamEntry { id, data, attempts: 0 })
                         .collect();
 
+                    if stream_entries.is_empty() {
+                        trace!("No messages available in key='{}'", key);
+                    }
+                    
                     return Ok(stream_entries);
                 },
                 Err(e) => {
@@ -222,8 +231,24 @@ impl RedisStream {
 
     /// Acknowledge successfully processed messages
     pub async fn ack(&self, key: &str, group: &str, ids: Vec<String>) -> Result<(), Error> {
-        for id in ids {
-            self.redis.xack(key, group, &id).await?;
+        trace!(
+            "Acknowledging {} messages for key='{}', group='{}'",
+            ids.len(), key, group
+        );
+        
+        for id in &ids {
+            match self.redis.xack(key, group, id).await {
+                Ok(_) => {
+                    trace!("Acknowledged message id='{}'", id);
+                },
+                Err(e) => {
+                    error!(
+                        "Failed to acknowledge message id='{}' for key='{}': {}",
+                        id, key, e
+                    );
+                    return Err(e);
+                }
+            }
         }
         Ok(())
     }

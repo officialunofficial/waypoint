@@ -365,14 +365,101 @@ impl Consumer {
     /// * `usize` - Number of consumers deleted
     async fn cleanup_consumer_group(
         &self,
-        _stream_key: &str,
-        _group_name: &str,
-        _idle_threshold: u64,
+        stream_key: &str,
+        group_name: &str,
+        idle_threshold: u64,
     ) -> usize {
-        // For now, return 0 as this requires complex XINFO CONSUMERS parsing
-        // TODO: Implement full consumer cleanup when fred adds better XINFO support
-        warn!("Consumer cleanup temporarily disabled during fred migration");
-        0
+        // Get list of consumers in the group
+        match self.stream.redis.xinfo_consumers(stream_key, group_name).await {
+            Ok(consumers) => {
+                let mut deleted_count = 0;
+                let current_consumer = crate::redis::stream::RedisStream::get_stable_consumer_id();
+
+                for consumer_info in consumers {
+                    // Get consumer name and idle time
+                    let consumer_name = consumer_info.get("name").map(|s| s.as_str()).unwrap_or("");
+                    let idle_time: u64 =
+                        consumer_info.get("idle").and_then(|s| s.parse().ok()).unwrap_or(0);
+
+                    // Skip current consumer and recently active consumers
+                    if consumer_name == current_consumer || consumer_name.is_empty() {
+                        continue;
+                    }
+
+                    // Check if consumer is extremely idle
+                    if idle_time > idle_threshold {
+                        // Check pending count for this consumer
+                        let pending_count: u64 =
+                            consumer_info.get("pending").and_then(|s| s.parse().ok()).unwrap_or(0);
+
+                        // If consumer has pending messages, try to claim them first
+                        if pending_count > 0 {
+                            trace!(
+                                "Consumer {} has {} pending messages, attempting to claim before deletion",
+                                consumer_name, pending_count
+                            );
+
+                            // Try to claim any pending messages from this consumer
+                            match self
+                                .stream
+                                .claim_stale(
+                                    stream_key,
+                                    group_name,
+                                    Duration::from_millis(1), // Immediate claim since we're deleting
+                                    pending_count as usize,
+                                    Some(&current_consumer),
+                                )
+                                .await
+                            {
+                                Ok(claimed) => {
+                                    trace!(
+                                        "Claimed {} messages from idle consumer {}",
+                                        claimed.len(),
+                                        consumer_name
+                                    );
+                                    // Acknowledge the claimed messages to clear them
+                                    let ids: Vec<String> =
+                                        claimed.into_iter().map(|e| e.id).collect();
+                                    if !ids.is_empty() {
+                                        let _ = self.stream.ack(stream_key, group_name, ids).await;
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to claim messages from idle consumer {}: {}",
+                                        consumer_name, e
+                                    );
+                                },
+                            }
+                        }
+
+                        // Delete the idle consumer
+                        match self
+                            .stream
+                            .delete_consumer(stream_key, group_name, consumer_name)
+                            .await
+                        {
+                            Ok(_) => {
+                                deleted_count += 1;
+                                trace!(
+                                    "Deleted idle consumer {} (idle for {} ms)",
+                                    consumer_name, idle_time
+                                );
+                            },
+                            Err(e) => {
+                                warn!("Failed to delete idle consumer {}: {}", consumer_name, e);
+                            },
+                        }
+                    }
+                }
+
+                deleted_count
+            },
+            Err(e) => {
+                warn!("Failed to get consumer info for cleanup: {}", e);
+                0
+            },
+        }
     }
 
     /// Force reclaim any messages stuck in the pending state for too long
@@ -525,8 +612,9 @@ impl Consumer {
     ) -> std::result::Result<(), crate::redis::error::Error> {
         // Use the same key format that publisher uses
         let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
+        
         let stream_key =
-            crate::types::get_stream_key(clean_host, message_type.to_stream_key(), None);
+            crate::types::get_stream_key(clean_host, message_type.to_stream_key());
         let group_name = self.group_name.clone();
 
         // Create the consumer group if it doesn't exist
@@ -557,8 +645,8 @@ impl Consumer {
                     break;
                 }
 
-                if let Err(e) = self.stream.ack(&stream_key, &group_name, successful_ids).await {
-                    error!("Error acknowledging messages from {}: {}", stream_key, e);
+                if let Err(e) = self.stream.ack(&stream_key, &group_name, successful_ids.clone()).await {
+                    error!("Failed to acknowledge messages: {}", e);
                 }
             }
 
@@ -706,8 +794,12 @@ impl Consumer {
 
             match HubEvent::decode(entry.data.as_slice()) {
                 Ok(event) => {
+                    trace!("Decoded event {} (type={})", entry.id, event.r#type);
                     match self.processors.process_event(event).await {
-                        Ok(_) => successful_ids.push(entry.id),
+                        Ok(_) => {
+                            trace!("Processed event {}", entry.id);
+                            successful_ids.push(entry.id)
+                        },
                         Err(e) => {
                             error!("Error processing event {}: {}", entry.id, e);
                             successful_ids.push(entry.id); // Ack anyway to avoid reprocessing
@@ -735,7 +827,7 @@ impl Consumer {
         // Use the same key format that publisher uses
         let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
         let stream_key =
-            crate::types::get_stream_key(clean_host, message_type.to_stream_key(), None);
+            crate::types::get_stream_key(clean_host, message_type.to_stream_key());
 
         trace!("Starting cleanup task for {:?}", message_type);
 

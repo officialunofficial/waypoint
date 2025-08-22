@@ -288,6 +288,49 @@ impl Redis {
         }
     }
 
+    pub async fn xinfo_consumers(
+        &self,
+        key: &str,
+        group: &str,
+    ) -> Result<Vec<std::collections::HashMap<String, String>>, Error> {
+        // Use custom command for XINFO CONSUMERS
+        use fred::interfaces::ClientLike;
+        use fred::types::{ClusterHash, CustomCommand};
+
+        let cmd = CustomCommand::new("XINFO", ClusterHash::FirstKey, false);
+        let result: Result<Vec<Vec<RedisValue>>, _> = self
+            .pool
+            .custom(
+                cmd,
+                vec![RedisValue::from("CONSUMERS"), RedisValue::from(key), RedisValue::from(group)],
+            )
+            .await;
+
+        match result {
+            Ok(consumers) => {
+                let mut consumer_maps = Vec::new();
+                for consumer in consumers {
+                    let mut map = std::collections::HashMap::new();
+                    // Parse the array format response
+                    for i in (0..consumer.len()).step_by(2) {
+                        if let (Some(key), Some(value)) = (consumer.get(i), consumer.get(i + 1)) {
+                            let key_str = key.as_string().unwrap_or_default().to_string();
+                            let value_str = match value {
+                                fred::types::RedisValue::String(s) => s.to_string(),
+                                fred::types::RedisValue::Integer(i) => i.to_string(),
+                                _ => String::new(),
+                            };
+                            map.insert(key_str, value_str);
+                        }
+                    }
+                    consumer_maps.push(map);
+                }
+                Ok(consumer_maps)
+            },
+            Err(e) => Err(Error::RedisError(e)),
+        }
+    }
+
     pub async fn xreadgroup(
         &self,
         group: &str,
