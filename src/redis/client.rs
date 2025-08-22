@@ -151,7 +151,8 @@ impl Redis {
 
         // Get basic pending count using XPENDING
         // Use empty args for basic summary
-        let pending_summary: Result<(u64, Option<String>, Option<String>, Vec<(String, u64)>), _> =
+        type PendingSummary = (u64, Option<String>, Option<String>, Vec<(String, u64)>);
+        let pending_summary: Result<PendingSummary, _> =
             self.pool.xpending(stream_key, group_name, ()).await;
 
         if let Ok((count, _, _, _)) = pending_summary {

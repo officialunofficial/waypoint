@@ -171,7 +171,7 @@ mod redis_operation_tests {
         let _group = "test-group";
         let _consumer = "test-consumer";
         let _min_idle = std::time::Duration::from_secs(60);
-        let _message_ids = vec!["1234567890-0".to_string()];
+        let _message_ids = ["1234567890-0".to_string()];
 
         // Test message claiming behavior
         // Critical for handling stale messages
@@ -189,7 +189,7 @@ mod redis_operation_tests {
     #[tokio::test]
     async fn test_list_operations() {
         let _queue_key = "test:queue";
-        let _test_items = vec!["item1", "item2", "item3"];
+        let _test_items = ["item1", "item2", "item3"];
 
         // Test LPUSH, BRPOP, LLEN, LRANGE, LREM
         // Used in backfill operations

@@ -6,17 +6,7 @@ use waypoint::redis::{client::Redis, stream::RedisStream};
 
 /// Helper to check if Redis is available
 async fn redis_available() -> bool {
-    let config = RedisConfig {
-        url: std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()),
-        pool_size: 10,
-        batch_size: 100,
-        enable_dead_letter: true,
-        consumer_rebalance_interval_seconds: 300,
-        metrics_collection_interval_seconds: 60,
-        connection_timeout_ms: 5000,
-        idle_timeout_secs: 300,
-        max_connection_lifetime_secs: 300,
-    };
+    let config = RedisConfig::default();
 
     match Redis::new(&config).await {
         Ok(redis) => redis.check_connection().await.unwrap_or(false),
@@ -32,15 +22,9 @@ async fn test_stream_create_consume_cycle() {
     }
 
     let config = RedisConfig {
-        url: std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()),
         pool_size: 20,
         batch_size: 10,
-        enable_dead_letter: true,
-        consumer_rebalance_interval_seconds: 300,
-        metrics_collection_interval_seconds: 60,
-        connection_timeout_ms: 5000,
-        idle_timeout_secs: 300,
-        max_connection_lifetime_secs: 300,
+        ..Default::default()
     };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
@@ -100,15 +84,9 @@ async fn test_pending_message_recovery() {
     }
 
     let config = RedisConfig {
-        url: std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()),
         pool_size: 20,
         batch_size: 10,
-        enable_dead_letter: true,
-        consumer_rebalance_interval_seconds: 300,
-        metrics_collection_interval_seconds: 60,
-        connection_timeout_ms: 5000,
-        idle_timeout_secs: 300,
-        max_connection_lifetime_secs: 300,
+        ..Default::default()
     };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
@@ -171,15 +149,9 @@ async fn test_concurrent_consumers() {
     }
 
     let config = RedisConfig {
-        url: std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()),
         pool_size: 50,
         batch_size: 10,
-        enable_dead_letter: true,
-        consumer_rebalance_interval_seconds: 300,
-        metrics_collection_interval_seconds: 60,
-        connection_timeout_ms: 5000,
-        idle_timeout_secs: 300,
-        max_connection_lifetime_secs: 300,
+        ..Default::default()
     };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
@@ -248,15 +220,10 @@ async fn test_pool_stress() {
     }
 
     let config = RedisConfig {
-        url: std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()),
         pool_size: 20, // Limited pool size to test contention
         batch_size: 10,
-        enable_dead_letter: true,
-        consumer_rebalance_interval_seconds: 300,
-        metrics_collection_interval_seconds: 60,
         connection_timeout_ms: 2000, // Shorter timeout to detect issues faster
-        idle_timeout_secs: 300,
-        max_connection_lifetime_secs: 300,
+        ..Default::default()
     };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));

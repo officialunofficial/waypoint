@@ -6,7 +6,6 @@
 #[cfg(test)]
 mod tests {
     use fred::prelude::*;
-    use tokio;
     use waypoint::config::RedisConfig;
     use waypoint::redis::client::Redis;
 
@@ -184,7 +183,7 @@ mod tests {
                 group_name,
                 consumer2,
                 std::time::Duration::from_millis(50),
-                &vec![message_id.clone()],
+                &[message_id.clone()],
             )
             .await;
 
