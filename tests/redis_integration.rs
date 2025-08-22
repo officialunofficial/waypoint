@@ -21,11 +21,7 @@ async fn test_stream_create_consume_cycle() {
         return;
     }
 
-    let config = RedisConfig {
-        pool_size: 20,
-        batch_size: 10,
-        ..Default::default()
-    };
+    let config = RedisConfig { pool_size: 20, batch_size: 10, ..Default::default() };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
     let stream = RedisStream::new(redis.clone());
@@ -83,11 +79,7 @@ async fn test_pending_message_recovery() {
         return;
     }
 
-    let config = RedisConfig {
-        pool_size: 20,
-        batch_size: 10,
-        ..Default::default()
-    };
+    let config = RedisConfig { pool_size: 20, batch_size: 10, ..Default::default() };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
     let stream = RedisStream::new(redis.clone());
@@ -148,11 +140,7 @@ async fn test_concurrent_consumers() {
         return;
     }
 
-    let config = RedisConfig {
-        pool_size: 50,
-        batch_size: 10,
-        ..Default::default()
-    };
+    let config = RedisConfig { pool_size: 50, batch_size: 10, ..Default::default() };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
     let stream = RedisStream::new(redis.clone());
