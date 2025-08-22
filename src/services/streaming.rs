@@ -526,7 +526,7 @@ impl Consumer {
         // Use the same key format that publisher uses
         let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
         let stream_key =
-            crate::types::get_stream_key(clean_host, message_type.to_stream_key(), Some("evt"));
+            crate::types::get_stream_key(clean_host, message_type.to_stream_key(), None);
         let group_name = self.group_name.clone();
 
         // Create the consumer group if it doesn't exist
@@ -735,7 +735,7 @@ impl Consumer {
         // Use the same key format that publisher uses
         let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
         let stream_key =
-            crate::types::get_stream_key(clean_host, message_type.to_stream_key(), Some("evt"));
+            crate::types::get_stream_key(clean_host, message_type.to_stream_key(), None);
 
         trace!("Starting cleanup task for {:?}", message_type);
 

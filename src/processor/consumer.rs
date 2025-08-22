@@ -86,8 +86,8 @@ impl Consumer {
             } else {
                 "localhost"
             };
-            // Use the same stream key format as in the subscriber: hub:host:evt:msg:evt:type
-            let stream_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
+            // Use the same stream key format as in the subscriber
+            let stream_key = crate::types::get_stream_key(hub_host, event_type, None);
             let group_name = format!("{}:{}", BASE_GROUP_NAME, group_suffix);
 
             // Immediately start consumer rebalancing to claim pending messages from idle consumers
@@ -141,7 +141,7 @@ impl Consumer {
             // Extract hub_host for the cleanup key
             let parts: Vec<&str> = self.base_stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
-            let cleanup_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
+            let cleanup_key = crate::types::get_stream_key(hub_host, event_type, None);
             let _cleanup_threshold = EVENT_DELETION_THRESHOLD;
             let cleanup_shutdown = Arc::clone(&self.shutdown);
 

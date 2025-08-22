@@ -962,8 +962,8 @@ impl HubSubscriber {
             let parts: Vec<&str> = self.stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
             let _shard_key = if parts.len() >= 5 { Some(parts[3]) } else { None };
-            // Always use "evt" as the shard key for consistency with consumer
-            let stream_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
+            // Generate stream key without suffix for correct format
+            let stream_key = crate::types::get_stream_key(hub_host, event_type, None);
             let redis_stream = self.redis_stream.clone();
             let stream_maxlen = self.stream_maxlen;
 
