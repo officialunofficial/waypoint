@@ -92,14 +92,9 @@ impl Consumer {
 
             // Immediately start consumer rebalancing to claim pending messages from idle consumers
             // This ensures we recover any messages that were in process during a previous shutdown
-            let consumer_id = crate::redis::stream::RedisStream::get_stable_consumer_id();
-            self.stream
-                .start_consumer_rebalancing(
-                    stream_key.clone(),
-                    group_name.clone(),
-                    consumer_id.clone(),
-                    Duration::from_secs(30), // Regular rebalance every 30 seconds
-                )
+            let _consumer_id = crate::redis::stream::RedisStream::get_stable_consumer_id();
+            let _ = self.stream
+                .start_consumer_rebalancing(Duration::from_secs(30)) // Regular rebalance every 30 seconds
                 .await;
 
             // Launch multiple parallel consumers for this stream type
@@ -147,14 +142,17 @@ impl Consumer {
             let parts: Vec<&str> = self.base_stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
             let cleanup_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
-            let cleanup_threshold = EVENT_DELETION_THRESHOLD;
+            let _cleanup_threshold = EVENT_DELETION_THRESHOLD;
             let cleanup_shutdown = Arc::clone(&self.shutdown);
 
             tokio::spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(60));
                 while !*cleanup_shutdown.read().await {
                     interval.tick().await;
-                    if let Err(e) = cleanup_stream.trim(&cleanup_key, cleanup_threshold).await {
+                    // Keep events from the last 24 hours
+                    if let Err(e) =
+                        cleanup_stream.trim(&cleanup_key, Duration::from_secs(24 * 60 * 60)).await
+                    {
                         error!("Error clearing old events for {}: {}", cleanup_key, e);
                     }
                 }
