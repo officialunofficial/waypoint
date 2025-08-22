@@ -594,6 +594,7 @@ impl HubSubscriber {
             let mut interval = tokio::time::interval(cleanup_interval);
             loop {
                 interval.tick().await;
+                // Keep events from the last 24 hours
                 if let Err(e) = stream.trim(&stream_key, Duration::from_secs(24 * 60 * 60)).await {
                     error!("Error trimming events: {}", e);
                 }
