@@ -3,7 +3,7 @@ mod redis_client_tests {
     use super::super::*;
 
     // Helper to create test configuration
-    fn test_config() -> crate::config::RedisConfig {
+    pub(super) fn test_config() -> crate::config::RedisConfig {
         crate::config::RedisConfig {
             url: "redis://localhost:6379".to_string(),
             pool_size: 10,
@@ -138,6 +138,164 @@ mod redis_operation_tests {
 
         // This test ensures XREADGROUP behavior is preserved
         // Including blocking/non-blocking behavior under pool pressure
+    }
+
+    #[tokio::test]
+    async fn test_typed_response_with_binary_data() {
+        // This test proves that the new typed response implementation works correctly
+        // with real Redis and preserves binary data integrity
+
+        let config = super::redis_client_tests::test_config();
+        let redis = match crate::redis::client::Redis::new(&config).await {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("Skipping test: Redis not available on localhost:6379");
+                return;
+            },
+        };
+
+        // Unique test identifiers to avoid conflicts
+        let test_id = uuid::Uuid::new_v4().to_string();
+        let stream_key = format!("test:typed:stream:{}", test_id);
+        let group = format!("test-group-{}", test_id);
+        let consumer = format!("test-consumer-{}", test_id);
+
+        // Test with various binary data patterns
+        let test_cases = vec![
+            // Plain text
+            ("text", b"Hello, World!".to_vec()),
+            // Binary data with null bytes
+            ("binary_nulls", vec![0x00, 0x01, 0x02, 0x03, 0xFF]),
+            // Protobuf-like binary data
+            ("protobuf", vec![0x08, 0x96, 0x01, 0x12, 0x04, 0x08, 0xAC, 0x02]),
+            // UTF-8 with special characters
+            ("utf8", "Hello 世界 🦀".as_bytes().to_vec()),
+            // Large binary chunk
+            ("large", vec![0xDE, 0xAD, 0xBE, 0xEF].repeat(100)),
+        ];
+
+        // Step 1: Add test messages to the stream
+        for (label, data) in &test_cases {
+            let result = redis.xadd(&stream_key, &data).await;
+            assert!(result.is_ok(), "Failed to add {} message: {:?}", label, result);
+        }
+
+        // Step 2: Create consumer group
+        let create_result = redis.xgroup_create(&stream_key, &group, "0").await;
+        assert!(
+            create_result.is_ok() || create_result.unwrap_err().to_string().contains("BUSYGROUP"),
+            "Failed to create consumer group"
+        );
+
+        // Step 3: Read messages using the new typed response implementation
+        let messages = redis.xreadgroup(&group, &consumer, &stream_key, 10).await;
+        assert!(messages.is_ok(), "Failed to read messages: {:?}", messages);
+
+        let messages = messages.unwrap();
+        assert_eq!(
+            messages.len(),
+            test_cases.len(),
+            "Should read all {} test messages",
+            test_cases.len()
+        );
+
+        // Step 4: Verify binary data integrity
+        for (i, (id, data)) in messages.iter().enumerate() {
+            let (label, expected_data) = &test_cases[i];
+            assert_eq!(data, expected_data, "Binary data mismatch for {} (message {})", label, id);
+
+            // Verify message ID format
+            assert!(id.contains('-'), "Message ID should contain hyphen: {}", id);
+            let parts: Vec<&str> = id.split('-').collect();
+            assert_eq!(parts.len(), 2, "Message ID should have two parts: {}", id);
+        }
+
+        // Step 5: Test acknowledgment with typed responses
+        for (id, _) in &messages {
+            let ack_result = redis.xack(&stream_key, &group, id).await;
+            assert!(ack_result.is_ok(), "Failed to acknowledge message {}: {:?}", id, ack_result);
+        }
+
+        // Step 6: Verify no pending messages remain
+        let pending =
+            redis.xpending(&stream_key, &group, std::time::Duration::from_secs(0), 100).await;
+        assert!(pending.is_ok(), "Failed to check pending messages");
+        let pending = pending.unwrap();
+        assert_eq!(pending.len(), 0, "Should have no pending messages after acknowledgment");
+
+        // Cleanup: Delete test stream
+        let _: Result<(), _> = redis.del(&stream_key).await;
+
+        println!("✅ Typed response test passed with {} binary data patterns", test_cases.len());
+    }
+
+    #[tokio::test]
+    async fn test_typed_response_performance() {
+        // This test demonstrates that typed responses handle edge cases correctly
+
+        let config = super::redis_client_tests::test_config();
+        let redis = match crate::redis::client::Redis::new(&config).await {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("Skipping test: Redis not available on localhost:6379");
+                return;
+            },
+        };
+
+        let test_id = uuid::Uuid::new_v4().to_string();
+        let stream_key = format!("test:perf:stream:{}", test_id);
+        let group = format!("test-group-{}", test_id);
+        let consumer = format!("test-consumer-{}", test_id);
+
+        // Edge cases that the old parsing might struggle with
+        let edge_cases = vec![
+            // Empty data
+            ("empty", vec![]),
+            // Single byte
+            ("single", vec![0x42]),
+            // All zeros (might be confused with null termination)
+            ("zeros", vec![0x00; 10]),
+            // All 0xFF bytes
+            ("all_ff", vec![0xFF; 10]),
+            // Mixed control characters
+            ("control", vec![0x00, 0x01, 0x02, 0x03, 0x0A, 0x0D, 0x1B]),
+            // Valid UTF-8 that looks like it could be binary
+            ("utf8_binary", "�\u{FFFD}�".as_bytes().to_vec()),
+        ];
+
+        // Add messages
+        for (label, data) in &edge_cases {
+            let result = redis.xadd(&stream_key, &data).await;
+            assert!(result.is_ok(), "Failed to add {} edge case: {:?}", label, result);
+        }
+
+        // Create group
+        let _ = redis.xgroup_create(&stream_key, &group, "0").await;
+
+        // Read with typed responses - this should handle all edge cases cleanly
+        let messages = redis.xreadgroup(&group, &consumer, &stream_key, 10).await;
+        assert!(messages.is_ok(), "Typed response failed on edge cases");
+
+        let messages = messages.unwrap();
+        assert_eq!(messages.len(), edge_cases.len(), "Should handle all edge cases");
+
+        // Verify each edge case
+        for (i, (id, data)) in messages.iter().enumerate() {
+            let (label, expected) = &edge_cases[i];
+            assert_eq!(
+                data, expected,
+                "Edge case '{}' failed: expected {:?}, got {:?}",
+                label, expected, data
+            );
+
+            // Acknowledge
+            let _ = redis.xack(&stream_key, &group, id).await;
+        }
+
+        // Cleanup
+        let _ = redis.del(&stream_key).await;
+
+        println!("✅ All {} edge cases handled correctly with typed responses", edge_cases.len());
     }
 
     #[tokio::test]

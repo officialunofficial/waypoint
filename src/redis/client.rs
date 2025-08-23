@@ -341,11 +341,13 @@ impl Redis {
         // Use short blocking timeout to balance efficiency and connection availability
         let block_timeout = if self.is_pool_under_pressure() { 0 } else { 10 };
 
-        // Use xreadgroup from fred - let it return raw RedisValue to avoid parse errors
+        // Use xreadgroup_map with typed response for cleaner parsing
         use fred::prelude::*;
-        let response: fred::types::RedisValue = self
+        use fred::types::XReadResponse;
+
+        let response: XReadResponse<String, String, String, Vec<u8>> = self
             .pool
-            .xreadgroup(
+            .xreadgroup_map(
                 group,
                 consumer,
                 Some(count),
@@ -359,63 +361,12 @@ impl Redis {
 
         let mut results = Vec::with_capacity(count as usize);
 
-        // Parse the response - it's an array of streams, each with messages
-        if let fred::types::RedisValue::Array(streams) = response {
-            for stream in streams {
-                if let fred::types::RedisValue::Array(stream_data) = stream {
-                    if stream_data.len() >= 2 {
-                        // stream_data[0] is the stream key, stream_data[1] is the messages array
-                        if let fred::types::RedisValue::Array(messages) = &stream_data[1] {
-                            for msg in messages {
-                                if let fred::types::RedisValue::Array(msg_data) = msg {
-                                    if msg_data.len() >= 2 {
-                                        // msg_data[0] is the ID, msg_data[1] is the fields
-                                        let id =
-                                            msg_data[0].as_string().unwrap_or_default().to_string();
-
-                                        // Extract the "d" field from the fields array
-                                        if let fred::types::RedisValue::Array(fields) = &msg_data[1]
-                                        {
-                                            // Fields are key-value pairs
-                                            for i in (0..fields.len()).step_by(2) {
-                                                if i + 1 < fields.len()
-                                                    && fields[i]
-                                                        .as_string()
-                                                        .map(|s| s == "d")
-                                                        .unwrap_or(false)
-                                                {
-                                                    // Handle both Bytes and String data types
-                                                    match &fields[i + 1] {
-                                                        fred::types::RedisValue::Bytes(data) => {
-                                                            results
-                                                                .push((id.clone(), data.to_vec()));
-                                                        },
-                                                        fred::types::RedisValue::String(data) => {
-                                                            results.push((
-                                                                id.clone(),
-                                                                data.as_bytes().to_vec(),
-                                                            ));
-                                                        },
-                                                        _ => {
-                                                            // Try to convert other types to bytes
-                                                            if let Some(data_string) =
-                                                                fields[i + 1].as_string()
-                                                            {
-                                                                results.push((
-                                                                    id.clone(),
-                                                                    data_string.as_bytes().to_vec(),
-                                                                ));
-                                                            }
-                                                        },
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+        // Process the typed response directly
+        for (_stream_key, messages) in response.into_iter() {
+            for (id, fields) in messages {
+                // Look for the "d" field which contains our data
+                if let Some(data) = fields.get("d") {
+                    results.push((id, data.clone()));
                 }
             }
         }
@@ -618,6 +569,19 @@ impl Redis {
     pub async fn xdel(&self, key: &str, id: &str) -> Result<(), Error> {
         let _: u64 = self.pool.xdel(key, vec![id]).await.map_err(Error::RedisError)?;
 
+        Ok(())
+    }
+
+    pub async fn xgroup_create(&self, key: &str, group: &str, id: &str) -> Result<(), Error> {
+        use fred::prelude::*;
+        let _: fred::types::RedisValue =
+            self.pool.xgroup_create(key, group, id, false).await.map_err(Error::RedisError)?;
+        Ok(())
+    }
+
+    pub async fn del(&self, key: &str) -> Result<(), Error> {
+        use fred::prelude::*;
+        let _: u64 = self.pool.del(key).await.map_err(Error::RedisError)?;
         Ok(())
     }
 
