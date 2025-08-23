@@ -137,7 +137,8 @@ impl HubSubscriber {
             redis_stream: Arc::new(redis_stream),
             stream_key: Arc::new(crate::types::get_stream_key(
                 &hub_host,
-                ""
+                "",
+                if shard_key.is_empty() { None } else { Some(&shard_key) },
             )),
             redis_key: Arc::new(format!("{}:{}", hub_host, shard_key)),
             event_types: Arc::new(event_types),
@@ -960,11 +961,12 @@ impl HubSubscriber {
 
             let parts: Vec<&str> = self.stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
-            let _shard_key = if parts.len() >= 5 { Some(parts[3]) } else { None };
-            
-            // Generate stream key
-            let stream_key = crate::types::get_stream_key(hub_host, event_type);
-            
+            // Extract shard suffix if present (will be at position 4 after "hub:host:stream:")
+            let shard_suffix = if parts.len() >= 5 { Some(parts[4]) } else { None };
+
+            // Generate stream key with shard suffix
+            let stream_key = crate::types::get_stream_key(hub_host, event_type, shard_suffix);
+
             let redis_stream = self.redis_stream.clone();
             let stream_maxlen = self.stream_maxlen;
 
@@ -1053,6 +1055,26 @@ mod tests {
 
     #[test]
     fn test_shard_key_generation() {
+        // Test that stream keys include shard suffix when shard_key is provided
+
+        // Test with shard_0
+        let stream_key_0 = crate::types::get_stream_key("hub.example.com", "", Some("shard_0"));
+        assert_eq!(stream_key_0, "hub:hub.example.com:stream::shard_0");
+
+        // Test with shard_1
+        let stream_key_1 =
+            crate::types::get_stream_key("hub.example.com", "casts", Some("shard_1"));
+        assert_eq!(stream_key_1, "hub:hub.example.com:stream:casts:shard_1");
+
+        // Test without shard (no suffix)
+        let stream_key_none = crate::types::get_stream_key("hub.example.com", "casts", None);
+        assert_eq!(stream_key_none, "hub:hub.example.com:stream:casts");
+
+        // Test with empty shard (no suffix, no dangling colon)
+        let stream_key_empty = crate::types::get_stream_key("hub.example.com", "casts", Some(""));
+        assert_eq!(stream_key_empty, "hub:hub.example.com:stream:casts");
+        assert!(!stream_key_empty.ends_with(':'));
+
         // Test with specific shard index
         let hub_config = Arc::new(HubConfig {
             url: "test.hub:3383".to_string(),
