@@ -26,7 +26,7 @@ pub const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 pub fn get_stream_key(hub_host: &str, event_type: &str) -> String {
     // Clean the hub_host to ensure consistent key format - strip any port numbers
     let clean_host = hub_host.split(':').next().unwrap_or(hub_host);
-    
+
     // Generate the key
     format!("hub:{}:stream:{}", clean_host, event_type)
 }
