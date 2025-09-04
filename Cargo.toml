@@ -47,7 +47,7 @@ error-stack = "0.5.0"
 
 # Logging & Tracing
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "json"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
 
 # Configuration
 figment = { version = "0.10.19", features = ["env", "toml"] }
@@ -93,7 +93,7 @@ tonic-prost-build = "0.14.1"
 
 [dev-dependencies]
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 
 [profile.dev]
 opt-level = 0
