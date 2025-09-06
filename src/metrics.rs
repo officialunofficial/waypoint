@@ -162,6 +162,20 @@ fn register_prometheus_metrics() {
     describe_counter!("waypoint_stream_events_filtered", "Total number of stream events filtered");
     describe_histogram!("waypoint_stream_processing_time_ms", "Stream event processing time in milliseconds");
     
+    // Business logic metrics
+    describe_counter!("waypoint_events_by_type", "Events processed by type");
+    describe_counter!("waypoint_casts_processed", "Cast events processed");
+    describe_counter!("waypoint_reactions_processed", "Reaction events processed");
+    describe_counter!("waypoint_follows_processed", "Follow/link events processed");
+    describe_counter!("waypoint_user_data_processed", "User data events processed");
+    
+    // Error metrics by type
+    describe_counter!("waypoint_errors_total", "Total number of errors by type");
+    describe_counter!("waypoint_database_errors", "Database-related errors");
+    describe_counter!("waypoint_redis_errors", "Redis-related errors");
+    describe_counter!("waypoint_hub_errors", "Hub connection errors");
+    describe_counter!("waypoint_processing_errors", "Event processing errors");
+    
     // Database metrics
     describe_gauge!("waypoint_database_connections_active", "Number of active database connections");
     describe_histogram!("waypoint_database_query_duration_ms", "Database query duration in milliseconds");
@@ -421,6 +435,88 @@ pub fn set_cpu_usage(percent: f64) {
     }
     // Prometheus metrics
     metrics::gauge!("waypoint_system_cpu_usage_percent").set(percent);
+}
+
+// Error tracking metrics
+pub fn increment_database_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.database");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_database_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "database").increment(1);
+}
+
+pub fn increment_redis_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.redis");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_redis_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "redis").increment(1);
+}
+
+pub fn increment_hub_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.hub");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_hub_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "hub").increment(1);
+}
+
+pub fn increment_processing_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.processing");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_processing_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "processing").increment(1);
+}
+
+// Business logic metrics
+pub fn increment_casts_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.casts_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_casts_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "cast").increment(1);
+}
+
+pub fn increment_reactions_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.reactions_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_reactions_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "reaction").increment(1);
+}
+
+pub fn increment_follows_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.follows_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_follows_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "follow").increment(1);
+}
+
+pub fn increment_user_data_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.user_data_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_user_data_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "user_data").increment(1);
 }
 
 // Timer utility for measuring durations

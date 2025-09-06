@@ -489,6 +489,11 @@ impl Worker {
                             stats_guard.jobs_processed += 1;
                             stats_guard.fids_processed += fid_count;
                             stats_guard.spam_fids_skipped += spam_count;
+                            
+                            // Update metrics
+                            metrics::increment_jobs_processed();
+                            metrics::increment_fids_processed(fid_count as u64);
+                            
                             info!(
                                 "Stats update: {} jobs, {} FIDs processed, {} spam FIDs skipped, {} errors",
                                 stats_guard.jobs_processed,
@@ -499,6 +504,7 @@ impl Worker {
                         },
                         StatsUpdate::Error => {
                             stats_guard.errors += 1;
+                            metrics::increment_job_errors();
                         },
                         StatsUpdate::HighestFidUpdate(fid) => {
                             if fid > stats_guard.highest_fid_processed {
