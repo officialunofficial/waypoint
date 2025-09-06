@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                        INSERT INTO id_register_events (\n                            fid,\n                            to_address,\n                            event_type,\n                            from_address,\n                            recovery_address,\n                            timestamp,\n                            block_number,\n                            block_hash,\n                            log_index,\n                            tx_index,\n                            tx_hash,\n                            block_timestamp,\n                            chain_id\n                        )\n                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)\n                        ON CONFLICT (tx_hash, log_index) DO NOTHING\n                        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Int2",
+        "Bytea",
+        "Bytea",
+        "Timestamptz",
+        "Int8",
+        "Bytea",
+        "Int4",
+        "Int4",
+        "Bytea",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ccb10cbbb13017e8bf1f7af281571d87b4a0a80f6da647ebde72d1c84ca7beb0"
+}

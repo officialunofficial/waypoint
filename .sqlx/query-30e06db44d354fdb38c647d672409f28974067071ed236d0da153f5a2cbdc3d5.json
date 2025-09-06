@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                        INSERT INTO signer_migrated_events (\n                            fid,\n                            migrated_at,\n                            timestamp,\n                            block_number,\n                            block_hash,\n                            log_index,\n                            tx_index,\n                            tx_hash,\n                            block_timestamp,\n                            chain_id\n                        )\n                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\n                        ON CONFLICT (tx_hash, log_index) DO NOTHING\n                        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Timestamptz",
+        "Int8",
+        "Bytea",
+        "Int4",
+        "Int4",
+        "Bytea",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "30e06db44d354fdb38c647d672409f28974067071ed236d0da153f5a2cbdc3d5"
+}

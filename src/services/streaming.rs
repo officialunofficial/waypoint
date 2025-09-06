@@ -10,7 +10,10 @@ use crate::{
 };
 use async_trait::async_trait;
 use prost::Message as ProstMessage;
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{
     sync::{Mutex, RwLock, oneshot},
     task::JoinHandle,
@@ -797,7 +800,7 @@ impl Consumer {
                 Ok(event) => {
                     trace!("Decoded event {} (type={})", entry.id, event.r#type);
                     crate::metrics::increment_events_received();
-                    
+
                     let start_time = Instant::now();
                     match self.processors.process_event(event).await {
                         Ok(_) => {
