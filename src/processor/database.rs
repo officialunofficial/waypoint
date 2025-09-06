@@ -472,7 +472,7 @@ impl DatabaseProcessor {
         Ok(())
     }
 
-    async fn process_onchain_event(
+    pub async fn process_onchain_event(
         &self,
         event: &OnChainEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -517,47 +517,233 @@ impl DatabaseProcessor {
         .execute(&self.resources.database.pool)
         .await?;
 
-        // Handle tier purchase events specifically
-        if event.r#type == 5 {
-            // EVENT_TYPE_TIER_PURCHASE
-            if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(tier_body)) =
-                &event.body
-            {
-                sqlx::query!(
-                    r#"
-                    INSERT INTO tier_purchases (
-                        fid,
-                        tier_type,
-                        for_days,
-                        payer,
-                        timestamp,
-                        block_number,
-                        block_hash,
-                        log_index,
-                        tx_index,
-                        tx_hash,
-                        block_timestamp,
-                        chain_id
+        // Handle specific event types
+        match event.r#type {
+            1 => {
+                // EVENT_TYPE_SIGNER
+                if let Some(crate::proto::on_chain_event::Body::SignerEventBody(signer_body)) =
+                    &event.body
+                {
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO signer_events (
+                            fid,
+                            key,
+                            key_type,
+                            event_type,
+                            metadata,
+                            metadata_type,
+                            timestamp,
+                            block_number,
+                            block_hash,
+                            log_index,
+                            tx_index,
+                            tx_hash,
+                            block_timestamp,
+                            chain_id
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        ON CONFLICT (tx_hash, log_index) DO NOTHING
+                        "#,
+                        event.fid as i64,
+                        &signer_body.key,
+                        signer_body.key_type as i16,
+                        signer_body.event_type as i16,
+                        if signer_body.metadata.is_empty() {
+                            None
+                        } else {
+                            Some(&signer_body.metadata[..])
+                        },
+                        Some(signer_body.metadata_type as i16),
+                        ts,
+                        event.block_number as i64,
+                        &event.block_hash,
+                        event.log_index as i32,
+                        event.tx_index as i32,
+                        &event.transaction_hash,
+                        ts,
+                        event.chain_id as i64
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    ON CONFLICT (tx_hash, log_index) DO NOTHING
-                    "#,
-                    event.fid as i64,
-                    tier_body.tier_type as i16,
-                    tier_body.for_days as i64,
-                    &tier_body.payer,
-                    ts,
-                    event.block_number as i64,
-                    &event.block_hash,
-                    event.log_index as i32,
-                    event.tx_index as i32,
-                    &event.transaction_hash,
-                    ts,
-                    event.chain_id as i64
-                )
-                .execute(&self.resources.database.pool)
-                .await?;
-            }
+                    .execute(&self.resources.database.pool)
+                    .await?;
+                }
+            },
+            2 => {
+                // EVENT_TYPE_SIGNER_MIGRATED
+                if let Some(crate::proto::on_chain_event::Body::SignerMigratedEventBody(
+                    migrated_body,
+                )) = &event.body
+                {
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO signer_migrated_events (
+                            fid,
+                            migrated_at,
+                            timestamp,
+                            block_number,
+                            block_hash,
+                            log_index,
+                            tx_index,
+                            tx_hash,
+                            block_timestamp,
+                            chain_id
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        ON CONFLICT (tx_hash, log_index) DO NOTHING
+                        "#,
+                        event.fid as i64,
+                        migrated_body.migrated_at as i64,
+                        ts,
+                        event.block_number as i64,
+                        &event.block_hash,
+                        event.log_index as i32,
+                        event.tx_index as i32,
+                        &event.transaction_hash,
+                        ts,
+                        event.chain_id as i64
+                    )
+                    .execute(&self.resources.database.pool)
+                    .await?;
+                }
+            },
+            3 => {
+                // EVENT_TYPE_ID_REGISTER
+                if let Some(crate::proto::on_chain_event::Body::IdRegisterEventBody(
+                    id_register_body,
+                )) = &event.body
+                {
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO id_register_events (
+                            fid,
+                            to_address,
+                            event_type,
+                            from_address,
+                            recovery_address,
+                            timestamp,
+                            block_number,
+                            block_hash,
+                            log_index,
+                            tx_index,
+                            tx_hash,
+                            block_timestamp,
+                            chain_id
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                        ON CONFLICT (tx_hash, log_index) DO NOTHING
+                        "#,
+                        event.fid as i64,
+                        &id_register_body.to,
+                        id_register_body.event_type as i16,
+                        if id_register_body.from.is_empty() {
+                            None
+                        } else {
+                            Some(&id_register_body.from[..])
+                        },
+                        if id_register_body.recovery_address.is_empty() {
+                            None
+                        } else {
+                            Some(&id_register_body.recovery_address[..])
+                        },
+                        ts,
+                        event.block_number as i64,
+                        &event.block_hash,
+                        event.log_index as i32,
+                        event.tx_index as i32,
+                        &event.transaction_hash,
+                        ts,
+                        event.chain_id as i64
+                    )
+                    .execute(&self.resources.database.pool)
+                    .await?;
+                }
+            },
+            4 => {
+                // EVENT_TYPE_STORAGE_RENT
+                if let Some(crate::proto::on_chain_event::Body::StorageRentEventBody(
+                    storage_body,
+                )) = &event.body
+                {
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO storage_rent_events (
+                            fid,
+                            payer,
+                            units,
+                            expiry,
+                            timestamp,
+                            block_number,
+                            block_hash,
+                            log_index,
+                            tx_index,
+                            tx_hash,
+                            block_timestamp,
+                            chain_id
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        ON CONFLICT (tx_hash, log_index) DO NOTHING
+                        "#,
+                        event.fid as i64,
+                        &storage_body.payer,
+                        storage_body.units as i32,
+                        storage_body.expiry as i32,
+                        ts,
+                        event.block_number as i64,
+                        &event.block_hash,
+                        event.log_index as i32,
+                        event.tx_index as i32,
+                        &event.transaction_hash,
+                        ts,
+                        event.chain_id as i64
+                    )
+                    .execute(&self.resources.database.pool)
+                    .await?;
+                }
+            },
+            5 => {
+                // EVENT_TYPE_TIER_PURCHASE
+                if let Some(crate::proto::on_chain_event::Body::TierPurchaseEventBody(tier_body)) =
+                    &event.body
+                {
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO tier_purchases (
+                            fid,
+                            tier_type,
+                            for_days,
+                            payer,
+                            timestamp,
+                            block_number,
+                            block_hash,
+                            log_index,
+                            tx_index,
+                            tx_hash,
+                            block_timestamp,
+                            chain_id
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        ON CONFLICT (tx_hash, log_index) DO NOTHING
+                        "#,
+                        event.fid as i64,
+                        tier_body.tier_type as i16,
+                        tier_body.for_days as i64,
+                        &tier_body.payer,
+                        ts,
+                        event.block_number as i64,
+                        &event.block_hash,
+                        event.log_index as i32,
+                        event.tx_index as i32,
+                        &event.transaction_hash,
+                        ts,
+                        event.chain_id as i64
+                    )
+                    .execute(&self.resources.database.pool)
+                    .await?;
+                }
+            },
+            _ => {
+                // Unknown event type, already stored in generic onchain_events table
+            },
         }
 
         Ok(())

@@ -4,6 +4,18 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
+## [2025.9.3] - 2025-09-06
+
+### Features
+
+- Add comprehensive onchain events backfill system for all Farcaster event types
+- Create dedicated database tables for signer, signer_migrated, id_register, and storage_rent events
+- Implement hub-based FID discovery for efficient backfill operations
+- Add CLI commands for onchain events backfill with flexible options
+- Integrate onchain events processing into existing backfill worker system
+
+## [2025.9.2] - 2025-09-06
+
 ### Bug Fixes
 
 - Initialize rustls crypto provider to resolve startup panic

@@ -1,5 +1,6 @@
 pub mod bench;
 pub mod fid;
+pub mod onchain_events;
 
 use clap::{ArgMatches, Command};
 use color_eyre::eyre::Result;
@@ -14,6 +15,9 @@ pub fn register_commands(app: Command) -> Command {
         // FID-based backfill commands
         .subcommand(fid::register_commands(Command::new("fid")
             .about("FID-based backfill operations")))
+        // Onchain events backfill commands
+        .subcommand(onchain_events::register_commands(Command::new("onchain-events")
+            .about("Backfill onchain events for Farcaster FIDs")))
         // Benchmark commands
         .subcommand(Command::new("bench")
             .about("Run database performance benchmarks")
@@ -29,6 +33,9 @@ pub fn register_commands(app: Command) -> Command {
 pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()> {
     match matches.subcommand() {
         Some(("fid", submatches)) => fid::handle_command(submatches, config).await,
+        Some(("onchain-events", submatches)) => {
+            onchain_events::handle_command(submatches, config).await
+        },
         Some(("bench", submatches)) => {
             // Get the message count parameter
             let messages = submatches
@@ -62,14 +69,16 @@ pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()>
         // Just for clarity in error messages
         None => {
             println!("Please specify a backfill subcommand. Available command groups:");
-            println!("  fid    - FID-based backfill operations");
-            println!("  bench  - Database benchmark operations");
+            println!("  fid             - FID-based backfill operations");
+            println!("  onchain-events  - Backfill onchain events for Farcaster FIDs");
+            println!("  bench           - Database benchmark operations");
             Ok(())
         },
         Some((cmd, _)) => {
             println!("Unknown command group: {}. Available command groups:", cmd);
-            println!("  fid    - FID-based backfill operations");
-            println!("  bench  - Database benchmark operations");
+            println!("  fid             - FID-based backfill operations");
+            println!("  onchain-events  - Backfill onchain events for Farcaster FIDs");
+            println!("  bench           - Database benchmark operations");
             Ok(())
         },
     }
