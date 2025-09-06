@@ -146,11 +146,11 @@ impl Database {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                
+
                 // Track connection pool size
                 let connections = pool.size() as u64;
                 metrics::set_database_connections_active(connections);
-                
+
                 tracing::trace!("Database pool size: {} connections", connections);
             }
         });
@@ -164,16 +164,16 @@ impl Database {
         let start = std::time::Instant::now();
         let result = f(&self.pool).await;
         let duration = start.elapsed();
-        
+
         metrics::record_database_query_duration(duration);
-        
+
         if result.is_err() {
             tracing::warn!("Database operation '{}' failed after {:?}", operation_name, duration);
             metrics::increment_database_errors();
         } else {
             tracing::trace!("Database operation '{}' completed in {:?}", operation_name, duration);
         }
-        
+
         result
     }
 }

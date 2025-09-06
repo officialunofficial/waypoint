@@ -117,69 +117,81 @@ static METRICS_CLIENT: OnceCell<Option<StatsdClientWrapper>> = OnceCell::new();
 /// Initialize Prometheus metrics endpoint on the specified address
 pub async fn init_prometheus(addr: SocketAddr) -> Result<()> {
     info!("Initializing Prometheus metrics endpoint on {}", addr);
-    
+
     // Set up the PrometheusBuilder with a binding to our address
     // This will handle the /metrics endpoint automatically
-    let builder = PrometheusBuilder::new()
-        .with_http_listener(addr)
-        .add_global_label("service", "waypoint");
-    
+    let builder =
+        PrometheusBuilder::new().with_http_listener(addr).add_global_label("service", "waypoint");
+
     // Install the exporter as the global metrics recorder
     builder
         .install()
         .map_err(|e| color_eyre::eyre::eyre!("Failed to install Prometheus recorder: {}", e))?;
-    
+
     info!("Prometheus metrics endpoint initialized successfully at http://{}/metrics", addr);
-    
+
     // Register common metrics descriptions
     register_prometheus_metrics();
-    
+
     Ok(())
 }
 
 /// Initialize Prometheus with default address (0.0.0.0:9090)
 pub async fn init_prometheus_default() -> Result<()> {
-    let addr: SocketAddr = "0.0.0.0:9090"
-        .parse()
-        .expect("Failed to parse default metrics address");
+    let addr: SocketAddr = "0.0.0.0:9090".parse().expect("Failed to parse default metrics address");
     init_prometheus(addr).await
 }
 
 /// Register Prometheus metric descriptions
 fn register_prometheus_metrics() {
     use metrics::{describe_counter, describe_gauge, describe_histogram};
-    
+
     // Backfill metrics
-    describe_counter!("waypoint_backfill_jobs_processed", "Total number of backfill jobs processed");
+    describe_counter!(
+        "waypoint_backfill_jobs_processed",
+        "Total number of backfill jobs processed"
+    );
     describe_counter!("waypoint_backfill_fids_processed", "Total number of FIDs processed");
     describe_gauge!("waypoint_backfill_jobs_in_queue", "Number of backfill jobs in queue");
     describe_counter!("waypoint_backfill_job_errors", "Total number of backfill job errors");
     describe_gauge!("waypoint_backfill_fids_per_second", "Backfill FIDs processing rate");
-    
+
     // Stream metrics
     describe_counter!("waypoint_stream_events_received", "Total number of stream events received");
-    describe_counter!("waypoint_stream_events_processed", "Total number of stream events processed");
+    describe_counter!(
+        "waypoint_stream_events_processed",
+        "Total number of stream events processed"
+    );
     describe_counter!("waypoint_stream_events_filtered", "Total number of stream events filtered");
-    describe_histogram!("waypoint_stream_processing_time_ms", "Stream event processing time in milliseconds");
-    
+    describe_histogram!(
+        "waypoint_stream_processing_time_ms",
+        "Stream event processing time in milliseconds"
+    );
+
     // Business logic metrics
     describe_counter!("waypoint_events_by_type", "Events processed by type");
     describe_counter!("waypoint_casts_processed", "Cast events processed");
     describe_counter!("waypoint_reactions_processed", "Reaction events processed");
     describe_counter!("waypoint_follows_processed", "Follow/link events processed");
     describe_counter!("waypoint_user_data_processed", "User data events processed");
-    
+
     // Error metrics by type
     describe_counter!("waypoint_errors_total", "Total number of errors by type");
     describe_counter!("waypoint_database_errors", "Database-related errors");
     describe_counter!("waypoint_redis_errors", "Redis-related errors");
     describe_counter!("waypoint_hub_errors", "Hub connection errors");
     describe_counter!("waypoint_processing_errors", "Event processing errors");
-    
+
     // Database metrics
-    describe_gauge!("waypoint_database_connections_active", "Number of active database connections");
-    describe_histogram!("waypoint_database_query_duration_ms", "Database query duration in milliseconds");
-    
+    describe_gauge!(
+        "waypoint_database_connections_active",
+        "Number of active database connections"
+    );
+    describe_histogram!(
+        "waypoint_database_query_duration_ms",
+        "Database query duration in milliseconds"
+    );
+
     // System metrics
     describe_gauge!("waypoint_system_memory_usage_bytes", "System memory usage in bytes");
     describe_gauge!("waypoint_system_cpu_usage_percent", "System CPU usage percentage");

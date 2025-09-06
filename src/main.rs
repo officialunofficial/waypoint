@@ -14,9 +14,10 @@ use waypoint::{config::Config, error, metrics};
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     // Initialize Rustls crypto provider first
-    rustls::crypto::aws_lc_rs::default_provider().install_default()
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
         .map_err(|_| color_eyre::eyre::eyre!("Failed to install default crypto provider"))?;
-    
+
     // Initialize error handling
     error::install_error_handlers()?;
 
