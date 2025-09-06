@@ -49,6 +49,10 @@ error-stack = "0.5.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "json"] }
 
+# Metrics
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
+
 # Configuration
 figment = { version = "0.10.19", features = ["env", "toml"] }
 dotenvy = "0.15.7"

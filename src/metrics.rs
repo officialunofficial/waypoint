@@ -3,10 +3,14 @@ use cadence::{
     BufferedUdpMetricSink, Counted, CountedExt, Gauged, Histogrammed, QueuingMetricSink,
     StatsdClient, Timed,
 };
+use color_eyre::Result;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use once_cell::sync::OnceCell;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
+use tracing::info;
 
 // Improved wrapper for StatsdClient with better error handling
 pub struct StatsdClientWrapper {
@@ -109,6 +113,63 @@ impl StatsdClientWrapper {
 
 // Static client storage
 static METRICS_CLIENT: OnceCell<Option<StatsdClientWrapper>> = OnceCell::new();
+
+/// Initialize Prometheus metrics endpoint on the specified address
+pub async fn init_prometheus(addr: SocketAddr) -> Result<()> {
+    info!("Initializing Prometheus metrics endpoint on {}", addr);
+    
+    // Set up the PrometheusBuilder with a binding to our address
+    // This will handle the /metrics endpoint automatically
+    let builder = PrometheusBuilder::new()
+        .with_http_listener(addr)
+        .add_global_label("service", "waypoint");
+    
+    // Install the exporter as the global metrics recorder
+    builder
+        .install()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to install Prometheus recorder: {}", e))?;
+    
+    info!("Prometheus metrics endpoint initialized successfully at http://{}/metrics", addr);
+    
+    // Register common metrics descriptions
+    register_prometheus_metrics();
+    
+    Ok(())
+}
+
+/// Initialize Prometheus with default address (0.0.0.0:9090)
+pub async fn init_prometheus_default() -> Result<()> {
+    let addr: SocketAddr = "0.0.0.0:9090"
+        .parse()
+        .expect("Failed to parse default metrics address");
+    init_prometheus(addr).await
+}
+
+/// Register Prometheus metric descriptions
+fn register_prometheus_metrics() {
+    use metrics::{describe_counter, describe_gauge, describe_histogram};
+    
+    // Backfill metrics
+    describe_counter!("waypoint_backfill_jobs_processed", "Total number of backfill jobs processed");
+    describe_counter!("waypoint_backfill_fids_processed", "Total number of FIDs processed");
+    describe_gauge!("waypoint_backfill_jobs_in_queue", "Number of backfill jobs in queue");
+    describe_counter!("waypoint_backfill_job_errors", "Total number of backfill job errors");
+    describe_gauge!("waypoint_backfill_fids_per_second", "Backfill FIDs processing rate");
+    
+    // Stream metrics
+    describe_counter!("waypoint_stream_events_received", "Total number of stream events received");
+    describe_counter!("waypoint_stream_events_processed", "Total number of stream events processed");
+    describe_counter!("waypoint_stream_events_filtered", "Total number of stream events filtered");
+    describe_histogram!("waypoint_stream_processing_time_ms", "Stream event processing time in milliseconds");
+    
+    // Database metrics
+    describe_gauge!("waypoint_database_connections_active", "Number of active database connections");
+    describe_histogram!("waypoint_database_query_duration_ms", "Database query duration in milliseconds");
+    
+    // System metrics
+    describe_gauge!("waypoint_system_memory_usage_bytes", "System memory usage in bytes");
+    describe_gauge!("waypoint_system_cpu_usage_percent", "System CPU usage percentage");
+}
 
 /// Initialize and set up metrics
 pub fn setup_metrics(config: &Config) {

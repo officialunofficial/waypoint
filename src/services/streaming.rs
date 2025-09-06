@@ -10,7 +10,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use prost::Message as ProstMessage;
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::{Duration, Instant}};
 use tokio::{
     sync::{Mutex, RwLock, oneshot},
     task::JoinHandle,
@@ -796,13 +796,19 @@ impl Consumer {
             match HubEvent::decode(entry.data.as_slice()) {
                 Ok(event) => {
                     trace!("Decoded event {} (type={})", entry.id, event.r#type);
+                    crate::metrics::increment_events_received();
+                    
+                    let start_time = Instant::now();
                     match self.processors.process_event(event).await {
                         Ok(_) => {
                             trace!("Processed event {}", entry.id);
+                            crate::metrics::increment_events_processed();
+                            crate::metrics::record_event_processing_time(start_time.elapsed());
                             successful_ids.push(entry.id)
                         },
                         Err(e) => {
                             error!("Error processing event {}: {}", entry.id, e);
+                            crate::metrics::record_event_processing_time(start_time.elapsed());
                             successful_ids.push(entry.id); // Ack anyway to avoid reprocessing
                         },
                     }

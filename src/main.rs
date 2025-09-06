@@ -53,6 +53,12 @@ async fn main() -> color_eyre::Result<()> {
     let format = fmt::format().with_thread_ids(true).with_target(false);
     tracing_subscriber::registry().with(env_filter).with(fmt::layer().event_format(format)).init();
 
+    // Initialize Prometheus metrics endpoint
+    if let Err(e) = metrics::init_prometheus_default().await {
+        tracing::warn!("Failed to initialize Prometheus metrics: {}", e);
+        // Continue running even if metrics fail to initialize
+    }
+
     // Define base CLI structure
     let base_app = Command::new("Waypoint")
         .version(env!("CARGO_PKG_VERSION"))
