@@ -2,6 +2,7 @@ use crate::{
     core::{normalize::NormalizedEmbed, util::from_farcaster_time},
     database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
+    metrics,
     processor::consumer::EventProcessor,
     proto::{
         HubEvent, Message, OnChainEvent, UserNameProof,
@@ -46,6 +47,7 @@ impl DatabaseProcessor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(data) = &msg.data {
             if let Some(CastAddBody(cast_body)) = &data.body {
+                metrics::increment_casts_processed();
                 let parent_url = match &cast_body.parent {
                     Some(Parent::ParentUrl(url)) => Some(url.as_str()),
                     _ => None,
@@ -147,6 +149,7 @@ impl DatabaseProcessor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(data) = &msg.data {
             if let Some(ReactionBody(reaction)) = &data.body {
+                metrics::increment_reactions_processed();
                 let (target_cast_hash, target_url) = match &reaction.target {
                     Some(ReactionTarget::TargetCastId(cast_id)) => (Some(&cast_id.hash), None),
                     Some(ReactionTarget::TargetUrl(url)) => (None, Some(url.as_str())),
@@ -259,6 +262,7 @@ impl DatabaseProcessor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(data) = &msg.data {
             if let Some(LinkBody(link)) = &data.body {
+                metrics::increment_follows_processed();
                 let target_fid = match link.target {
                     Some(LinkTarget::TargetFid(fid)) => fid,
                     _ => return Ok(()),
@@ -360,6 +364,7 @@ impl DatabaseProcessor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(data) = &msg.data {
             if let Some(UserDataBody(user_data)) = &data.body {
+                metrics::increment_user_data_processed();
                 let ts = Self::convert_timestamp(data.timestamp);
 
                 sqlx::query!(

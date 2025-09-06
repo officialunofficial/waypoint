@@ -1,5 +1,6 @@
 use crate::{
     config::RedisConfig,
+    metrics,
     redis::{error::Error, types::PendingItem},
 };
 use fred::prelude::*;
@@ -169,7 +170,10 @@ impl Redis {
     ) -> Result<crate::redis::types::StreamMetrics, Error> {
         use crate::redis::types::StreamMetrics;
 
-        let len: u64 = self.pool.xlen(stream_key).await.map_err(Error::RedisError)?;
+        let len: u64 = self.pool.xlen(stream_key).await.map_err(|e| {
+            metrics::increment_redis_errors();
+            Error::RedisError(e)
+        })?;
 
         let metrics = StreamMetrics { processed_count: len, ..StreamMetrics::default() };
 
@@ -179,7 +183,10 @@ impl Redis {
     pub async fn check_connection(&self) -> Result<bool, Error> {
         match self.pool.ping::<String>().await {
             Ok(response) => Ok(response == "PONG"),
-            Err(e) => Err(Error::RedisError(e)),
+            Err(e) => {
+                metrics::increment_redis_errors();
+                Err(Error::RedisError(e))
+            },
         }
     }
 
