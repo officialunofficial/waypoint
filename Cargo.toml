@@ -53,6 +53,9 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "jso
 metrics = "0.24"
 metrics-exporter-prometheus = "0.17"
 
+# TLS/Crypto
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+
 # Configuration
 figment = { version = "0.10.19", features = ["env", "toml"] }
 dotenvy = "0.15.7"
