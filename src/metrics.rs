@@ -268,7 +268,7 @@ fn create_statsd_client(
 }
 
 // System metrics monitoring loop
-async fn monitor_system_metrics(client: StatsdClientWrapper) {
+async fn monitor_system_metrics(_client: StatsdClientWrapper) {
     let interval = Duration::from_secs(15); // Update every 15 seconds
 
     loop {
@@ -284,13 +284,13 @@ async fn monitor_system_metrics(client: StatsdClientWrapper) {
             })
             .unwrap_or(0);
 
-        // Set the memory usage metric
-        client.gauge("system.memory_usage", mem_usage as f64);
+        // Set the memory usage metric using our unified function
+        set_memory_usage(mem_usage);
 
         // Simple CPU usage approximation (not accurate, but gives a relative value)
         // In a real system, use a proper CPU usage library
         let cpu_usage = 0.0; // Placeholder - would be implemented with a proper library
-        client.gauge("system.cpu_usage", cpu_usage);
+        set_cpu_usage(cpu_usage);
 
         // Sleep until next update
         tokio::time::sleep(interval).await;
@@ -304,71 +304,123 @@ fn get_client() -> Option<&'static StatsdClientWrapper> {
 
 // Backfill metrics
 pub fn increment_jobs_processed() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("backfill.jobs_processed");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_backfill_jobs_processed").increment(1);
 }
 
 pub fn increment_fids_processed(count: u64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.count("backfill.fids_processed", count);
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_backfill_fids_processed").increment(count);
 }
 
 pub fn set_jobs_in_queue(count: u64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("backfill.jobs_in_queue", count as f64);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_backfill_jobs_in_queue").set(count as f64);
 }
 
 pub fn increment_job_errors() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("backfill.job_errors");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_backfill_job_errors").increment(1);
 }
 
 pub fn set_backfill_fids_per_second(rate: f64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("backfill.fids_per_second", rate);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_backfill_fids_per_second").set(rate);
 }
 
 // Stream metrics
 pub fn increment_events_received() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("stream.events_received");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_stream_events_received").increment(1);
 }
 
 pub fn increment_events_processed() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("stream.events_processed");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_stream_events_processed").increment(1);
 }
 
 pub fn increment_events_filtered() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("stream.events_filtered");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_stream_events_filtered").increment(1);
 }
 
 pub fn record_event_processing_time(duration: Duration) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.histogram("stream.processing_time", duration.as_millis() as u64);
     }
+    // Prometheus metrics
+    metrics::histogram!("waypoint_stream_processing_time_ms").record(duration.as_millis() as f64);
+}
+
+// Database metrics
+pub fn set_database_connections_active(count: u64) {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.gauge("database.connections_active", count as f64);
+    }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_database_connections_active").set(count as f64);
+}
+
+pub fn record_database_query_duration(duration: Duration) {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.histogram("database.query_duration", duration.as_millis() as u64);
+    }
+    // Prometheus metrics
+    metrics::histogram!("waypoint_database_query_duration_ms").record(duration.as_millis() as f64);
 }
 
 // System metrics
 pub fn set_memory_usage(bytes: u64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("system.memory_usage", bytes as f64);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_system_memory_usage_bytes").set(bytes as f64);
 }
 
 pub fn set_cpu_usage(percent: f64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("system.cpu_usage", percent);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_system_cpu_usage_percent").set(percent);
 }
 
 // Timer utility for measuring durations
