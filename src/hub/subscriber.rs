@@ -135,11 +135,7 @@ impl HubSubscriber {
             hub,
             redis,
             redis_stream: Arc::new(redis_stream),
-            stream_key: Arc::new(crate::types::get_stream_key(
-                &hub_host,
-                "",
-                if shard_key.is_empty() { None } else { Some(&shard_key) },
-            )),
+            stream_key: Arc::new(crate::types::get_stream_key(&hub_host, "")),
             redis_key: Arc::new(format!("{}:{}", hub_host, shard_key)),
             event_types: Arc::new(event_types),
             shard_index: opts.shard_index,
@@ -246,11 +242,11 @@ impl HubSubscriber {
         self.wait_for_ready().await?;
         info!("Connected to hub");
 
-        let last_id = self.get_last_event_id().await?;
+        let mut last_id = self.get_last_event_id().await?;
         if last_id > Some(0) {
-            trace!("Found last hub event ID: {}", last_id.unwrap());
+            info!("Resuming from last hub event ID: {}", last_id.unwrap());
         } else {
-            trace!("No last hub event ID found, starting from beginning");
+            info!("No last hub event ID found, starting from beginning");
         }
 
         let mut stream = self.connect_stream(last_id).await?;
@@ -258,6 +254,12 @@ impl HubSubscriber {
 
         // Use atomic counter for consistent error tracking
         let max_consecutive_errors = 3;
+
+        // Track events since last checkpoint for periodic saves
+        let mut events_since_checkpoint = 0u32;
+        const CHECKPOINT_INTERVAL: u32 = 100; // Save checkpoint every 100 events
+        let mut last_checkpoint_time = Instant::now();
+        const CHECKPOINT_TIME_INTERVAL: Duration = Duration::from_secs(10); // Or every 10 seconds
 
         while !*self.shutdown.read().await {
             match stream.next().await {
@@ -274,9 +276,34 @@ impl HubSubscriber {
                     // Update connection monitoring timestamp
                     *self.last_successful_flush.write().await = Some(Instant::now());
 
+                    // Track the current event ID for checkpointing
+                    let current_event_id = event.id;
+
                     let bytes = event.encode_to_vec();
                     batch_state.current_bytes += bytes.len();
                     batch_state.events.push((event, bytes));
+
+                    events_since_checkpoint += 1;
+
+                    // Periodic checkpoint: save progress without flushing the batch
+                    let time_for_checkpoint =
+                        last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL;
+                    if events_since_checkpoint >= CHECKPOINT_INTERVAL || time_for_checkpoint {
+                        if let Err(e) = self
+                            .redis
+                            .set_last_processed_event(&self.redis_key, current_event_id)
+                            .await
+                        {
+                            error!(
+                                "Failed to save checkpoint at event {}: {}",
+                                current_event_id, e
+                            );
+                        } else {
+                            trace!("Checkpoint saved at event ID: {}", current_event_id);
+                            events_since_checkpoint = 0;
+                            last_checkpoint_time = Instant::now();
+                        }
+                    }
 
                     if self.should_flush(&batch_state).await {
                         match self.flush_batch_with_retry(&mut batch_state).await {
@@ -292,6 +319,11 @@ impl HubSubscriber {
                                         .as_secs(),
                                     std::sync::atomic::Ordering::SeqCst,
                                 );
+
+                                // Reset checkpoint counters after successful flush
+                                // (The batch flush already saves the last event ID)
+                                events_since_checkpoint = 0;
+                                last_checkpoint_time = Instant::now();
                             },
                             Err(e) => {
                                 error!("Error flushing batch: {:?}", e);
@@ -319,6 +351,15 @@ impl HubSubscriber {
                                         backoff_ms
                                     );
                                     tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                                    // Fetch the latest checkpoint before reconnecting
+                                    last_id = self.get_last_event_id().await.unwrap_or(last_id);
+                                    if last_id.is_some() {
+                                        info!(
+                                            "Reconnecting from checkpoint event ID: {}",
+                                            last_id.unwrap()
+                                        );
+                                    }
 
                                     // Try to reconnect - with specific error handling for connection errors
                                     match self.connect_stream(last_id).await {
@@ -415,6 +456,15 @@ impl HubSubscriber {
                     info!("Waiting for {:?}ms before reconnection attempt", backoff_ms);
                     tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
 
+                    // Fetch the latest checkpoint before reconnecting
+                    last_id = self.get_last_event_id().await.unwrap_or(last_id);
+                    if last_id.is_some() {
+                        info!(
+                            "Reconnecting after stream closure from checkpoint event ID: {}",
+                            last_id.unwrap()
+                        );
+                    }
+
                     match self.connect_stream(last_id).await {
                         Ok(new_stream) => {
                             stream = new_stream;
@@ -463,6 +513,15 @@ impl HubSubscriber {
                 );
 
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                // Fetch the latest checkpoint before reconnecting
+                last_id = self.get_last_event_id().await.unwrap_or(last_id);
+                if last_id.is_some() {
+                    info!(
+                        "Reconnecting after timeout from checkpoint event ID: {}",
+                        last_id.unwrap()
+                    );
+                }
 
                 match self.connect_stream(last_id).await {
                     Ok(new_stream) => {
@@ -531,6 +590,7 @@ impl HubSubscriber {
             let mut interval = tokio::time::interval(cleanup_interval);
             loop {
                 interval.tick().await;
+                // Keep events from the last 24 hours
                 if let Err(e) = stream.trim(&stream_key, Duration::from_secs(24 * 60 * 60)).await {
                     error!("Error trimming events: {}", e);
                 }
@@ -898,8 +958,10 @@ impl HubSubscriber {
             let parts: Vec<&str> = self.stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
             let _shard_key = if parts.len() >= 5 { Some(parts[3]) } else { None };
-            // Always use "evt" as the shard key for consistency with consumer
-            let stream_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
+
+            // Generate stream key
+            let stream_key = crate::types::get_stream_key(hub_host, event_type);
+
             let redis_stream = self.redis_stream.clone();
             let stream_maxlen = self.stream_maxlen;
 

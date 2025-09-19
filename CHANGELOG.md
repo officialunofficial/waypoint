@@ -4,6 +4,74 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
+## [2025.9.3] - 2025-09-06
+
+### Features
+
+- Add comprehensive onchain events backfill system for all Farcaster event types
+- Create dedicated database tables for signer, signer_migrated, id_register, and storage_rent events
+- Implement hub-based FID discovery for efficient backfill operations
+- Add CLI commands for onchain events backfill with flexible options
+- Integrate onchain events processing into existing backfill worker system
+
+## [2025.9.2] - 2025-09-06
+
+### Bug Fixes
+
+- Initialize rustls crypto provider to resolve startup panic
+
+### Features
+
+- Complete Prometheus metrics infrastructure
+- Integrate comprehensive metrics throughout application
+
+## [2025.9.1] - 2025-09-04
+
+### Bug Fixes
+
+- Remove suffix on stream keys
+- Use main branch
+
+### Dependencies
+
+- Bump tracing-subscriber from 0.3.19 to 0.3.20 (#52)
+
+### Features
+
+- Migrate Redis client from bb8-redis to fred with time-based trimming (#51)
+- Snapchain version action
+- Add Prometheus metrics integration
+
+### Miscellaneous Tasks
+
+- Fmt
+- Fmt
+- Update Snapchain to v0.6.0
+- Update Snapchain to v0.7.0
+
+### Refactor
+
+- Simplify get_stream_key to use 2 args and remove debug logs
+
+## [2025.8.3] - 2025-08-20
+
+### Bug Fixes
+
+- Resume from checkpoint on restart instead of reprocessing from beginning
+
+### Documentation
+
+- Delete CAST_RETRY_SYSTEM.md
+- Remove root parent hash docs
+
+### Miscellaneous Tasks
+
+- Cargo lock
+- Upgrade dependencies and implement error-stack (#50)
+- Upgrade snapchain protos to v0.5.0
+
+## [2025.7.3] - 2025-07-18
+
 ### Bug Fixes
 
 - Resolve backfill job queue exhaustion bug (#37)
@@ -42,6 +110,7 @@ All notable changes to Waypoint will be documented in this file.
 - Cargo.lock
 - Changelog
 - Version bump to 2025.7.3 and update sqlx queries
+- Update changelog for v2025.7.3
 
 ### Refactor
 

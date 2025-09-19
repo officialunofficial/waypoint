@@ -3,10 +3,14 @@ use cadence::{
     BufferedUdpMetricSink, Counted, CountedExt, Gauged, Histogrammed, QueuingMetricSink,
     StatsdClient, Timed,
 };
+use color_eyre::Result;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use once_cell::sync::OnceCell;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
+use tracing::info;
 
 // Improved wrapper for StatsdClient with better error handling
 pub struct StatsdClientWrapper {
@@ -110,6 +114,89 @@ impl StatsdClientWrapper {
 // Static client storage
 static METRICS_CLIENT: OnceCell<Option<StatsdClientWrapper>> = OnceCell::new();
 
+/// Initialize Prometheus metrics endpoint on the specified address
+pub async fn init_prometheus(addr: SocketAddr) -> Result<()> {
+    info!("Initializing Prometheus metrics endpoint on {}", addr);
+
+    // Set up the PrometheusBuilder with a binding to our address
+    // This will handle the /metrics endpoint automatically
+    let builder =
+        PrometheusBuilder::new().with_http_listener(addr).add_global_label("service", "waypoint");
+
+    // Install the exporter as the global metrics recorder
+    builder
+        .install()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to install Prometheus recorder: {}", e))?;
+
+    info!("Prometheus metrics endpoint initialized successfully at http://{}/metrics", addr);
+
+    // Register common metrics descriptions
+    register_prometheus_metrics();
+
+    Ok(())
+}
+
+/// Initialize Prometheus with default address (0.0.0.0:9090)
+pub async fn init_prometheus_default() -> Result<()> {
+    let addr: SocketAddr = "0.0.0.0:9090".parse().expect("Failed to parse default metrics address");
+    init_prometheus(addr).await
+}
+
+/// Register Prometheus metric descriptions
+fn register_prometheus_metrics() {
+    use metrics::{describe_counter, describe_gauge, describe_histogram};
+
+    // Backfill metrics
+    describe_counter!(
+        "waypoint_backfill_jobs_processed",
+        "Total number of backfill jobs processed"
+    );
+    describe_counter!("waypoint_backfill_fids_processed", "Total number of FIDs processed");
+    describe_gauge!("waypoint_backfill_jobs_in_queue", "Number of backfill jobs in queue");
+    describe_counter!("waypoint_backfill_job_errors", "Total number of backfill job errors");
+    describe_gauge!("waypoint_backfill_fids_per_second", "Backfill FIDs processing rate");
+
+    // Stream metrics
+    describe_counter!("waypoint_stream_events_received", "Total number of stream events received");
+    describe_counter!(
+        "waypoint_stream_events_processed",
+        "Total number of stream events processed"
+    );
+    describe_counter!("waypoint_stream_events_filtered", "Total number of stream events filtered");
+    describe_histogram!(
+        "waypoint_stream_processing_time_ms",
+        "Stream event processing time in milliseconds"
+    );
+
+    // Business logic metrics
+    describe_counter!("waypoint_events_by_type", "Events processed by type");
+    describe_counter!("waypoint_casts_processed", "Cast events processed");
+    describe_counter!("waypoint_reactions_processed", "Reaction events processed");
+    describe_counter!("waypoint_follows_processed", "Follow/link events processed");
+    describe_counter!("waypoint_user_data_processed", "User data events processed");
+
+    // Error metrics by type
+    describe_counter!("waypoint_errors_total", "Total number of errors by type");
+    describe_counter!("waypoint_database_errors", "Database-related errors");
+    describe_counter!("waypoint_redis_errors", "Redis-related errors");
+    describe_counter!("waypoint_hub_errors", "Hub connection errors");
+    describe_counter!("waypoint_processing_errors", "Event processing errors");
+
+    // Database metrics
+    describe_gauge!(
+        "waypoint_database_connections_active",
+        "Number of active database connections"
+    );
+    describe_histogram!(
+        "waypoint_database_query_duration_ms",
+        "Database query duration in milliseconds"
+    );
+
+    // System metrics
+    describe_gauge!("waypoint_system_memory_usage_bytes", "System memory usage in bytes");
+    describe_gauge!("waypoint_system_cpu_usage_percent", "System CPU usage percentage");
+}
+
 /// Initialize and set up metrics
 pub fn setup_metrics(config: &Config) {
     METRICS_CLIENT.get_or_init(|| {
@@ -207,7 +294,7 @@ fn create_statsd_client(
 }
 
 // System metrics monitoring loop
-async fn monitor_system_metrics(client: StatsdClientWrapper) {
+async fn monitor_system_metrics(_client: StatsdClientWrapper) {
     let interval = Duration::from_secs(15); // Update every 15 seconds
 
     loop {
@@ -223,13 +310,13 @@ async fn monitor_system_metrics(client: StatsdClientWrapper) {
             })
             .unwrap_or(0);
 
-        // Set the memory usage metric
-        client.gauge("system.memory_usage", mem_usage as f64);
+        // Set the memory usage metric using our unified function
+        set_memory_usage(mem_usage);
 
         // Simple CPU usage approximation (not accurate, but gives a relative value)
         // In a real system, use a proper CPU usage library
         let cpu_usage = 0.0; // Placeholder - would be implemented with a proper library
-        client.gauge("system.cpu_usage", cpu_usage);
+        set_cpu_usage(cpu_usage);
 
         // Sleep until next update
         tokio::time::sleep(interval).await;
@@ -243,71 +330,205 @@ fn get_client() -> Option<&'static StatsdClientWrapper> {
 
 // Backfill metrics
 pub fn increment_jobs_processed() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("backfill.jobs_processed");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_backfill_jobs_processed").increment(1);
 }
 
 pub fn increment_fids_processed(count: u64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.count("backfill.fids_processed", count);
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_backfill_fids_processed").increment(count);
 }
 
 pub fn set_jobs_in_queue(count: u64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("backfill.jobs_in_queue", count as f64);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_backfill_jobs_in_queue").set(count as f64);
 }
 
 pub fn increment_job_errors() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("backfill.job_errors");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_backfill_job_errors").increment(1);
 }
 
 pub fn set_backfill_fids_per_second(rate: f64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("backfill.fids_per_second", rate);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_backfill_fids_per_second").set(rate);
 }
 
 // Stream metrics
 pub fn increment_events_received() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("stream.events_received");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_stream_events_received").increment(1);
 }
 
 pub fn increment_events_processed() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("stream.events_processed");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_stream_events_processed").increment(1);
 }
 
 pub fn increment_events_filtered() {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.incr("stream.events_filtered");
     }
+    // Prometheus metrics
+    metrics::counter!("waypoint_stream_events_filtered").increment(1);
 }
 
 pub fn record_event_processing_time(duration: Duration) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.histogram("stream.processing_time", duration.as_millis() as u64);
     }
+    // Prometheus metrics
+    metrics::histogram!("waypoint_stream_processing_time_ms").record(duration.as_millis() as f64);
+}
+
+// Database metrics
+pub fn set_database_connections_active(count: u64) {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.gauge("database.connections_active", count as f64);
+    }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_database_connections_active").set(count as f64);
+}
+
+pub fn record_database_query_duration(duration: Duration) {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.histogram("database.query_duration", duration.as_millis() as u64);
+    }
+    // Prometheus metrics
+    metrics::histogram!("waypoint_database_query_duration_ms").record(duration.as_millis() as f64);
 }
 
 // System metrics
 pub fn set_memory_usage(bytes: u64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("system.memory_usage", bytes as f64);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_system_memory_usage_bytes").set(bytes as f64);
 }
 
 pub fn set_cpu_usage(percent: f64) {
+    // StatsD metrics
     if let Some(client) = get_client() {
         client.gauge("system.cpu_usage", percent);
     }
+    // Prometheus metrics
+    metrics::gauge!("waypoint_system_cpu_usage_percent").set(percent);
+}
+
+// Error tracking metrics
+pub fn increment_database_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.database");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_database_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "database").increment(1);
+}
+
+pub fn increment_redis_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.redis");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_redis_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "redis").increment(1);
+}
+
+pub fn increment_hub_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.hub");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_hub_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "hub").increment(1);
+}
+
+pub fn increment_processing_errors() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("errors.processing");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_processing_errors").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "processing").increment(1);
+}
+
+// Business logic metrics
+pub fn increment_casts_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.casts_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_casts_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "cast").increment(1);
+}
+
+pub fn increment_reactions_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.reactions_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_reactions_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "reaction").increment(1);
+}
+
+pub fn increment_follows_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.follows_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_follows_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "follow").increment(1);
+}
+
+pub fn increment_user_data_processed() {
+    // StatsD metrics
+    if let Some(client) = get_client() {
+        client.incr("events.user_data_processed");
+    }
+    // Prometheus metrics
+    metrics::counter!("waypoint_user_data_processed").increment(1);
+    metrics::counter!("waypoint_events_by_type", "type" => "user_data").increment(1);
 }
 
 // Timer utility for measuring durations

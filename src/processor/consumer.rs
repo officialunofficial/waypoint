@@ -39,14 +39,12 @@ impl Consumer {
     /// * `stream` - Redis stream for consuming events
     /// * `hub_host` - Hostname of the Hub server
     /// * `shard_key` - Optional shard key for partitioning (empty string means no sharding)
-    pub fn new(stream: Arc<RedisStream>, hub_host: String, shard_key: String) -> Self {
+    pub fn new(stream: Arc<RedisStream>, hub_host: String, _shard_key: String) -> Self {
         // Use the shared stream key generation function with empty event_type
         // since this is just the base key - event types will be added later
-        let shard = if shard_key.is_empty() { None } else { Some(shard_key.as_str()) };
-
         Self {
             stream,
-            base_stream_key: crate::types::get_stream_key(&hub_host, "", shard),
+            base_stream_key: crate::types::get_stream_key(&hub_host, ""),
             processors: Vec::new(),
             shutdown: Arc::new(RwLock::new(false)),
             stream_tasks: Vec::new(),
@@ -86,20 +84,15 @@ impl Consumer {
             } else {
                 "localhost"
             };
-            // Use the same stream key format as in the subscriber: hub:host:evt:msg:evt:type
-            let stream_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
+            // Use the same stream key format as in the subscriber
+            let stream_key = crate::types::get_stream_key(hub_host, event_type);
             let group_name = format!("{}:{}", BASE_GROUP_NAME, group_suffix);
 
             // Immediately start consumer rebalancing to claim pending messages from idle consumers
             // This ensures we recover any messages that were in process during a previous shutdown
-            let consumer_id = crate::redis::stream::RedisStream::get_stable_consumer_id();
-            self.stream
-                .start_consumer_rebalancing(
-                    stream_key.clone(),
-                    group_name.clone(),
-                    consumer_id.clone(),
-                    Duration::from_secs(30), // Regular rebalance every 30 seconds
-                )
+            let _consumer_id = crate::redis::stream::RedisStream::get_stable_consumer_id();
+            let _ = self.stream
+                .start_consumer_rebalancing(Duration::from_secs(30)) // Regular rebalance every 30 seconds
                 .await;
 
             // Launch multiple parallel consumers for this stream type
@@ -146,15 +139,18 @@ impl Consumer {
             // Extract hub_host for the cleanup key
             let parts: Vec<&str> = self.base_stream_key.split(':').collect();
             let hub_host = if parts.len() >= 2 { parts[1] } else { "localhost" };
-            let cleanup_key = crate::types::get_stream_key(hub_host, event_type, Some("evt"));
-            let cleanup_threshold = EVENT_DELETION_THRESHOLD;
+            let cleanup_key = crate::types::get_stream_key(hub_host, event_type);
+            let _cleanup_threshold = EVENT_DELETION_THRESHOLD;
             let cleanup_shutdown = Arc::clone(&self.shutdown);
 
             tokio::spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(60));
                 while !*cleanup_shutdown.read().await {
                     interval.tick().await;
-                    if let Err(e) = cleanup_stream.trim(&cleanup_key, cleanup_threshold).await {
+                    // Keep events from the last 24 hours
+                    if let Err(e) =
+                        cleanup_stream.trim(&cleanup_key, Duration::from_secs(24 * 60 * 60)).await
+                    {
                         error!("Error clearing old events for {}: {}", cleanup_key, e);
                     }
                 }

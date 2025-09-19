@@ -86,6 +86,22 @@ pub enum TierType {
     Pro = 1,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SignerEventType {
+    None = 0,
+    Add = 1,
+    Remove = 2,
+    AdminReset = 3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IdRegisterEventType {
+    None = 0,
+    Register = 1,
+    Transfer = 2,
+    ChangeRecovery = 3,
+}
+
 // Main Message struct for the database
 #[derive(Debug)]
 pub struct Message {
@@ -147,6 +163,79 @@ pub struct TierPurchase {
     pub tier_type: TierType,
     pub for_days: u64,
     pub payer: Vec<u8>,
+    pub timestamp: DateTime<Utc>,
+    pub block_number: u64,
+    pub block_hash: Vec<u8>,
+    pub log_index: u32,
+    pub tx_index: u32,
+    pub tx_hash: Vec<u8>,
+    pub block_timestamp: DateTime<Utc>,
+    pub chain_id: u64,
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug)]
+pub struct SignerEvent {
+    pub id: Uuid,
+    pub fid: Fid,
+    pub key: Vec<u8>,
+    pub key_type: u32,
+    pub event_type: SignerEventType,
+    pub metadata: Option<Vec<u8>>,
+    pub metadata_type: Option<u32>,
+    pub timestamp: DateTime<Utc>,
+    pub block_number: u64,
+    pub block_hash: Vec<u8>,
+    pub log_index: u32,
+    pub tx_index: u32,
+    pub tx_hash: Vec<u8>,
+    pub block_timestamp: DateTime<Utc>,
+    pub chain_id: u64,
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug)]
+pub struct SignerMigratedEvent {
+    pub id: Uuid,
+    pub fid: Fid,
+    pub migrated_at: u64,
+    pub timestamp: DateTime<Utc>,
+    pub block_number: u64,
+    pub block_hash: Vec<u8>,
+    pub log_index: u32,
+    pub tx_index: u32,
+    pub tx_hash: Vec<u8>,
+    pub block_timestamp: DateTime<Utc>,
+    pub chain_id: u64,
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug)]
+pub struct IdRegisterEvent {
+    pub id: Uuid,
+    pub fid: Fid,
+    pub to_address: Vec<u8>,
+    pub event_type: IdRegisterEventType,
+    pub from_address: Option<Vec<u8>>,
+    pub recovery_address: Option<Vec<u8>>,
+    pub timestamp: DateTime<Utc>,
+    pub block_number: u64,
+    pub block_hash: Vec<u8>,
+    pub log_index: u32,
+    pub tx_index: u32,
+    pub tx_hash: Vec<u8>,
+    pub block_timestamp: DateTime<Utc>,
+    pub chain_id: u64,
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug)]
+pub struct StorageRentEvent {
+    pub id: Uuid,
+    pub fid: Fid,
+    pub payer: Vec<u8>,
+    pub units: u32,
+    pub expiry: u32,
     pub timestamp: DateTime<Utc>,
     pub block_number: u64,
     pub block_hash: Vec<u8>,

@@ -37,10 +37,10 @@ impl PostgresDatabaseClient {
             MessageType::Verification => "verifications",
             MessageType::UserData => "user_data",
             MessageType::UsernameProof => "username_proofs",
-            MessageType::OnchainSigner => "onchain_events",
-            MessageType::OnchainSignerMigrated => "onchain_events",
-            MessageType::OnchainIdRegister => "onchain_events",
-            MessageType::OnchainStorageRent => "onchain_events",
+            MessageType::OnchainSigner => "signer_events",
+            MessageType::OnchainSignerMigrated => "signer_migrated_events",
+            MessageType::OnchainIdRegister => "id_register_events",
+            MessageType::OnchainStorageRent => "storage_rent_events",
             MessageType::OnchainTierPurchase => "tier_purchases",
         }
     }

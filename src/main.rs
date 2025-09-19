@@ -13,6 +13,11 @@ use waypoint::{config::Config, error, metrics};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
+    // Initialize Rustls crypto provider first
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| color_eyre::eyre::eyre!("Failed to install default crypto provider"))?;
+
     // Initialize error handling
     error::install_error_handlers()?;
 
@@ -37,8 +42,9 @@ async fn main() -> color_eyre::Result<()> {
     // Initialize metrics
     metrics::setup_metrics(&config);
 
-    // Apply noisy crates filter
-    let noisy_crates = "h2=warn,tokio_util=warn,mio=warn,hyper=warn,rustls=warn,tonic=info";
+    // Apply noisy crates filter including fred
+    let noisy_crates =
+        "h2=warn,tokio_util=warn,mio=warn,hyper=warn,rustls=warn,tonic=info,fred=info";
     let filter_string = format!("{},{}", env_filter, noisy_crates);
     env_filter = EnvFilter::try_new(&filter_string).unwrap_or(env_filter);
 
@@ -51,6 +57,12 @@ async fn main() -> color_eyre::Result<()> {
     // Initialize the subscriber
     let format = fmt::format().with_thread_ids(true).with_target(false);
     tracing_subscriber::registry().with(env_filter).with(fmt::layer().event_format(format)).init();
+
+    // Initialize Prometheus metrics endpoint
+    if let Err(e) = metrics::init_prometheus_default().await {
+        tracing::warn!("Failed to initialize Prometheus metrics: {}", e);
+        // Continue running even if metrics fail to initialize
+    }
 
     // Define base CLI structure
     let base_app = Command::new("Waypoint")

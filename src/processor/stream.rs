@@ -65,7 +65,7 @@ impl StreamProcessor {
             .reserve(
                 &self.stream_key,
                 &self.group_name,
-                self.max_events_per_fetch,
+                self.max_events_per_fetch as usize,
                 Some(&self.consumer_id),
             )
             .await
@@ -193,54 +193,42 @@ impl StreamProcessor {
         &self,
         consumer_id: &str,
     ) -> Result<u64, crate::redis::error::Error> {
-        // Get a Redis connection the proper way
-        let mut conn = match self.stream.get_connection().await {
-            Ok(conn) => conn,
-            Err(e) => return Err(e),
-        };
+        // Get pending messages for our specific consumer using the Redis client
+        // Note: We use a very short idle time since we're looking for our own messages
+        let pending_items = self
+            .stream
+            .redis
+            .xpending(
+                &self.stream_key,
+                &self.group_name,
+                Duration::from_millis(1), // Minimal idle time
+                self.max_events_per_fetch,
+            )
+            .await?;
 
-        // Get pending messages for our specific consumer
-        type PendingResult = Vec<(String, String, u64, Vec<(String, u64)>)>;
+        if !pending_items.is_empty() {
+            // Get just the message IDs
+            let msg_ids: Vec<String> = pending_items.iter().map(|item| item.id.clone()).collect();
 
-        let pending_result: Result<PendingResult, bb8_redis::redis::RedisError> =
-            bb8_redis::redis::cmd("XPENDING")
-                .arg(&self.stream_key)
-                .arg(&self.group_name)
-                .arg("-")  // start ID
-                .arg("+")  // end ID
-                .arg(self.max_events_per_fetch)   // count
-                .arg(consumer_id)  // our consumer ID
-                .query_async(&mut *conn)
-                .await;
+            // Claim and process these messages
+            let entries = self
+                .stream
+                .claim_stale(
+                    &self.stream_key,
+                    &self.group_name,
+                    Duration::from_secs(0), // No idle time requirement, these are our messages
+                    msg_ids.len(),
+                    Some(consumer_id), // Use our specific consumer ID
+                )
+                .await?;
 
-        match pending_result {
-            Ok(pending_msgs) if !pending_msgs.is_empty() => {
-                // Get just the message IDs
-                let msg_ids: Vec<String> = pending_msgs.iter().map(|(id, ..)| id.clone()).collect();
+            if !entries.is_empty() {
+                self.process_entries(entries).await?;
+            }
 
-                // Process these messages
-                let entries = self
-                    .stream
-                    .claim_stale(
-                        &self.stream_key,
-                        &self.group_name,
-                        Duration::from_secs(0), // No idle time requirement, these are our messages
-                        msg_ids.len() as u64,
-                        Some(consumer_id), // Use our specific consumer ID
-                    )
-                    .await?;
-
-                if !entries.is_empty() {
-                    self.process_entries(entries).await?;
-                }
-
-                Ok(msg_ids.len() as u64)
-            },
-            Ok(_) => Ok(0), // No pending messages
-            Err(e) => {
-                error!("Error checking pending messages: {}", e);
-                Ok(0)
-            },
+            Ok(msg_ids.len() as u64)
+        } else {
+            Ok(0) // No pending messages
         }
     }
 
@@ -300,7 +288,7 @@ impl StreamProcessor {
                 &self.stream_key,
                 &self.group_name,
                 self.event_processing_timeout,
-                self.max_events_per_fetch,
+                self.max_events_per_fetch as usize,
                 Some(&self.consumer_id),
             )
             .await?;

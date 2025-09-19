@@ -1,6 +1,6 @@
 # Version and Directory Configuration
-SNAPCHAIN_VER := v0.4.0
-SNAPCHAIN_DIR := snapchain-0.4.0
+SNAPCHAIN_VER := v0.7.0
+SNAPCHAIN_DIR := snapchain-0.7.0
 PROTO_DIR := src/proto
 REGISTRY ?= localhost
 IMAGE_NAME := waypoint
@@ -13,7 +13,7 @@ ifneq (,$(wildcard ./.env))
 	export
 endif
 
-.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-update-user-data backfill-update-user-data-max test docker-build docker-run docker-push docker-tag metrics-start metrics-stop metrics-open fmt fmt-rust fmt-biome changelog help env-setup
+.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-update-user-data backfill-update-user-data-max backfill-onchain-all backfill-onchain-fid backfill-onchain-missing migrate test docker-build docker-run docker-push docker-tag metrics-start metrics-stop metrics-open fmt fmt-rust fmt-biome changelog help env-setup
 
 init:
 	mkdir -p $(PROTO_DIR)
@@ -74,6 +74,37 @@ backfill-update-user-data-max: proto build env-setup
 		exit 1; \
 	fi
 	cargo run --release -- backfill fid user-data --max-fid $(MAX_FID) $(ARGS)
+
+# Database migration commands
+migrate: env-setup
+	@echo "Running database migrations..."
+	@echo "Note: Migrations will be automatically applied when the application starts"
+	@echo "To run migrations manually, execute the SQL files in migrations/ directory"
+	@echo "Latest migration: migrations/003_add_onchain_event_tables.sql"
+
+# Onchain events backfill commands
+backfill-onchain-all: proto build env-setup
+	@echo "Backfilling onchain events for all FIDs (this may take a while)"
+	@echo "Use CTRL+C to cancel if needed"
+	@echo "This will backfill signer, signer_migrated, id_register, storage_rent, and tier_purchase events"
+	SQLX_OFFLINE=true cargo run --release -- backfill onchain-events --all $(ARGS)
+
+backfill-onchain-fid: proto build env-setup
+	@if [ "$(FID)" = "" ]; then \
+		echo "Please specify FID=<fid_number> to backfill onchain events for"; \
+		exit 1; \
+	fi
+	@echo "Backfilling onchain events for FID: $(FID)"
+	SQLX_OFFLINE=true cargo run --release -- backfill onchain-events --fid $(FID) $(ARGS)
+
+backfill-onchain-missing: proto build env-setup
+	@if [ "$(EVENT_TYPE)" = "" ]; then \
+		echo "Please specify EVENT_TYPE=<signer|signer_migrated|id_register|storage_rent|tier_purchase> to backfill missing events"; \
+		echo "Example: make backfill-onchain-missing EVENT_TYPE=signer"; \
+		exit 1; \
+	fi
+	@echo "Backfilling missing $(EVENT_TYPE) events for all FIDs"
+	SQLX_OFFLINE=true cargo run --release -- backfill onchain-events --event-type $(EVENT_TYPE) $(ARGS)
 
 
 # Run the container with proper env vars and port mapping
@@ -157,6 +188,9 @@ help:
 	@echo "  make test                     - Run tests"
 	@echo "  make fmt                      - Format all code"
 	@echo ""
+	@echo "Database:"
+	@echo "  make migrate                  - Show database migration information"
+	@echo ""
 	@echo "Backfill:"
 	@echo "  FID-Based Backfill:"
 	@echo "  make backfill-queue           - Queue all FIDs for backfill (using sum of FIDs from all shards)"
@@ -165,6 +199,11 @@ help:
 	@echo "  make backfill-worker          - Run backfill worker (50 concurrent jobs by default)"
 	@echo "  make backfill-update-user-data - Update user_data for all FIDs"
 	@echo "  make backfill-update-user-data-max MAX_FID=1000 - Update user_data for FIDs up to 1000"
+	@echo ""
+	@echo "  Onchain Events Backfill:"
+	@echo "  make backfill-onchain-all     - Backfill onchain events for all FIDs (comprehensive)"
+	@echo "  make backfill-onchain-fid FID=12345 - Backfill onchain events for specific FID"
+	@echo "  make backfill-onchain-missing EVENT_TYPE=signer - Backfill missing events of specific type"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make docker-build             - Build Docker image"
@@ -189,6 +228,8 @@ help:
 	@echo "  TAG                           - Docker image tag (for docker-tag target)"
 	@echo "  FIDS                          - Comma-separated list of FIDs (for backfill-queue-fids)"
 	@echo "  MAX_FID                       - Maximum FID (for backfill-queue-max and backfill-update-user-data-max)"
+	@echo "  FID                           - Single FID number (for backfill-onchain-fid)"
+	@echo "  EVENT_TYPE                    - Onchain event type: signer, signer_migrated, id_register, storage_rent, tier_purchase"
 	@echo "  ARGS                          - Additional command line arguments to pass to the binary"
 	@echo "  PORT                          - Port to run the service on (default: 8080)"
 	@echo "  See .env.example for all available configuration options"

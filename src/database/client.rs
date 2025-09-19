@@ -1,6 +1,7 @@
 use crate::{
     config::{Config, DatabaseConfig},
     database::error::Error,
+    metrics,
 };
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
@@ -29,6 +30,9 @@ impl Database {
         if !db.check_connection().await? {
             return Err(Error::ConnectionError("Failed initial connection check".into()));
         }
+
+        // Start metrics collection for connection pool
+        db.start_connection_metrics_monitoring();
 
         Ok(db)
     }
@@ -133,6 +137,44 @@ impl Database {
                 tracing::warn!("Unable to get database connection info: {}", e);
             },
         }
+    }
+
+    /// Start monitoring database connection pool metrics
+    fn start_connection_metrics_monitoring(&self) {
+        let pool = self.pool.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+
+                // Track connection pool size
+                let connections = pool.size() as u64;
+                metrics::set_database_connections_active(connections);
+
+                tracing::trace!("Database pool size: {} connections", connections);
+            }
+        });
+    }
+
+    /// Execute a database operation with timing metrics
+    pub async fn execute_with_metrics<F, R>(&self, operation_name: &str, f: F) -> Result<R, Error>
+    where
+        F: Fn(&Pool<Postgres>) -> futures::future::BoxFuture<'_, Result<R, Error>>,
+    {
+        let start = std::time::Instant::now();
+        let result = f(&self.pool).await;
+        let duration = start.elapsed();
+
+        metrics::record_database_query_duration(duration);
+
+        if result.is_err() {
+            tracing::warn!("Database operation '{}' failed after {:?}", operation_name, duration);
+            metrics::increment_database_errors();
+        } else {
+            tracing::trace!("Database operation '{}' completed in {:?}", operation_name, duration);
+        }
+
+        result
     }
 }
 

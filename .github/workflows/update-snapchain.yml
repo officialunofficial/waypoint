@@ -1,0 +1,70 @@
+name: Update Snapchain to Latest Release
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # Triggers at 6pm UTC (10 AM PST) every day
+  workflow_dispatch: # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-update-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Fetch latest release
+      id: latest_version
+      run: |
+        # Get the most recent release
+        latest_release=$(curl -s https://api.github.com/repos/farcasterxyz/snapchain/releases/latest | jq -r '.tag_name')
+
+        # Verify that the release starts with "v"
+        if [[ $latest_release == v* ]]; then
+          echo "Latest release tag: $latest_release"
+          echo "version=$latest_release" >> "$GITHUB_OUTPUT"
+        else
+          echo "Invalid release format: $latest_release"
+          exit 1
+        fi
+      shell: bash
+
+    - name: Get Current Version
+      id: current_version
+      run: |
+        # Extract the current version from Makefile
+        current_version=$(grep '^SNAPCHAIN_VER :=' Makefile | cut -d' ' -f3)
+        echo "Current version in Makefile: $current_version"
+        echo "version=$current_version" >> "$GITHUB_OUTPUT"
+      shell: bash
+
+    - name: Update Version in Makefile
+      if: ${{ steps.latest_version.outputs.version != steps.current_version.outputs.version }}
+      run: |
+        latest_version="${{ steps.latest_version.outputs.version }}"
+        # Strip 'v' prefix to get just the version number
+        version_number="${latest_version#v}"
+        
+        # Update SNAPCHAIN_VER line
+        sed -i "s/^SNAPCHAIN_VER := .*/SNAPCHAIN_VER := ${latest_version}/" Makefile
+        
+        # Update SNAPCHAIN_DIR line
+        sed -i "s/^SNAPCHAIN_DIR := .*/SNAPCHAIN_DIR := snapchain-${version_number}/" Makefile
+        
+        echo "Updated Makefile with version ${latest_version}"
+        
+        # Show the changes
+        echo "Changes made:"
+        grep -E '^SNAPCHAIN_(VER|DIR)' Makefile
+
+    - name: Commit and Push Changes
+      if: ${{ steps.latest_version.outputs.version != steps.current_version.outputs.version }}
+      run: |
+        git config --global user.email "362387+christopherwxyz@users.noreply.github.com"
+        git config --global user.name "Christopher Wallace"
+        git add Makefile
+        git commit -m "chore: update Snapchain to ${{ steps.latest_version.outputs.version }}"
+        git push

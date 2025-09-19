@@ -2,7 +2,6 @@ use crate::{
     backfill::reconciler::MessageReconciler, hub::filter::SpamFilter, metrics,
     processor::consumer::EventProcessor, redis::client::Redis,
 };
-use bb8_redis::redis::RedisResult;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -118,24 +117,14 @@ impl BackfillQueue {
         &self,
         key: &str,
     ) -> Result<usize, crate::redis::error::Error> {
-        let mut conn = self
-            .redis
-            .pool
-            .get()
-            .await
-            .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
-
-        let result: RedisResult<usize> =
-            bb8_redis::redis::cmd("LLEN").arg(key).query_async(&mut *conn).await;
-
-        match result {
+        match self.redis.llen(key).await {
             Ok(len) => {
-                info!("Queue {} has {} jobs remaining", key, len);
-                Ok(len)
+                info!("Queue {} has {} jobs remaining", key, len as usize);
+                Ok(len as usize)
             },
             Err(e) => {
                 error!("Error getting queue length for {}: {:?}", key, e);
-                Err(crate::redis::error::Error::RedisError(e))
+                Err(e)
             },
         }
     }
@@ -165,18 +154,7 @@ impl BackfillQueue {
             job.fids.last()
         );
 
-        let mut conn = self
-            .redis
-            .pool
-            .get()
-            .await
-            .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
-
-        let result: RedisResult<()> = bb8_redis::redis::cmd("LPUSH")
-            .arg(queue_key)
-            .arg(job_data)
-            .query_async(&mut *conn)
-            .await;
+        let result = self.redis.lpush(queue_key, vec![job_data.to_string()]).await;
 
         match &result {
             Ok(_) => {
@@ -204,7 +182,7 @@ impl BackfillQueue {
             Err(e) => error!("Failed to add job {} to queue {}: {:?}", job_id, queue_key, e),
         }
 
-        result.map_err(crate::redis::error::Error::RedisError)
+        result.map(|_| ())
     }
 
     pub async fn get_job(&self) -> Result<Option<BackfillJob>, crate::redis::error::Error> {
@@ -217,23 +195,13 @@ impl BackfillQueue {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let mut conn = self
-            .redis
-            .get_connection_with_timeout(2000) // 2 second timeout
-            .await?;
-
         // Only check the normal queue now
         // Use longer timeout for BRPOP in containerized environments
-        let result: RedisResult<Option<Vec<String>>> = bb8_redis::redis::cmd("BRPOP")
-            .arg(&self.queue_key)
-            .arg(5.0) // 5 second timeout for better Docker compatibility
-            .query_async(&mut *conn)
-            .await;
+        let result = self.redis.brpop(vec![self.queue_key.clone()], 5).await?; // 5 second timeout
 
         match result {
-            Ok(Some(values)) if values.len() >= 2 => {
-                let job_data = &values[1];
-                let mut job: BackfillJob = serde_json::from_str(job_data)
+            Some((_, job_data)) => {
+                let mut job: BackfillJob = serde_json::from_str(&job_data)
                     .map_err(|e| crate::redis::error::Error::DeserializationError(e.to_string()))?;
 
                 job.state = JobState::InProgress;
@@ -245,11 +213,7 @@ impl BackfillQueue {
                 }
 
                 let in_progress_data = serde_json::to_string(&job).unwrap();
-                let _: RedisResult<()> = bb8_redis::redis::cmd("LPUSH")
-                    .arg(&self.in_progress_queue_key)
-                    .arg(&in_progress_data)
-                    .query_async(&mut *conn)
-                    .await;
+                let _ = self.redis.lpush(&self.in_progress_queue_key, vec![in_progress_data]).await;
 
                 // Don't use Redis expiration - we'll handle timeout in cleanup_expired_jobs
                 // This prevents jobs from being lost when Redis keys expire
@@ -267,35 +231,19 @@ impl BackfillQueue {
 
                 Ok(Some(job))
             },
-            Ok(_) => {
+            None => {
                 debug!("No jobs found in queue");
                 Ok(None)
-            },
-            Err(e) => {
-                error!("Error retrieving job from queue {}: {:?}", &self.queue_key, e);
-                Err(crate::redis::error::Error::RedisError(e))
             },
         }
     }
 
     /// Mark a job as completed
     pub async fn complete_job(&self, job_id: &str) -> Result<(), crate::redis::error::Error> {
-        let mut conn = self
-            .redis
-            .pool
-            .get()
-            .await
-            .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
-
         // Remove job from in-progress queue by value
         // We need to find and remove the job with matching ID from the in-progress queue
         // First, get all jobs from in-progress queue
-        let jobs: RedisResult<Vec<String>> = bb8_redis::redis::cmd("LRANGE")
-            .arg(&self.in_progress_queue_key)
-            .arg(0)
-            .arg(-1)
-            .query_async(&mut *conn)
-            .await;
+        let jobs = self.redis.lrange(&self.in_progress_queue_key, 0, -1).await;
 
         if let Ok(job_list) = jobs {
             // Find and remove the job with matching ID
@@ -303,12 +251,7 @@ impl BackfillQueue {
                 if let Ok(job) = serde_json::from_str::<BackfillJob>(&job_data) {
                     if job.id == job_id {
                         // Remove this specific job from the in-progress queue
-                        let _: RedisResult<()> = bb8_redis::redis::cmd("LREM")
-                            .arg(&self.in_progress_queue_key)
-                            .arg(0) // Remove all occurrences
-                            .arg(&job_data)
-                            .query_async(&mut *conn)
-                            .await;
+                        let _ = self.redis.lrem(&self.in_progress_queue_key, 0, &job_data).await;
                         debug!("Removed job {} from in-progress queue", job_id);
                         break;
                     }
@@ -357,20 +300,8 @@ impl BackfillQueue {
     /// Clean up expired jobs from the in-progress queue
     /// This helps recover from crashes or other issues where jobs weren't properly completed
     pub async fn cleanup_expired_jobs(&self) -> Result<(), crate::redis::error::Error> {
-        let mut conn = self
-            .redis
-            .pool
-            .get()
-            .await
-            .map_err(|e| crate::redis::error::Error::PoolError(e.to_string()))?;
-
         // Get all jobs from in-progress queue
-        let jobs: RedisResult<Vec<String>> = bb8_redis::redis::cmd("LRANGE")
-            .arg(&self.in_progress_queue_key)
-            .arg(0)
-            .arg(-1)
-            .query_async(&mut *conn)
-            .await;
+        let jobs = self.redis.lrange(&self.in_progress_queue_key, 0, -1).await;
 
         if let Ok(job_list) = jobs {
             let mut expired_count = 0;
@@ -392,12 +323,8 @@ impl BackfillQueue {
                             );
 
                             // Remove from in-progress queue
-                            let _: RedisResult<()> = bb8_redis::redis::cmd("LREM")
-                                .arg(&self.in_progress_queue_key)
-                                .arg(0)
-                                .arg(&job_data)
-                                .query_async(&mut *conn)
-                                .await;
+                            let _ =
+                                self.redis.lrem(&self.in_progress_queue_key, 0, &job_data).await;
 
                             // Reset state and retry
                             job.state = JobState::Pending;
@@ -562,6 +489,11 @@ impl Worker {
                             stats_guard.jobs_processed += 1;
                             stats_guard.fids_processed += fid_count;
                             stats_guard.spam_fids_skipped += spam_count;
+
+                            // Update metrics
+                            metrics::increment_jobs_processed();
+                            metrics::increment_fids_processed(fid_count as u64);
+
                             info!(
                                 "Stats update: {} jobs, {} FIDs processed, {} spam FIDs skipped, {} errors",
                                 stats_guard.jobs_processed,
@@ -572,6 +504,7 @@ impl Worker {
                         },
                         StatsUpdate::Error => {
                             stats_guard.errors += 1;
+                            metrics::increment_job_errors();
                         },
                         StatsUpdate::HighestFidUpdate(fid) => {
                             if fid > stats_guard.highest_fid_processed {
