@@ -32,6 +32,7 @@ pub enum MessageType {
     UsernameProof = 12,
     FrameAction = 13,
     LinkCompactState = 14,
+    LendStorage = 15,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,6 +49,7 @@ pub enum UserDataType {
     Banner = 10,
     PrimaryAddressEthereum = 11,
     PrimaryAddressSolana = 12,
+    ProfileToken = 13,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

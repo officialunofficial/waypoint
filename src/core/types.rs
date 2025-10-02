@@ -116,6 +116,8 @@ pub enum MessageType {
     OnchainStorageRent,
     /// On-chain tier purchase messages
     OnchainTierPurchase,
+    /// Lend storage messages
+    LendStorage,
 }
 
 impl MessageType {
@@ -133,6 +135,7 @@ impl MessageType {
             Self::OnchainIdRegister => "onchain:id_register",
             Self::OnchainStorageRent => "onchain:storage_rent",
             Self::OnchainTierPurchase => "onchain:tier_purchase",
+            Self::LendStorage => "lend_storage",
         }
     }
 
@@ -150,6 +153,7 @@ impl MessageType {
             | Self::OnchainIdRegister
             | Self::OnchainStorageRent
             | Self::OnchainTierPurchase => "onchain",
+            Self::LendStorage => "lend_storage",
         }
     }
 
@@ -167,6 +171,7 @@ impl MessageType {
             Self::OnchainIdRegister,
             Self::OnchainStorageRent,
             Self::OnchainTierPurchase,
+            Self::LendStorage,
         ]
         .into_iter()
     }
@@ -189,6 +194,7 @@ impl fmt::Display for MessageType {
                 Self::OnchainIdRegister => "onchain_id_register",
                 Self::OnchainStorageRent => "onchain_storage_rent",
                 Self::OnchainTierPurchase => "onchain_tier_purchase",
+                Self::LendStorage => "lend_storage",
             }
         )
     }

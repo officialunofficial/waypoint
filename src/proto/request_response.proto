@@ -5,7 +5,6 @@ import "blocks.proto";
 import "hub_event.proto";
 import "username_proof.proto";
 import "onchain_event.proto";
-import "gossip.proto";
 
 
 message BlocksRequest {
@@ -45,6 +44,7 @@ message ShardInfo {
   uint64 approx_size = 5;
   uint64 block_delay = 6;
   uint64 mempool_size = 7;
+  uint64 num_onchain_events = 8;
 }
 
 message GetInfoRequest {
@@ -174,12 +174,7 @@ enum StoreType {
   STORE_TYPE_USER_DATA = 4;
   STORE_TYPE_VERIFICATIONS = 5;
   STORE_TYPE_USERNAME_PROOFS = 6;
-}
-
-enum StorageUnitType {
-  UNIT_TYPE_LEGACY = 0;
-  UNIT_TYPE_2024 = 1;
-  UNIT_TYPE_2025 = 2;
+  STORE_TYPE_STORAGE_LENDS = 7;
 }
 
 message StorageUnitDetails {
@@ -307,9 +302,19 @@ message FidAddressTypeResponse {
   bool is_verified = 3;
 }
 
+message ContactInfoBody {
+  string gossip_address = 1;
+  bytes peer_id = 2;
+  string snapchain_version = 3;
+  FarcasterNetwork network = 4;
+  uint64 timestamp = 5;
+  string announce_rpc_address = 6;
+}
+
 message GetConnectedPeersRequest {
 }
 
 message GetConnectedPeersResponse {
   repeated ContactInfoBody contacts = 1;
 }
+
