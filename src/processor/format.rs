@@ -204,10 +204,7 @@ fn format_lend_storage(lend_storage: &LendStorageBody) -> String {
         })
         .unwrap_or("unknown");
 
-    format!(
-        "Lend {} {} units to FID {}",
-        lend_storage.num_units, unit_type, lend_storage.to_fid
-    )
+    format!("Lend {} {} units to FID {}", lend_storage.num_units, unit_type, lend_storage.to_fid)
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
