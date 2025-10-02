@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO lend_storage (\n                    fid,\n                    to_fid,\n                    num_units,\n                    unit_type,\n                    hash,\n                    timestamp,\n                    deleted_at\n                )\n                VALUES ($1, $2, $3, $4, $5, $6, NULL)\n                ON CONFLICT (hash) DO UPDATE SET\n                    deleted_at = NULL,\n                    timestamp = LEAST(EXCLUDED.timestamp, lend_storage.timestamp)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int2",
+        "Bytea",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "de7d14e11c8f84c9bfc568241ddac70c5744b68866f316e5940423b1be8e18ab"
+}

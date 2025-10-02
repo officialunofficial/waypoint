@@ -10,8 +10,8 @@ use crate::{
         hub_event::Body,
         link_body::Target as LinkTarget,
         message_data::Body::{
-            CastAddBody, CastRemoveBody, LinkBody, ReactionBody, UserDataBody, UsernameProofBody,
-            VerificationAddAddressBody, VerificationRemoveBody,
+            CastAddBody, CastRemoveBody, LendStorageBody, LinkBody, ReactionBody, UserDataBody,
+            UsernameProofBody, VerificationAddAddressBody, VerificationRemoveBody,
         },
         reaction_body::Target as ReactionTarget,
     },
@@ -841,6 +841,45 @@ impl DatabaseProcessor {
         Ok(())
     }
 
+    async fn add_lend_storage(
+        &self,
+        pool: &PgPool,
+        msg: &Message,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(data) = &msg.data {
+            if let Some(LendStorageBody(lend_storage)) = &data.body {
+                let ts = Self::convert_timestamp(data.timestamp);
+
+                sqlx::query!(
+                    r#"
+                INSERT INTO lend_storage (
+                    fid,
+                    to_fid,
+                    num_units,
+                    unit_type,
+                    hash,
+                    timestamp,
+                    deleted_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, NULL)
+                ON CONFLICT (hash) DO UPDATE SET
+                    deleted_at = NULL,
+                    timestamp = LEAST(EXCLUDED.timestamp, lend_storage.timestamp)
+                "#,
+                    data.fid as i64,
+                    lend_storage.to_fid as i64,
+                    lend_storage.num_units as i64,
+                    lend_storage.unit_type as i16,
+                    &msg.hash,
+                    ts
+                )
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn process_message(
         &self,
         msg: &Message,
@@ -918,6 +957,7 @@ impl DatabaseProcessor {
                 8 => self.remove_verification(&self.resources.database.pool, msg).await,
                 11 => self.insert_user_data(&self.resources.database.pool, msg).await,
                 12 => self.insert_username_proof(&self.resources.database.pool, msg).await,
+                15 => self.add_lend_storage(&self.resources.database.pool, msg).await,
                 _ => Ok(()),
             };
 
