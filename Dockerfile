@@ -1,7 +1,7 @@
 ARG REGISTRY=docker.io
 ARG TARGETARCH
 # Builder stage
-FROM rust:1.85 AS builder
+FROM rust:1.90 AS builder
 WORKDIR /usr/src/waypoint
 RUN apt-get update && apt-get install -y \
     protobuf-compiler \
