@@ -15,7 +15,7 @@ variable "PLATFORMS" {
 target "default" {
     context = "."
     dockerfile = "Dockerfile"
-    platforms = var.PLATFORMS
+    platforms = PLATFORMS
     tags = [
         "${REGISTRY}/waypoint:${TAG}",
         "${REGISTRY}/waypoint:latest"
