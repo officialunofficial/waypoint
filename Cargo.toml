@@ -3,7 +3,7 @@ name = "waypoint"
 version = "2025.10.1"
 edition = "2024"
 default-run = "waypoint"
-rust-version = "1.85.0"
+rust-version = "1.86.0"
 authors = ["Official Unofficial, Inc."]
 description = "Waypoint is a Farcaster synchronization tool built in Rust, optimized for memory efficiency."
 repository = "https://github.com/officialunofficial/waypoint"
@@ -73,11 +73,11 @@ hex = "0.4.3"
 zeroize = { version = "1.6.0", features = ["zeroize_derive"] }
 
 # Ethereum/Alloy
-alloy-primitives = "1.0.0"
-alloy-signer = "0.14.0"
-alloy-signer-local = { version = "0.14.0", features = ["mnemonic"] }
-alloy-provider = { version = "0.14.0", features = ["reqwest"] }
-alloy-rpc-types-eth = "0.14.0"
+alloy-primitives = "1.4.0"
+alloy-signer = "1.0.37"
+alloy-signer-local = { version = "1.0.37", features = ["mnemonic"] }
+alloy-provider = { version = "1.0.37", features = ["reqwest"] }
+alloy-rpc-types-eth = "1.0.37"
 coins-bip39 = "0.12.0"
 
 # Utilities
