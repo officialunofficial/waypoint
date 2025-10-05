@@ -1,7 +1,7 @@
 ARG REGISTRY=docker.io
 ARG TARGETARCH
-# Builder stage
-FROM rust:1.90 AS builder
+# Builder stage - use bookworm (Debian 12) for GLIBC compatibility
+FROM rust:1.90-bookworm AS builder
 WORKDIR /usr/src/waypoint
 RUN apt-get update && apt-get install -y \
     protobuf-compiler \
@@ -18,8 +18,8 @@ ENV SQLX_OFFLINE=${SQLX_OFFLINE}
 ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waypoint
 RUN cargo build --release
 
-# Runtime stage - minimal image with only necessary runtime dependencies
-FROM ubuntu:24.04
+# Runtime stage - use Debian 12 to match builder GLIBC version
+FROM debian:12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
