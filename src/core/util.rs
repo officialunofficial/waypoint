@@ -44,7 +44,7 @@ pub fn get_time_diff(timestamp: u64) -> String {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
             as u64;
 
-    let diff_ms = if timestamp > now { timestamp - now } else { now - timestamp };
+    let diff_ms = timestamp.abs_diff(now);
 
     let diff_secs = diff_ms / 1000;
     let is_future = timestamp > now;

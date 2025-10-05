@@ -4,15 +4,14 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
-## [2025.9.3] - 2025-09-06
-
 ### Features
 
-- Add comprehensive onchain events backfill system for all Farcaster event types
-- Create dedicated database tables for signer, signer_migrated, id_register, and storage_rent events
-- Implement hub-based FID discovery for efficient backfill operations
-- Add CLI commands for onchain events backfill with flexible options
-- Integrate onchain events processing into existing backfill worker system
+- Implement LendStorage message type and ProfileToken user data type from Snapchain v0.9.0
+
+### Miscellaneous Tasks
+
+- Update Snapchain to v0.8.1
+- Update Snapchain to v0.9.0
 
 ## [2025.9.2] - 2025-09-06
 
@@ -24,6 +23,11 @@ All notable changes to Waypoint will be documented in this file.
 
 - Complete Prometheus metrics infrastructure
 - Integrate comprehensive metrics throughout application
+- Comprehensive onchain events backfill system (#54)
+
+### Miscellaneous Tasks
+
+- Bump version to v2025.9.2
 
 ## [2025.9.1] - 2025-09-04
 

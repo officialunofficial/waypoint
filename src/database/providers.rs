@@ -42,6 +42,7 @@ impl PostgresDatabaseClient {
             MessageType::OnchainIdRegister => "id_register_events",
             MessageType::OnchainStorageRent => "storage_rent_events",
             MessageType::OnchainTierPurchase => "tier_purchases",
+            MessageType::LendStorage => "lend_storage",
         }
     }
 }

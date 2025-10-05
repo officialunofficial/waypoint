@@ -101,6 +101,9 @@ impl ProcessorRegistry {
                                 i if i == ProtoMessageType::UserDataAdd as i32 => {
                                     MessageType::UserData
                                 },
+                                i if i == ProtoMessageType::LendStorage as i32 => {
+                                    MessageType::LendStorage
+                                },
                                 _ => return Ok(()), // Ignore unknown message types
                             }
                         } else {

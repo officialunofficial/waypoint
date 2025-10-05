@@ -33,8 +33,8 @@ impl AlchemyProvider {
             .map_err(|e| EthError::ProviderError(format!("Invalid URL: {}", e)))?;
 
         // Create the provider using the builder
-        // on_http() returns a provider directly, not a Result
-        let provider = ProviderBuilder::new().on_http(url);
+        // connect_http() returns a provider directly
+        let provider = ProviderBuilder::new().connect_http(url);
 
         Ok(Self { provider: Arc::new(provider), network, api_key: api_key.to_string() })
     }

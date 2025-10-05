@@ -202,9 +202,9 @@ where
     /// Get specific user data, with Hub priority
     pub async fn get_user_data(&self, fid: Fid, data_type: &str) -> Result<Option<Message>> {
         if let Some(hub) = &self.hub_client {
-            match hub.get_user_data(fid, data_type).await {
-                Ok(data) => return Ok(data),
-                Err(_) => {}, // Fall through to database
+            // Fall through to database on error
+            if let Ok(data) = hub.get_user_data(fid, data_type).await {
+                return Ok(data);
             }
         }
 

@@ -1,6 +1,6 @@
 # Version and Directory Configuration
-SNAPCHAIN_VER := v0.7.0
-SNAPCHAIN_DIR := snapchain-0.7.0
+SNAPCHAIN_VER := v0.9.0
+SNAPCHAIN_DIR := snapchain-0.9.0
 PROTO_DIR := src/proto
 REGISTRY ?= localhost
 IMAGE_NAME := waypoint
@@ -80,7 +80,7 @@ migrate: env-setup
 	@echo "Running database migrations..."
 	@echo "Note: Migrations will be automatically applied when the application starts"
 	@echo "To run migrations manually, execute the SQL files in migrations/ directory"
-	@echo "Latest migration: migrations/003_add_onchain_event_tables.sql"
+	@echo "Latest migration: migrations/004_add_lend_storage_table.sql"
 
 # Onchain events backfill commands
 backfill-onchain-all: proto build env-setup

@@ -1,9 +1,9 @@
 use crate::{
     core::util::{from_farcaster_time, get_time_diff},
     proto::{
-        CastAddBody, CastId, CastRemoveBody, Message, MessageType, Protocol, ReactionBody,
-        ReactionType, UserDataBody, UserDataType, VerificationAddAddressBody,
-        VerificationRemoveBody, message_data::Body,
+        CastAddBody, CastId, CastRemoveBody, LendStorageBody, Message, MessageType, Protocol,
+        ReactionBody, ReactionType, StorageUnitType, UserDataBody, UserDataType,
+        VerificationAddAddressBody, VerificationRemoveBody, message_data::Body,
     },
 };
 use std::convert::TryFrom;
@@ -82,6 +82,7 @@ pub fn format_message(msg: &Message) -> String {
             Some(Body::VerificationRemoveBody(verification)) => {
                 format_verification_remove(verification)
             },
+            Some(Body::LendStorageBody(lend_storage)) => format_lend_storage(lend_storage),
             Some(body) => format!("{:?}", body),
             None => "Empty body".to_string(),
         };
@@ -115,6 +116,7 @@ fn format_message_type(msg_type: i32) -> &'static str {
         MessageType::UsernameProof => "Username",
         MessageType::FrameAction => "Frame Action",
         MessageType::LinkCompactState => "Link Compact",
+        MessageType::LendStorage => "Lend Storage",
     }
 }
 
@@ -186,10 +188,23 @@ fn format_user_data(user_data: &UserDataBody) -> String {
             UserDataType::Banner => "banner",
             UserDataType::UserDataPrimaryAddressEthereum => "primary ethereum address",
             UserDataType::UserDataPrimaryAddressSolana => "primary solana address",
+            UserDataType::ProfileToken => "profile token",
         })
         .unwrap_or("unknown");
 
     format!("Set {} to: {}", data_type, truncate(&user_data.value, 30))
+}
+
+fn format_lend_storage(lend_storage: &LendStorageBody) -> String {
+    let unit_type = StorageUnitType::try_from(lend_storage.unit_type)
+        .map(|ut| match ut {
+            StorageUnitType::UnitTypeLegacy => "legacy",
+            StorageUnitType::UnitType2024 => "2024",
+            StorageUnitType::UnitType2025 => "2025",
+        })
+        .unwrap_or("unknown");
+
+    format!("Lend {} {} units to FID {}", lend_storage.num_units, unit_type, lend_storage.to_fid)
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
