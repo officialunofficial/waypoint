@@ -93,7 +93,7 @@ reqwest = "0.12.10"
 cadence = "1.5.0"
 
 # MCP
-rmcp = { version = "0.1.5", features = ["server", "transport-sse-server", "transport-child-process", "transport-io"] }
+rmcp = { version = "0.8.0", features = ["server", "client", "transport-sse-server", "transport-child-process", "transport-io"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14.1"
