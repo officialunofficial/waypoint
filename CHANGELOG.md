@@ -4,14 +4,20 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
+### Dependencies
+
+- Upgrade rmcp from 0.1.5 to 0.8.0 with latest macro patterns
+
 ### Features
 
 - Implement LendStorage message type and ProfileToken user data type from Snapchain v0.9.0
+- Refactor MCP service to use rmcp 0.8.0 macro-based API
 
 ### Miscellaneous Tasks
 
 - Update Snapchain to v0.8.1
 - Update Snapchain to v0.9.0
+- Update MCP documentation with rmcp 0.8.0 API examples
 
 ## [2025.9.2] - 2025-09-06
 

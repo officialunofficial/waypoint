@@ -6,6 +6,17 @@ Waypoint now supports the Model Context Protocol (MCP), allowing AI assistants t
 
 The Model Context Protocol (MCP) is a specification that allows AI assistants to communicate with external tools using a standardized JSON-RPC based protocol. This integration lets AI agents query real-time Snapchain data from your Waypoint instance.
 
+## Implementation
+
+Waypoint uses [rmcp](https://github.com/modelcontextprotocol/rust-mcp-sdk) version **0.8.0**, the official Rust SDK for the Model Context Protocol. The implementation leverages the latest macro-based API patterns:
+
+- **`#[tool_router]`**: Generates tool routing logic for service implementations
+- **`#[prompt_router]`**: Generates prompt routing logic for service implementations
+- **`#[tool_handler]`** and **`#[prompt_handler]`**: Generate MCP ServerHandler implementations
+- **`Parameters<T>`**: Type-safe parameter wrapper for tool inputs
+
+For more details on the rmcp API, see the [rmcp documentation](https://docs.rs/rmcp/).
+
 ## Configuration
 
 To enable MCP integration, configure the following settings in your `config.toml` file or through environment variables:
@@ -802,12 +813,13 @@ The service is enabled by default and will automatically start with Waypoint.
 
 ## Extending the MCP Integration
 
-Developers can extend Waypoint's MCP capabilities by adding more tools to the `src/services/mcp.rs` file:
+Developers can extend Waypoint's MCP capabilities by adding more tools to the MCP service modules (`src/services/mcp/`):
 
-1. Define new data structures for tool inputs/outputs
-2. Implement the tool functionality in the `WaypointMcpService<DB, HC>` implementation
-3. Add a delegate method in the `WaypointMcpTools` wrapper to use the `#[tool]` macro
-4. Use the DataContext for data access to benefit from the abstraction
+1. Define new data structures for tool inputs/outputs in `src/services/mcp/handlers/common.rs`
+2. Implement the tool functionality in the `WaypointMcpService<DB, HC>` implementation in `src/services/mcp/base.rs`
+3. Add a delegate method in a `#[tool_router]` impl block for `WaypointMcpTools` in `src/services/mcp/handlers/mod.rs`
+4. Use the `Parameters<T>` wrapper for type-safe parameter handling
+5. Use the DataContext for data access to benefit from the abstraction
 
 The recently implemented `do_get_user_by_fid` function demonstrates this pattern:
 
@@ -865,17 +877,18 @@ where
 }
 
 // 3. Add the tool wrapper in WaypointMcpTools
-#[tool(tool_box)]
+#[tool_router]
 impl WaypointMcpTools {
     // Existing tools...
-    
+
     #[tool(description = "Search for casts matching a query")]
     async fn search_casts(
         &self,
-        #[tool(param)] request: SearchCastsRequest,
-    ) -> String {
+        Parameters(SearchCastsRequest { query, limit }): Parameters<SearchCastsRequest>,
+    ) -> Result<CallToolResult, McpError> {
         // Delegate to the implementation in WaypointMcpService
-        self.service.do_search_casts(&request.query, request.limit).await
+        let result = self.service.do_search_casts(&query, limit).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 }
 ```
