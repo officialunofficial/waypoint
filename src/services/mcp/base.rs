@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler, const_string,
+    ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::{
         router::{prompt::PromptRouter, tool::ToolRouter},
         wrapper::Parameters,
@@ -138,8 +138,6 @@ impl MooCow {
         Ok(CallToolResult::success(vec![Content::text(moo_text)]))
     }
 }
-
-const_string!(MooPrompt = "moo_prompt");
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct MooPromptArgs {

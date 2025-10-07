@@ -13,7 +13,7 @@ use crate::core::types::Fid;
 use crate::services::mcp::base::{NullDb, WaypointMcpService};
 
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler, const_string,
+    ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::{
         router::{prompt::PromptRouter, tool::ToolRouter},
         wrapper::Parameters,
@@ -66,7 +66,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get verified addresses for a Farcaster user")]
     async fn get_verifications_by_fid(
         &self,
-        Parameters(common::GetVerificationsRequest { fid, limit }): Parameters<common::GetVerificationsRequest>,
+        Parameters(common::GetVerificationsRequest { fid, limit }): Parameters<
+            common::GetVerificationsRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let result = self.service.do_get_verifications_by_fid(fid, limit).await;
@@ -76,7 +78,9 @@ impl WaypointMcpTools {
     #[tool(description = "Find a Farcaster user's FID by their username")]
     async fn get_fid_by_username(
         &self,
-        Parameters(common::GetFidByUsernameRequest { username }): Parameters<common::GetFidByUsernameRequest>,
+        Parameters(common::GetFidByUsernameRequest { username }): Parameters<
+            common::GetFidByUsernameRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let result = self.service.do_get_fid_by_username(&username).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
@@ -85,7 +89,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get a complete Farcaster user profile by username")]
     async fn get_user_by_username(
         &self,
-        Parameters(common::GetFidByUsernameRequest { username }): Parameters<common::GetFidByUsernameRequest>,
+        Parameters(common::GetFidByUsernameRequest { username }): Parameters<
+            common::GetFidByUsernameRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let result = self.service.do_get_user_by_username(&username).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
@@ -115,7 +121,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get casts that mention a specific Farcaster user")]
     async fn get_casts_by_mention(
         &self,
-        Parameters(common::GetCastMentionsRequest { fid, limit }): Parameters<common::GetCastMentionsRequest>,
+        Parameters(common::GetCastMentionsRequest { fid, limit }): Parameters<
+            common::GetCastMentionsRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let result = self.service.do_get_casts_by_mention(fid, limit).await;
@@ -125,7 +133,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get cast replies to a specific parent cast")]
     async fn get_casts_by_parent(
         &self,
-        Parameters(common::GetCastRepliesRequest { parent_fid, parent_hash, limit }): Parameters<common::GetCastRepliesRequest>,
+        Parameters(common::GetCastRepliesRequest { parent_fid, parent_hash, limit }): Parameters<
+            common::GetCastRepliesRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let parent_fid = Fid::from(parent_fid);
         let result = self.service.do_get_casts_by_parent(parent_fid, &parent_hash, limit).await;
@@ -135,7 +145,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get cast replies to a specific URL")]
     async fn get_casts_by_parent_url(
         &self,
-        Parameters(common::GetCastRepliesByUrlRequest { parent_url, limit }): Parameters<common::GetCastRepliesByUrlRequest>,
+        Parameters(common::GetCastRepliesByUrlRequest { parent_url, limit }): Parameters<
+            common::GetCastRepliesByUrlRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let result = self.service.do_get_casts_by_parent_url(&parent_url, limit).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
@@ -223,7 +235,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get reactions by a specific Farcaster user")]
     async fn get_reactions_by_fid(
         &self,
-        Parameters(common::ReactionsByFidRequest { fid, reaction_type, limit }): Parameters<common::ReactionsByFidRequest>,
+        Parameters(common::ReactionsByFidRequest { fid, reaction_type, limit }): Parameters<
+            common::ReactionsByFidRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let result = self.service.do_get_reactions_by_fid(fid, reaction_type, limit).await;
@@ -278,7 +292,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get all reactions from a user with optional timestamp filtering")]
     async fn get_all_reactions_by_fid(
         &self,
-        Parameters(common::FidTimestampRequest { fid, limit, start_time, end_time }): Parameters<common::FidTimestampRequest>,
+        Parameters(common::FidTimestampRequest { fid, limit, start_time, end_time }): Parameters<
+            common::FidTimestampRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let result =
@@ -290,7 +306,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get a specific link")]
     async fn get_link(
         &self,
-        Parameters(common::LinkRequest { fid, link_type, target_fid }): Parameters<common::LinkRequest>,
+        Parameters(common::LinkRequest { fid, link_type, target_fid }): Parameters<
+            common::LinkRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let target_fid = Fid::from(target_fid);
@@ -301,7 +319,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get links by a specific Farcaster user")]
     async fn get_links_by_fid(
         &self,
-        Parameters(common::LinksByFidRequest { fid, link_type, limit }): Parameters<common::LinksByFidRequest>,
+        Parameters(common::LinksByFidRequest { fid, link_type, limit }): Parameters<
+            common::LinksByFidRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         // Use "follow" as default when None is explicitly provided
@@ -317,7 +337,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get links to a target Farcaster user")]
     async fn get_links_by_target(
         &self,
-        Parameters(common::LinksByTargetRequest { target_fid, link_type, limit }): Parameters<common::LinksByTargetRequest>,
+        Parameters(common::LinksByTargetRequest { target_fid, link_type, limit }): Parameters<
+            common::LinksByTargetRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let target_fid = Fid::from(target_fid);
         // Use "follow" as default when None is explicitly provided
@@ -343,7 +365,9 @@ impl WaypointMcpTools {
     #[tool(description = "Get all links from a user with optional timestamp filtering")]
     async fn get_all_links_by_fid(
         &self,
-        Parameters(common::FidTimestampRequest { fid, limit, start_time, end_time }): Parameters<common::FidTimestampRequest>,
+        Parameters(common::FidTimestampRequest { fid, limit, start_time, end_time }): Parameters<
+            common::FidTimestampRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let fid = Fid::from(fid);
         let result = self.service.do_get_all_links_by_fid(fid, limit, start_time, end_time).await;
@@ -351,15 +375,15 @@ impl WaypointMcpTools {
     }
 }
 
-const_string!(WaypointPrompt = "waypoint_prompt");
-
 #[prompt_router]
 impl WaypointMcpTools {
     /// A prompt that helps with Farcaster data querying and takes an FID parameter
     #[prompt(name = "waypoint_prompt")]
     async fn waypoint_prompt(
         &self,
-        Parameters(common::WaypointPromptArgs { fid, username }): Parameters<common::WaypointPromptArgs>,
+        Parameters(common::WaypointPromptArgs { fid, username }): Parameters<
+            common::WaypointPromptArgs,
+        >,
         _ctx: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         // Check if username is provided, ensuring we preserve any .eth suffix
