@@ -5,12 +5,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rmcp::{
-    Error as McpError, ServerHandler, const_string,
+    ErrorData as McpError, RoleServer, ServerHandler, const_string,
+    handler::server::{
+        router::{prompt::PromptRouter, tool::ToolRouter},
+        wrapper::Parameters,
+    },
     model::*,
-    schemars,
+    prompt, prompt_handler, prompt_router, schemars,
     service::RequestContext,
-    service::RoleServer,
-    tool,
+    tool, tool_handler, tool_router,
     transport::sse_server::{SseServer, SseServerConfig},
 };
 
@@ -71,6 +74,8 @@ impl crate::core::data_context::Database for NullDb {
 #[derive(Clone)]
 pub struct MooCow {
     moo_count: Arc<Mutex<i32>>,
+    tool_router: ToolRouter<MooCow>,
+    prompt_router: PromptRouter<MooCow>,
 }
 
 impl Default for MooCow {
@@ -84,10 +89,14 @@ pub struct MooRequest {
     pub times: i32,
 }
 
-#[tool(tool_box)]
+#[tool_router]
 impl MooCow {
     pub fn new() -> Self {
-        Self { moo_count: Arc::new(Mutex::new(0)) }
+        Self {
+            moo_count: Arc::new(Mutex::new(0)),
+            tool_router: Self::tool_router(),
+            prompt_router: Self::prompt_router(),
+        }
     }
 
     fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
@@ -104,9 +113,7 @@ impl MooCow {
     #[tool(description = "Moo like a cow multiple times")]
     async fn moo_times(
         &self,
-        #[tool(param)]
-        #[schemars(description = "Number of times to moo")]
-        times: i32,
+        Parameters(MooRequest { times }): Parameters<MooRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut count = self.moo_count.lock().await;
         *count += times;
@@ -125,7 +132,7 @@ impl MooCow {
     #[tool(description = "Aggregate moo")]
     fn aggregate_moo(
         &self,
-        #[tool(aggr)] MooRequest { times }: MooRequest,
+        Parameters(MooRequest { times }): Parameters<MooRequest>,
     ) -> Result<CallToolResult, McpError> {
         let moo_text = "Moo ".repeat(times as usize).trim().to_string();
         Ok(CallToolResult::success(vec![Content::text(moo_text)]))
@@ -134,7 +141,41 @@ impl MooCow {
 
 const_string!(MooPrompt = "moo_prompt");
 
-#[tool(tool_box)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct MooPromptArgs {
+    /// The name of the cow
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[prompt_router]
+impl MooCow {
+    /// A prompt about cows that takes an optional name parameter
+    #[prompt(name = "moo_prompt")]
+    async fn moo_prompt(
+        &self,
+        Parameters(MooPromptArgs { name }): Parameters<MooPromptArgs>,
+        _ctx: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        let cow_name = name.unwrap_or_else(|| "Bessie".to_string());
+
+        let prompt = format!(
+            "You are a helpful cow named {}. Answer questions with facts about cows and occasionally make 'moo' sounds.",
+            cow_name
+        );
+
+        Ok(GetPromptResult {
+            description: Some("A prompt about cows".to_string()),
+            messages: vec![PromptMessage {
+                role: PromptMessageRole::User,
+                content: PromptMessageContent::text(prompt),
+            }],
+        })
+    }
+}
+
+#[tool_handler]
+#[prompt_handler]
 impl ServerHandler for MooCow {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
@@ -151,7 +192,7 @@ impl ServerHandler for MooCow {
 
     async fn list_resources(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParam>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
@@ -186,61 +227,9 @@ impl ServerHandler for MooCow {
         }
     }
 
-    async fn list_prompts(
-        &self,
-        _request: PaginatedRequestParam,
-        _: RequestContext<RoleServer>,
-    ) -> Result<ListPromptsResult, McpError> {
-        Ok(ListPromptsResult {
-            prompts: vec![Prompt::new(
-                MooPrompt::VALUE,
-                Some("A prompt about cows that takes an optional name parameter"),
-                Some(vec![PromptArgument {
-                    name: "name".to_string(),
-                    description: Some("The name of the cow".to_string()),
-                    required: Some(false),
-                }]),
-            )],
-            next_cursor: None,
-        })
-    }
-
-    async fn get_prompt(
-        &self,
-        GetPromptRequestParam { name, arguments }: GetPromptRequestParam,
-        _: RequestContext<RoleServer>,
-    ) -> Result<GetPromptResult, McpError> {
-        match name.as_str() {
-            MooPrompt::VALUE => {
-                let cow_name = arguments
-                    .and_then(|json| json.get("name")?.as_str().map(|s| s.to_string()))
-                    .unwrap_or_else(|| "Bessie".to_string());
-
-                let prompt = format!(
-                    "You are a helpful cow named {}. Answer questions with facts about cows and occasionally make 'moo' sounds.",
-                    cow_name
-                );
-
-                Ok(GetPromptResult {
-                    description: Some("A prompt about cows".to_string()),
-                    messages: vec![PromptMessage {
-                        role: PromptMessageRole::User,
-                        content: PromptMessageContent::text(prompt),
-                    }],
-                })
-            },
-            _ => Err(McpError::invalid_params(
-                "prompt not found",
-                Some(serde_json::json!({
-                    "name": name
-                })),
-            )),
-        }
-    }
-
     async fn list_resource_templates(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParam>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         Ok(ListResourceTemplatesResult { resource_templates: vec![], next_cursor: None })
@@ -348,32 +337,42 @@ impl Service for McpService {
             sse_path: "/sse".to_string(),
             post_path: "/message".to_string(),
             ct: cancellation_token.clone(),
+            sse_keep_alive: None,
         };
-
-        let ct_clone = cancellation_token.clone();
 
         // Launch the service
         let server_handle = tokio::spawn(async move {
-            match SseServer::serve_with_config(server_config).await {
-                Ok(sse_server) => {
-                    // Create the waypoint service
-                    let waypoint_service = WaypointMcpService::new(data_context);
+            let (sse_server, router) = SseServer::new(server_config);
 
-                    // Create the tools wrapper
-                    let tools =
-                        crate::services::mcp::handlers::WaypointMcpTools::new(waypoint_service);
+            // Save bind address before consuming sse_server
+            let bind_addr = sse_server.config.bind;
 
-                    // Initialize the tools with the SSE server
-                    sse_server.with_service(move || tools.clone());
+            // Create the waypoint service
+            let waypoint_service = WaypointMcpService::new(data_context);
 
+            // Create the tools wrapper
+            let tools = crate::services::mcp::handlers::WaypointMcpTools::new(waypoint_service);
+
+            // Initialize the tools with the SSE server (consumes sse_server)
+            let ct = sse_server.with_service(move || tools.clone());
+
+            // Create TCP listener
+            match tokio::net::TcpListener::bind(bind_addr).await {
+                Ok(listener) => {
                     info!("MCP service started on {} and ready to accept connections", socket_addr);
 
-                    // Wait for the service to be cancelled
-                    ct_clone.cancelled().await;
-                    info!("MCP service shutting down");
+                    let ct_shutdown = ct.child_token();
+                    let server = axum::serve(listener, router).with_graceful_shutdown(async move {
+                        ct_shutdown.cancelled().await;
+                        info!("MCP service shutting down");
+                    });
+
+                    if let Err(e) = server.await {
+                        error!("MCP server shutdown with error: {}", e);
+                    }
                 },
                 Err(e) => {
-                    error!("Failed to start MCP service: {}", e);
+                    error!("Failed to bind MCP service to {}: {}", socket_addr, e);
                 },
             }
         });

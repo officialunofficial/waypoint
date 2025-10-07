@@ -4,7 +4,7 @@ use rmcp::transport::sse_server::{SseServer, SseServerConfig};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 use waypoint::config::Config;
 use waypoint::core::data_context::{DataContext, DataContextBuilder};
 use waypoint::services::mcp::{NullDb, WaypointMcpService, WaypointMcpTools};
@@ -52,14 +52,9 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
     // Create the required clients for the DataContext
     let hub_config = Arc::new(Config::default().hub);
 
-    // Create Hub client
-    let mut hub = waypoint::hub::client::Hub::new(hub_config)
+    // Create Hub client (connection will happen automatically on first use)
+    let hub = waypoint::hub::client::Hub::new(hub_config)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to create Hub client: {}", e))?;
-
-    // Connect to the Hub
-    if let Err(err) = hub.connect().await {
-        warn!("Failed to connect to Hub: {}. Will retry automatically when needed.", err);
-    }
 
     // Create Hub client for data context
     let hub_client = waypoint::hub::providers::FarcasterHubClient::new(Arc::new(Mutex::new(hub)));
@@ -77,10 +72,11 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
         sse_path: "/sse".to_string(),
         post_path: "/message".to_string(),
         ct: cancellation_token.clone(),
+        sse_keep_alive: None,
     };
 
-    // Create and serve the SSE server
-    let sse_server = SseServer::serve_with_config(server_config).await?;
+    // Create the SSE server
+    let (sse_server, router) = SseServer::new(server_config);
 
     // Initialize the WaypointMcpService with data context
     let waypoint_service = WaypointMcpService::new(data_context);
@@ -91,11 +87,30 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
     // Initialize the tools with the SSE server
     let ct = sse_server.with_service(move || tools.clone());
 
+    // Create TCP listener and start server
+    let listener = tokio::net::TcpListener::bind(bind_address).await?;
+
     info!("MCP service started on {}. Press Ctrl+C to stop", bind_address);
+
+    // Spawn server task
+    let ct_shutdown = ct.child_token();
+    let server_handle = tokio::spawn(async move {
+        let server = axum::serve(listener, router).with_graceful_shutdown(async move {
+            ct_shutdown.cancelled().await;
+            info!("MCP service shutting down");
+        });
+
+        if let Err(e) = server.await {
+            tracing::error!("MCP server error: {}", e);
+        }
+    });
 
     // Wait for Ctrl+C and then cancel the server
     tokio::signal::ctrl_c().await?;
     ct.cancel();
+
+    // Wait for server to finish
+    let _ = server_handle.await;
 
     info!("MCP service stopped");
 
