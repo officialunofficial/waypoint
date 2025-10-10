@@ -5727,7 +5727,7 @@ dependencies = [
 
 [[package]]
 name = "waypoint"
-version = "2025.10.4"
+version = "2025.10.5"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",

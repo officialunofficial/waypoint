@@ -6,8 +6,19 @@ use tracing::info;
 use waypoint::{
     backfill::worker::{BackfillJob, BackfillQueue, JobPriority, JobState},
     config::Config,
-    hub::client::Hub,
+    hub::{client::Hub, filter::SpamFilter},
 };
+
+/// Helper function to filter spam FIDs from a list
+async fn filter_spam_fids(fids: Vec<u64>, spam_filter: &SpamFilter) -> Vec<u64> {
+    let mut non_spam_fids = Vec::new();
+    for fid in fids {
+        if !spam_filter.is_spam(fid).await {
+            non_spam_fids.push(fid);
+        }
+    }
+    non_spam_fids
+}
 
 /// Helper function to get max FID from hub info
 async fn get_max_fid_from_hub_info(hub: &mut Hub) -> u64 {
@@ -77,6 +88,12 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     let hub = Arc::new(Mutex::new(waypoint::hub::client::Hub::new(config.hub.clone())?));
     let fid_queue = Arc::new(BackfillQueue::new(redis.clone(), "backfill:fid:queue".to_string()));
 
+    // Initialize and load spam filter
+    info!("Loading spam filter for backfill queue...");
+    let spam_filter = Arc::new(SpamFilter::new());
+    spam_filter.start_updater().await?;
+    info!("Spam filter loaded successfully");
+
     let fids_str = args.get_one::<String>("fids");
     let max_fid_str = args.get_one::<String>("max_fid");
     let batch_size = args.get_one::<u64>("batch_size").copied().unwrap_or(50);
@@ -108,32 +125,49 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
 
         // Queue in batches up to the maximum FID
         let mut queued_batches = 0;
+        let mut total_fids = 0;
+        let mut filtered_spam_count = 0;
+
         for start in (1..=hub_max_fid).step_by(batch_size as usize) {
             let end = std::cmp::min(start + batch_size - 1, hub_max_fid);
             let batch_fids = (start..=end).collect::<Vec<_>>();
+            let original_count = batch_fids.len();
 
-            fid_queue
-                .add_job(BackfillJob {
-                    fids: batch_fids,
-                    priority: JobPriority::Normal,
-                    state: JobState::Pending,
-                    visibility_timeout: None,
-                    attempts: 0,
-                    created_at: chrono::Utc::now(),
-                    id: String::new(),
-                    started_at: None,
-                })
-                .await?;
+            // Filter out spam FIDs
+            let filtered_fids = filter_spam_fids(batch_fids, &spam_filter).await;
+            let spam_count = original_count - filtered_fids.len();
+            filtered_spam_count += spam_count;
 
-            queued_batches += 1;
-            if queued_batches % 10 == 0 {
-                info!("Queued {} batches of FIDs up to {}", queued_batches, end);
+            // Only queue if there are non-spam FIDs in this batch
+            if !filtered_fids.is_empty() {
+                total_fids += filtered_fids.len();
+
+                fid_queue
+                    .add_job(BackfillJob {
+                        fids: filtered_fids,
+                        priority: JobPriority::Normal,
+                        state: JobState::Pending,
+                        visibility_timeout: None,
+                        attempts: 0,
+                        created_at: chrono::Utc::now(),
+                        id: String::new(),
+                        started_at: None,
+                    })
+                    .await?;
+
+                queued_batches += 1;
+                if queued_batches % 10 == 0 {
+                    info!(
+                        "Queued {} batches ({} FIDs, {} spam filtered) up to {}",
+                        queued_batches, total_fids, filtered_spam_count, end
+                    );
+                }
             }
         }
 
         info!(
-            "Queued all FIDs from 1 to {} in {} batches (batch size: {})",
-            hub_max_fid, queued_batches, batch_size
+            "Queued {} non-spam FIDs from 1 to {} in {} batches (filtered {} spam FIDs)",
+            total_fids, hub_max_fid, queued_batches, filtered_spam_count
         );
 
         // Log queue status
@@ -149,34 +183,16 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
             return Err(color_eyre::eyre::eyre!("No valid FIDs found in the provided list"));
         }
 
-        fid_queue
-            .add_job(BackfillJob {
-                fids: fid_list.clone(),
-                priority: JobPriority::Normal,
-                state: JobState::Pending,
-                visibility_timeout: None,
-                attempts: 0,
-                created_at: chrono::Utc::now(),
-                id: String::new(),
-                started_at: None,
-            })
-            .await?;
-        info!("Queued specific FIDs: {:?}", fid_list);
-    }
-    // Process FIDs up to max_fid or hub max
-    else if let Some(max_fid) = max_fid_str {
-        let max = max_fid.parse::<u64>().unwrap_or(hub_max_fid);
-        info!("Using specified max FID: {}", max);
+        let original_count = fid_list.len();
+        let filtered_fids = filter_spam_fids(fid_list, &spam_filter).await;
+        let spam_count = original_count - filtered_fids.len();
 
-        // Queue in batches
-        let mut queued_batches = 0;
-        for start in (1..=max).step_by(batch_size as usize) {
-            let end = std::cmp::min(start + batch_size - 1, max);
-            let batch_fids = (start..=end).collect::<Vec<_>>();
-
+        if filtered_fids.is_empty() {
+            info!("All {} specified FIDs were spam - no jobs queued", original_count);
+        } else {
             fid_queue
                 .add_job(BackfillJob {
-                    fids: batch_fids,
+                    fids: filtered_fids.clone(),
                     priority: JobPriority::Normal,
                     state: JobState::Pending,
                     visibility_timeout: None,
@@ -186,16 +202,64 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
                     started_at: None,
                 })
                 .await?;
+            info!(
+                "Queued {} non-spam FIDs (filtered {} spam): {:?}",
+                filtered_fids.len(),
+                spam_count,
+                filtered_fids
+            );
+        }
+    }
+    // Process FIDs up to max_fid or hub max
+    else if let Some(max_fid) = max_fid_str {
+        let max = max_fid.parse::<u64>().unwrap_or(hub_max_fid);
+        info!("Using specified max FID: {}", max);
 
-            queued_batches += 1;
-            if queued_batches % 10 == 0 {
-                info!("Queued {} batches of FIDs up to {}", queued_batches, end);
+        // Queue in batches
+        let mut queued_batches = 0;
+        let mut total_fids = 0;
+        let mut filtered_spam_count = 0;
+
+        for start in (1..=max).step_by(batch_size as usize) {
+            let end = std::cmp::min(start + batch_size - 1, max);
+            let batch_fids = (start..=end).collect::<Vec<_>>();
+            let original_count = batch_fids.len();
+
+            // Filter out spam FIDs
+            let filtered_fids = filter_spam_fids(batch_fids, &spam_filter).await;
+            let spam_count = original_count - filtered_fids.len();
+            filtered_spam_count += spam_count;
+
+            // Only queue if there are non-spam FIDs in this batch
+            if !filtered_fids.is_empty() {
+                total_fids += filtered_fids.len();
+
+                fid_queue
+                    .add_job(BackfillJob {
+                        fids: filtered_fids,
+                        priority: JobPriority::Normal,
+                        state: JobState::Pending,
+                        visibility_timeout: None,
+                        attempts: 0,
+                        created_at: chrono::Utc::now(),
+                        id: String::new(),
+                        started_at: None,
+                    })
+                    .await?;
+
+                queued_batches += 1;
+                if queued_batches % 10 == 0 {
+                    info!(
+                        "Queued {} batches ({} FIDs, {} spam filtered) up to {}",
+                        queued_batches, total_fids, filtered_spam_count, end
+                    );
+                }
             }
         }
 
         info!(
-            "Queued all FIDs from 1 to {} in {} batches (batch size: {})",
-            max, queued_batches, batch_size
+            "Queued {} non-spam FIDs from 1 to {} in {} batches (filtered {} spam FIDs)",
+            total_fids, max, queued_batches, filtered_spam_count
         );
 
         // Log queue status

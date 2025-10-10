@@ -8,6 +8,10 @@ All notable changes to Waypoint will be documented in this file.
 
 - Update MCP documentation for rmcp 0.8.0
 
+### Features
+
+- Add support for multiple spam.jsonl sources
+
 ### Miscellaneous Tasks
 
 - Update Snapchain to v0.9.1
