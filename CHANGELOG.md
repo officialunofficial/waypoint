@@ -4,20 +4,54 @@ All notable changes to Waypoint will be documented in this file.
 
 ## [unreleased]
 
-### Dependencies
+### Documentation
 
-- Upgrade rmcp from 0.1.5 to 0.8.0 with latest macro patterns
+- Update MCP documentation for rmcp 0.8.0
+
+### Miscellaneous Tasks
+
+- Update Snapchain to v0.9.1
+
+## [2025.10.3] - 2025-10-07
+
+### Bug Fixes
+
+- Update Dockerfile to use Rust 1.90
+- Docker buildx
+- Update Dockerfile to use Ubuntu 24.04 for GLIBC 2.39 compatibility
+- Remove ubuntu image
+
+### Miscellaneous Tasks
+
+- Upgrade rmcp to 0.8.0 and refactor to use latest macros (#55)
+- Format code and remove unused const_string declarations
+
+## [2025.10.2] - 2025-10-03
+
+### Features
+
+- Upgrade alloy-rs to v1.0.37 and Rust to 1.90.0
+
+### Miscellaneous Tasks
+
+- Bump version to 2025.10.2
+
+## [2025.10.1] - 2025-10-02
 
 ### Features
 
 - Implement LendStorage message type and ProfileToken user data type from Snapchain v0.9.0
-- Refactor MCP service to use rmcp 0.8.0 macro-based API
+- Add lend_storage table migration for storage lending messages
+- Add database handler for lend_storage messages
 
 ### Miscellaneous Tasks
 
 - Update Snapchain to v0.8.1
 - Update Snapchain to v0.9.0
-- Update MCP documentation with rmcp 0.8.0 API examples
+- Update changelog
+- Sqlx
+- Run cargo fmt
+- Migrate biome configuration to schema v2.2.4
 
 ## [2025.9.2] - 2025-09-06
 

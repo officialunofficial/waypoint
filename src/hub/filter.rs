@@ -85,13 +85,41 @@ impl SpamFilter {
     }
 
     async fn fetch_spam_list(client: &Client) -> Result<HashSet<u64>> {
-        // Directly use the Git LFS media URL
-        let url = "https://media.githubusercontent.com/media/merkle-team/labels/main/spam.jsonl";
+        // List of spam.jsonl sources to fetch from
+        let urls = [
+            "https://media.githubusercontent.com/media/merkle-team/labels/main/spam.jsonl",
+            "https://storage.googleapis.com/uno-spam-labels/spam.jsonl",
+        ];
+
+        let mut spam_fids = HashSet::new();
+
+        for url in &urls {
+            match Self::fetch_from_url(client, url).await {
+                Ok(fids) => {
+                    let count = fids.len();
+                    spam_fids.extend(fids);
+                    info!("Fetched {} spam FIDs from {}", count, url);
+                },
+                Err(e) => {
+                    error!("Failed to fetch spam list from {}: {:#}", url, e);
+                    // Continue with other sources even if one fails
+                },
+            }
+        }
+
+        if spam_fids.is_empty() {
+            return Err(color_eyre::eyre::eyre!("Failed to fetch spam list from any source"));
+        }
+
+        Ok(spam_fids)
+    }
+
+    async fn fetch_from_url(client: &Client, url: &str) -> Result<HashSet<u64>> {
         let response = client
             .get(url)
             .send()
             .await
-            .context("Failed to fetch spam list")?
+            .context(format!("Failed to fetch from {}", url))?
             .text()
             .await
             .context("Failed to read response text")?;
@@ -190,12 +218,38 @@ mod tests {
         assert!(result.is_ok(), "Failed to fetch spam list: {:?}", result.err());
 
         let fids = result.unwrap();
-        println!("Fetched {} spam FIDs directly", fids.len());
+        println!("Fetched {} spam FIDs directly from all sources", fids.len());
 
-        // Should have loaded many FIDs
+        // Should have loaded many FIDs from multiple sources
         assert!(fids.len() > 100000, "Expected more than 100k FIDs, got {}", fids.len());
 
         // Check for a specific FID from the data
         assert!(fids.contains(&568763), "Expected to find FID 568763 in spam list");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_from_multiple_sources() {
+        let client = Client::new();
+
+        // Test fetching from GitHub source
+        let github_url =
+            "https://media.githubusercontent.com/media/merkle-team/labels/main/spam.jsonl";
+        let github_result = SpamFilter::fetch_from_url(&client, github_url).await;
+        assert!(github_result.is_ok(), "Failed to fetch from GitHub: {:?}", github_result.err());
+
+        let github_fids = github_result.unwrap();
+        println!("Fetched {} FIDs from GitHub source", github_fids.len());
+
+        // Test fetching from Google Cloud Storage source
+        let gcs_url = "https://storage.googleapis.com/uno-spam-labels/spam.jsonl";
+        let gcs_result = SpamFilter::fetch_from_url(&client, gcs_url).await;
+        assert!(gcs_result.is_ok(), "Failed to fetch from GCS: {:?}", gcs_result.err());
+
+        let gcs_fids = gcs_result.unwrap();
+        println!("Fetched {} FIDs from Google Cloud Storage source", gcs_fids.len());
+
+        // Both sources should have data
+        assert!(github_fids.len() > 0, "GitHub source should have spam FIDs");
+        assert!(gcs_fids.len() > 0, "GCS source should have spam FIDs");
     }
 }
