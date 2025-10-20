@@ -39,6 +39,32 @@ services:
     networks:
       - waypoint-network
 
+  # Snapchain - Local Farcaster hub (optional)
+  # Start with: docker compose --profile snapchain up
+  # NOTE: Adjust image and configuration for your Snapchain setup
+  snapchain:
+    image: farcasterxyz/snapchain:latest
+    restart: unless-stopped
+    ports:
+      - "3381:3381"  # HTTP API
+      - "3382:3382"  # gRPC
+      - "3383:3383"  # gRPC with TLS
+    environment:
+      # Add your Snapchain-specific environment variables here
+      SNAPCHAIN_ENV: ${SNAPCHAIN_ENV:-production}
+    volumes:
+      - snapchain-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3381/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - waypoint-network
+    profiles:
+      - snapchain
+
   waypoint:
     image: officialunofficial/waypoint:latest
     pull_policy: always
@@ -62,6 +88,9 @@ services:
       WAYPOINT_REDIS__MAX_CONNECTION_LIFETIME_SECS: ${WAYPOINT_REDIS__MAX_CONNECTION_LIFETIME_SECS:-300}
 
       # Farcaster Hub
+      # Default: remote Snapchain (snapchain.farcaster.xyz:3383)
+      # For local Snapchain: set WAYPOINT_HUB__URL=http://snapchain:3381 in .env
+      # and start with: docker compose --profile snapchain up
       WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
       # Shard configuration (defaults to subscribe_to_all_shards=true)
       # To subscribe to specific shards, set WAYPOINT_HUB__SHARD_INDICES=1,2,3
@@ -211,6 +240,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  snapchain-data:
 
 networks:
   waypoint-network:

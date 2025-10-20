@@ -220,12 +220,35 @@ impl Hub {
             channel_builder
         };
 
-        let channel = channel_builder
+        let channel = match channel_builder
             .http2_keep_alive_interval(Duration::from_secs(10))
             .http2_adaptive_window(true)
             .tcp_keepalive(Some(Duration::from_secs(60)))
             .connect()
-            .await?;
+            .await
+        {
+            Ok(ch) => ch,
+            Err(e) => {
+                // Provide helpful error message for common Docker networking mistakes
+                let error_msg = if self.config.url.contains("localhost")
+                    || self.config.url.contains("127.0.0.1")
+                {
+                    format!(
+                        "Failed to connect to hub at {}: {}\n\n\
+                        NOTE: If running in Docker, 'localhost' refers to the container itself, not other containers or the host.\n\
+                        Try using:\n\
+                        - Container name (e.g., 'http://snapchain:3381') for docker-compose on the same network\n\
+                        - 'host.docker.internal' (e.g., 'http://host.docker.internal:3381') for Docker Desktop\n\
+                        - Host network mode or container IP for other setups\n\
+                        See the documentation for more details on Docker networking configuration.",
+                        self.config.url, e
+                    )
+                } else {
+                    format!("Failed to connect to hub at {}: {}", self.config.url, e)
+                };
+                return Err(Error::ConnectionError(error_msg));
+            },
+        };
 
         // Store the channel for future use
         self.channel = Some(channel.clone());
@@ -255,6 +278,22 @@ impl Hub {
                 // If there's an error, clean up client and channel
                 self.client = None;
                 self.channel = None;
+
+                // Provide helpful error message for common Docker networking mistakes
+                if self.config.url.contains("localhost") || self.config.url.contains("127.0.0.1") {
+                    let error_msg = format!(
+                        "Failed to connect to hub at {}: {}\n\n\
+                        NOTE: If running in Docker, 'localhost' refers to the container itself, not other containers or the host.\n\
+                        Try using:\n\
+                        - Container name (e.g., 'http://snapchain:3381') for docker-compose on the same network\n\
+                        - 'host.docker.internal' (e.g., 'http://host.docker.internal:3381') for Docker Desktop\n\
+                        - Host network mode or container IP for other setups\n\
+                        See the documentation for more details on Docker networking configuration.",
+                        self.config.url, e
+                    );
+                    return Err(Error::ConnectionError(error_msg));
+                }
+
                 Err(Error::StatusError(e))
             },
         }
