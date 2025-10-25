@@ -68,6 +68,9 @@ docker compose up -d
 # Start the backfill services (uses the same DB and Redis)
 docker compose --profile backfill up -d
 
+# Start with local Snapchain (optional, requires configuration)
+docker compose --profile snapchain up -d
+
 # Build Docker image
 make docker-build
 
@@ -159,6 +162,44 @@ WAYPOINT_REDIS__URL=redis://host.docker.internal:6379
 ```
 
 These settings are automatically set in the docker-compose.yml and Makefile.
+
+### Connecting to Local Snapchain in Docker
+
+**Important:** When running Waypoint in Docker, **never use `localhost`** for the hub URL. In Docker containers, `localhost` refers to the container itself, not to other containers or the host machine.
+
+If you're running both Waypoint and Snapchain in Docker containers:
+
+**Docker Compose (containers on the same network):**
+```bash
+WAYPOINT_HUB__URL=http://snapchain:3381
+```
+Replace `snapchain` with your Snapchain service name from your docker-compose.yml file.
+
+**Standalone Docker (Docker Desktop on macOS/Windows):**
+```bash
+WAYPOINT_HUB__URL=http://host.docker.internal:3381
+```
+
+**Standalone Docker (Linux hosts):**
+Use your host's IP address on the Docker bridge network, or use host network mode:
+```bash
+# Option 1: Use host IP
+WAYPOINT_HUB__URL=http://172.17.0.1:3381
+
+# Option 2: Run with host network mode
+docker run --network host ...
+```
+
+**Running with local Snapchain using docker-compose:**
+```bash
+# Set the hub URL in your .env file
+WAYPOINT_HUB__URL=http://snapchain:3381
+
+# Start Waypoint with local Snapchain
+docker compose --profile snapchain up
+```
+
+The Snapchain service is included in docker-compose.yml as an optional profile. Note: You'll need to adjust the Snapchain image and configuration for your specific setup.
 
 ## Metrics & Monitoring
 
