@@ -25,25 +25,24 @@ If you prefer to run services manually:
 
 1. Install PostgreSQL 17+ with pgvector extension
 2. Install Redis 7+
-3. Run the database migrations:
+3. Create the database:
    ```bash
    # Create the database
    createdb waypoint
-   
-   # Run all migrations using the helper script
-   ./scripts/run-migrations.sh
-   
-   # Or run manually:
-   psql -U postgres -d waypoint -f migrations/001_init.sql
-   psql -U postgres -d waypoint -f migrations/002_add_tier_purchases.sql
    ```
+
+**Note:** Database migrations are now run automatically when Waypoint starts. The migrations are embedded in the binary and will be applied to your database on first run. You don't need to run them manually unless you're developing new migrations.
 
 ### Database Migrations
 
-Waypoint uses SQLx for compile-time checked queries. When adding new migrations:
+Waypoint uses SQLx for database operations with embedded migrations. Migrations are automatically run when the application starts.
+
+**Important:** Migrations are embedded in the Waypoint binary at compile time, so they work out of the box with Docker images without requiring the migrations directory to be present.
+
+When adding new migrations for development:
 
 1. Create a new migration file in the `migrations/` directory with the format `NNN_description.sql`
-2. Apply the migration to your local database:
+2. (Optional) Apply the migration to your local database manually for testing:
    ```bash
    psql -U postgres -d waypoint -f migrations/NNN_description.sql
    ```

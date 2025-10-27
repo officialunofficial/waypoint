@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config
 COPY Cargo.toml build.rs ./
 COPY .sqlx ./.sqlx
+COPY migrations ./migrations
 COPY src/proto ./src/proto
 COPY src ./src
 # SQLx offline mode

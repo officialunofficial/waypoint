@@ -1,5 +1,8 @@
 // build.rs
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Tell Cargo to rerun this build script if migrations change
+    println!("cargo:rerun-if-changed=migrations");
+
     // Use out_dir to set a different output directory for admin_rpc.proto
     tonic_prost_build::configure()
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")

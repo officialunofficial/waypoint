@@ -31,6 +31,16 @@ impl Database {
             return Err(Error::ConnectionError("Failed initial connection check".into()));
         }
 
+        // Run database migrations
+        // Migrations are embedded in the binary at compile time via sqlx::migrate!()
+        // This allows the Docker image to work without needing the migrations directory at runtime
+        tracing::info!("Running database migrations...");
+        sqlx::migrate!("./migrations")
+            .run(&db.pool)
+            .await
+            .map_err(|e| Error::ConnectionError(format!("Failed to run migrations: {}", e)))?;
+        tracing::info!("Database migrations completed successfully");
+
         // Start metrics collection for connection pool
         db.start_connection_metrics_monitoring();
 
