@@ -35,6 +35,8 @@ pub struct DatabaseConfig {
     pub store_messages: bool,
     #[serde(default = "default_db_batch_size")]
     pub batch_size: usize,
+    #[serde(default = "default_skip_migrations")]
+    pub skip_migrations: bool,
 }
 
 /// Redis configuration
@@ -296,6 +298,11 @@ fn default_db_batch_size() -> usize {
     100 // Default to 100 records per batch for database operations
 }
 
+/// Default value for skip_migrations - default to false to run migrations
+fn default_skip_migrations() -> bool {
+    false // Run migrations by default
+}
+
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
@@ -304,6 +311,7 @@ impl Default for DatabaseConfig {
             timeout_seconds: 30, // Align with Docker default
             store_messages: default_store_messages(),
             batch_size: default_db_batch_size(),
+            skip_migrations: default_skip_migrations(),
         }
     }
 }

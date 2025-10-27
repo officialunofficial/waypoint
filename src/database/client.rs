@@ -31,15 +31,21 @@ impl Database {
             return Err(Error::ConnectionError("Failed initial connection check".into()));
         }
 
-        // Run database migrations
+        // Run database migrations (unless explicitly skipped)
         // Migrations are embedded in the binary at compile time via sqlx::migrate!()
         // This allows the Docker image to work without needing the migrations directory at runtime
-        tracing::info!("Running database migrations...");
-        sqlx::migrate!("./migrations")
-            .run(&db.pool)
-            .await
-            .map_err(|e| Error::ConnectionError(format!("Failed to run migrations: {}", e)))?;
-        tracing::info!("Database migrations completed successfully");
+        // Set WAYPOINT_DATABASE__SKIP_MIGRATIONS=true to skip migrations if you manage
+        // migrations externally or share a database with other services
+        if config.skip_migrations {
+            tracing::info!("Skipping database migrations (skip_migrations=true)");
+        } else {
+            tracing::info!("Running database migrations...");
+            sqlx::migrate!("./migrations")
+                .run(&db.pool)
+                .await
+                .map_err(|e| Error::ConnectionError(format!("Failed to run migrations: {}", e)))?;
+            tracing::info!("Database migrations completed successfully");
+        }
 
         // Start metrics collection for connection pool
         db.start_connection_metrics_monitoring();
