@@ -1,6 +1,9 @@
 use clap::{ArgAction, ArgMatches, Command, value_parser};
 use color_eyre::eyre::Result;
-use rmcp::transport::sse_server::{SseServer, SseServerConfig};
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpService, StreamableHttpServerConfig,
+    session::local::LocalSessionManager,
+};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -66,34 +69,36 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
     // Create a cancellation token for the service
     let cancellation_token = CancellationToken::new();
 
-    // Configure the server
-    let server_config = SseServerConfig {
-        bind: bind_address,
-        sse_path: "/sse".to_string(),
-        post_path: "/message".to_string(),
-        ct: cancellation_token.clone(),
-        sse_keep_alive: None,
+    // Configure the Streamable HTTP server
+    let server_config = StreamableHttpServerConfig {
+        sse_keep_alive: Some(std::time::Duration::from_secs(15)),
+        stateful_mode: true,
     };
-
-    // Create the SSE server
-    let (sse_server, router) = SseServer::new(server_config);
 
     // Initialize the WaypointMcpService with data context
     let waypoint_service = WaypointMcpService::new(data_context);
 
-    // Create the tools wrapper
-    let tools = WaypointMcpTools::new(waypoint_service);
+    // Create the Streamable HTTP service with session management
+    let service = StreamableHttpService::new(
+        move || {
+            let tools = WaypointMcpTools::new(waypoint_service.clone());
+            Ok(tools)
+        },
+        Arc::new(LocalSessionManager::default()),
+        server_config,
+    );
 
-    // Initialize the tools with the SSE server
-    let ct = sse_server.with_service(move || tools.clone());
+    // Create the router with the MCP endpoint
+    let router = axum::Router::new().nest_service("/mcp", service);
 
     // Create TCP listener and start server
     let listener = tokio::net::TcpListener::bind(bind_address).await?;
 
-    info!("MCP service started on {}. Press Ctrl+C to stop", bind_address);
+    info!("MCP service started on http://{}. Press Ctrl+C to stop", bind_address);
+    info!("MCP endpoint available at http://{}/mcp", bind_address);
 
     // Spawn server task
-    let ct_shutdown = ct.child_token();
+    let ct_shutdown = cancellation_token.child_token();
     let server_handle = tokio::spawn(async move {
         let server = axum::serve(listener, router).with_graceful_shutdown(async move {
             ct_shutdown.cancelled().await;
@@ -107,7 +112,7 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
 
     // Wait for Ctrl+C and then cancel the server
     tokio::signal::ctrl_c().await?;
-    ct.cancel();
+    cancellation_token.cancel();
 
     // Wait for server to finish
     let _ = server_handle.await;

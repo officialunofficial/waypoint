@@ -14,7 +14,10 @@ use rmcp::{
     prompt, prompt_handler, prompt_router, schemars,
     service::RequestContext,
     tool, tool_handler, tool_router,
-    transport::sse_server::{SseServer, SseServerConfig},
+    transport::streamable_http_server::{
+        StreamableHttpService, StreamableHttpServerConfig,
+        session::local::LocalSessionManager,
+    },
 };
 
 // Import types from core
@@ -328,38 +331,40 @@ impl Service for McpService {
 
         // Create a cancellation token for the service
         let cancellation_token = CancellationToken::new();
+        let ct_for_shutdown = cancellation_token.clone();
 
-        // Configure the server with a single endpoint
-        let server_config = SseServerConfig {
-            bind: socket_addr,
-            sse_path: "/sse".to_string(),
-            post_path: "/message".to_string(),
-            ct: cancellation_token.clone(),
-            sse_keep_alive: None,
+        // Configure the Streamable HTTP server
+        let server_config = StreamableHttpServerConfig {
+            sse_keep_alive: Some(std::time::Duration::from_secs(15)),
+            stateful_mode: true,
         };
 
         // Launch the service
         let server_handle = tokio::spawn(async move {
-            let (sse_server, router) = SseServer::new(server_config);
-
-            // Save bind address before consuming sse_server
-            let bind_addr = sse_server.config.bind;
-
             // Create the waypoint service
             let waypoint_service = WaypointMcpService::new(data_context);
 
-            // Create the tools wrapper
-            let tools = crate::services::mcp::handlers::WaypointMcpTools::new(waypoint_service);
+            // Create the Streamable HTTP service with session management
+            let service = StreamableHttpService::new(
+                move || {
+                    let tools = crate::services::mcp::handlers::WaypointMcpTools::new(
+                        waypoint_service.clone(),
+                    );
+                    Ok(tools)
+                },
+                Arc::new(LocalSessionManager::default()),
+                server_config,
+            );
 
-            // Initialize the tools with the SSE server (consumes sse_server)
-            let ct = sse_server.with_service(move || tools.clone());
+            // Create the router with the MCP endpoint
+            let router = axum::Router::new().nest_service("/mcp", service);
 
             // Create TCP listener
-            match tokio::net::TcpListener::bind(bind_addr).await {
+            match tokio::net::TcpListener::bind(socket_addr).await {
                 Ok(listener) => {
                     info!("MCP service started on {} and ready to accept connections", socket_addr);
 
-                    let ct_shutdown = ct.child_token();
+                    let ct_shutdown = ct_for_shutdown.child_token();
                     let server = axum::serve(listener, router).with_graceful_shutdown(async move {
                         ct_shutdown.cancelled().await;
                         info!("MCP service shutting down");
@@ -379,11 +384,10 @@ impl Service for McpService {
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
 
         // Handle the stop signal
-        let ct = cancellation_token.clone();
         tokio::spawn(async move {
             let _ = stop_rx.await;
             // Cancel the server when stop is received
-            ct.cancel();
+            cancellation_token.cancel();
         });
 
         // Return the service handle
