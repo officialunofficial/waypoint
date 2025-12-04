@@ -8,7 +8,7 @@ The Model Context Protocol (MCP) is a specification that allows AI assistants to
 
 ## Implementation
 
-Waypoint uses [rmcp](https://github.com/modelcontextprotocol/rust-mcp-sdk) version **0.8.0**, the official Rust SDK for the Model Context Protocol. The implementation leverages the latest macro-based API patterns:
+Waypoint uses [rmcp](https://github.com/modelcontextprotocol/rust-sdk) version **0.10.0**, the official Rust SDK for the Model Context Protocol. The implementation leverages the latest macro-based API patterns and the new **Streamable HTTP** transport (MCP spec version 2025-03-26):
 
 - **`#[tool_router]`**: Generates tool routing logic for service implementations
 - **`#[prompt_router]`**: Generates prompt routing logic for service implementations
@@ -41,11 +41,19 @@ WAYPOINT_MCP__PORT=8000
 
 ## Transport Protocol
 
-The MCP service uses Server-Sent Events (SSE) over HTTP:
+The MCP service uses the **Streamable HTTP** transport, introduced in MCP spec version 2025-03-26. This replaces the previous SSE-based transport with several advantages:
+
+- **Single endpoint**: All communication happens through a unified `/mcp` endpoint
+- **Dynamic streaming**: Automatically adapts between simple HTTP and streaming for long-running operations
+- **Session management**: Supports stateful sessions for maintaining context across requests
+- **Bidirectional communication**: Servers can send notifications to clients
+- **Improved reliability**: Better error handling and connection recovery
+
+### Endpoint Configuration
 
 - **WaypointMcpTools**:
   - Full-featured service with access to Snapchain/Farcaster data
-  - Accessible at `http://<host>:<port>/sse`
+  - Accessible at `http://<host>:<port>/mcp`
   - Provides tools for accessing Farcaster user data, casts, and verifications
   - Configure with `bind_address` and `port` settings
 
@@ -53,9 +61,10 @@ The MCP service uses Server-Sent Events (SSE) over HTTP:
 
 The MCP integration in Waypoint is implemented as a separate service that:
 
-1. Starts an MCP-compatible server using the SSE protocol
+1. Starts an MCP-compatible server using the Streamable HTTP protocol
 2. Exposes tools for querying data
 3. Handles AI assistant requests through the MCP protocol
+4. Manages sessions with configurable keep-alive (15 second default)
 
 The MCP service is automatically started when you run Waypoint via `waypoint start` or Docker Compose, as long as it's enabled in the configuration.
 
