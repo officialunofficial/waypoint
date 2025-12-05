@@ -15,8 +15,7 @@ use rmcp::{
     service::RequestContext,
     tool, tool_handler, tool_router,
     transport::streamable_http_server::{
-        StreamableHttpService, StreamableHttpServerConfig,
-        session::local::LocalSessionManager,
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     },
 };
 

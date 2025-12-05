@@ -1,8 +1,7 @@
 use clap::{ArgAction, ArgMatches, Command, value_parser};
 use color_eyre::eyre::Result;
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpService, StreamableHttpServerConfig,
-    session::local::LocalSessionManager,
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
