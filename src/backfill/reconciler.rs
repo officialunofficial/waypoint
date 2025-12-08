@@ -12,6 +12,26 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace};
 
+/// Statistics from a reconciliation operation
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ReconcileStats {
+    pub success: usize,
+    pub errors: usize,
+}
+
+impl ReconcileStats {
+    /// Merge another stats into this one
+    pub fn merge(&mut self, other: Self) {
+        self.success += other.success;
+        self.errors += other.errors;
+    }
+
+    /// Total events processed (success + errors)
+    pub fn total(&self) -> usize {
+        self.success + self.errors
+    }
+}
+
 pub struct MessageReconciler {
     hub: Arc<Mutex<Hub>>,
     _database: Arc<Database>, // Prefixed with underscore to indicate intentionally unused
@@ -881,6 +901,71 @@ impl MessageReconciler {
             page_count
         );
         Ok(messages)
+    }
+
+    /// Reconcile only onchain events for a FID (used for spam FIDs where we skip messages but still need onchain data)
+    pub async fn reconcile_onchain_events_only(
+        &self,
+        fid: u64,
+        processor: Arc<dyn EventProcessor>,
+    ) -> Result<ReconcileStats, Error> {
+        use futures::{StreamExt, stream};
+
+        trace!("Starting onchain-only reconciliation for FID {}", fid);
+        let start_time = std::time::Instant::now();
+
+        let onchain_events = self.get_all_onchain_events(fid).await?;
+        let event_count = onchain_events.len();
+
+        if event_count == 0 {
+            return Ok(ReconcileStats::default());
+        }
+
+        // Process events concurrently with bounded parallelism
+        let results: Vec<_> = stream::iter(onchain_events)
+            .map(|event| {
+                let processor = Arc::clone(&processor);
+                async move {
+                    let hub_event = Self::onchain_event_to_hub_event(event);
+                    processor.process_event(hub_event).await
+                }
+            })
+            .buffer_unordered(10)
+            .collect()
+            .await;
+
+        let stats = results.into_iter().fold(ReconcileStats::default(), |mut acc, result| {
+            match result {
+                Ok(_) => acc.success += 1,
+                Err(e) => {
+                    trace!("Error processing onchain event for FID {}: {:?}", fid, e);
+                    acc.errors += 1;
+                },
+            }
+            acc
+        });
+
+        let elapsed = start_time.elapsed();
+        info!(
+            "Completed onchain-only reconciliation for FID {} in {:.2?}: {} events ({} succeeded, {} failed)",
+            fid, elapsed, event_count, stats.success, stats.errors
+        );
+
+        Ok(stats)
+    }
+
+    /// Convert an OnChainEvent to a HubEvent for processing
+    fn onchain_event_to_hub_event(event: proto::OnChainEvent) -> HubEvent {
+        HubEvent {
+            id: 0,
+            r#type: HubEventType::MergeOnChainEvent as i32,
+            body: Some(proto::hub_event::Body::MergeOnChainEventBody(MergeOnChainEventBody {
+                on_chain_event: Some(event),
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        }
     }
 
     /// Get all onchain events for the given FID

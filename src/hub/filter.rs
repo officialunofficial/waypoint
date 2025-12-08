@@ -252,4 +252,126 @@ mod tests {
         assert!(github_fids.len() > 0, "GitHub source should have spam FIDs");
         assert!(gcs_fids.len() > 0, "GCS source should have spam FIDs");
     }
+
+    #[tokio::test]
+    async fn test_filter_events_keeps_onchain_events() {
+        use crate::proto::{MergeOnChainEventBody, OnChainEvent};
+
+        let filter = SpamFilter::new();
+
+        // Manually add a spam FID for testing
+        {
+            let mut fids = filter.spam_fids.write().await;
+            fids.insert(12345);
+        }
+
+        // Create a MergeOnChainEvent for a spam FID
+        let onchain_event = HubEvent {
+            id: 1,
+            r#type: 9, // MERGE_ON_CHAIN_EVENT
+            body: Some(hub_event::Body::MergeOnChainEventBody(MergeOnChainEventBody {
+                on_chain_event: Some(OnChainEvent {
+                    r#type: 1, // EVENT_TYPE_SIGNER
+                    chain_id: 1,
+                    block_number: 100,
+                    block_hash: vec![],
+                    block_timestamp: 0,
+                    transaction_hash: vec![],
+                    log_index: 0,
+                    fid: 12345, // This is a spam FID
+                    body: None,
+                    tx_index: 0,
+                    version: 0,
+                }),
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        };
+
+        let events = vec![onchain_event];
+        let keep_indices = filter.filter_events(&events).await;
+
+        // Onchain events should ALWAYS be kept, even for spam FIDs
+        assert_eq!(
+            keep_indices.len(),
+            1,
+            "Onchain events should not be filtered out, even for spam FIDs"
+        );
+        assert_eq!(keep_indices[0], 0, "The onchain event index should be kept");
+    }
+
+    #[tokio::test]
+    async fn test_filter_events_filters_messages_from_spam_fids() {
+        use crate::proto::{MergeMessageBody, Message, MessageData};
+
+        let filter = SpamFilter::new();
+
+        // Manually add a spam FID for testing
+        {
+            let mut fids = filter.spam_fids.write().await;
+            fids.insert(99999);
+        }
+
+        // Create a MergeMessage event for a spam FID
+        let spam_message_event = HubEvent {
+            id: 1,
+            r#type: 1, // MERGE_MESSAGE
+            body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
+                message: Some(Message {
+                    data: Some(MessageData {
+                        r#type: 1,  // CAST_ADD
+                        fid: 99999, // Spam FID
+                        timestamp: 0,
+                        network: 0,
+                        body: None,
+                    }),
+                    hash: vec![],
+                    hash_scheme: 0,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                    data_bytes: None,
+                }),
+                deleted_messages: vec![],
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        };
+
+        // Create a MergeMessage event for a non-spam FID
+        let normal_message_event = HubEvent {
+            id: 2,
+            r#type: 1, // MERGE_MESSAGE
+            body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
+                message: Some(Message {
+                    data: Some(MessageData {
+                        r#type: 1, // CAST_ADD
+                        fid: 1,    // Non-spam FID
+                        timestamp: 0,
+                        network: 0,
+                        body: None,
+                    }),
+                    hash: vec![],
+                    hash_scheme: 0,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                    data_bytes: None,
+                }),
+                deleted_messages: vec![],
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        };
+
+        let events = vec![spam_message_event, normal_message_event];
+        let keep_indices = filter.filter_events(&events).await;
+
+        // Only the non-spam message should be kept
+        assert_eq!(keep_indices.len(), 1, "Only non-spam messages should be kept");
+        assert_eq!(keep_indices[0], 1, "Only the second event (non-spam) should be kept");
+    }
 }
