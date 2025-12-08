@@ -646,23 +646,24 @@ impl Worker {
                             let mut job_success_count = 0;
                             let mut job_error_count = 0;
                             let mut job_spam_count = 0;
+                            let mut onchain_events_processed = 0;
 
-                            // First filter out spam FIDs
+                            // Separate spam FIDs from non-spam FIDs
                             let mut non_spam_fids = Vec::new();
+                            let mut spam_fids = Vec::new();
                             for fid in fids {
                                 if spam_filter.is_spam(fid).await {
-                                    info!("Skipping spam FID {}", fid);
+                                    spam_fids.push(fid);
                                     job_spam_count += 1;
                                 } else {
                                     non_spam_fids.push(fid);
                                 }
                             }
 
-                            // Use the new batch reconciliation method for better database efficiency
-                            if !non_spam_fids.is_empty() {
-                                let _hub_permit = hub_connection_limiter.acquire().await.unwrap();
+                            let _hub_permit = hub_connection_limiter.acquire().await.unwrap();
 
-                                // Process all FIDs using the batch processor
+                            // Process full reconciliation for non-spam FIDs
+                            if !non_spam_fids.is_empty() {
                                 for processor in &processors {
                                     match reconciler
                                         .reconcile_fids_batch(&non_spam_fids, processor.clone())
@@ -673,7 +674,7 @@ impl Worker {
                                             job_error_count += error_count;
 
                                             info!(
-                                                "Batch processed {} FIDs: {} succeeded, {} failed",
+                                                "Batch processed {} non-spam FIDs: {} succeeded, {} failed",
                                                 non_spam_fids.len(),
                                                 success_count,
                                                 error_count
@@ -702,13 +703,53 @@ impl Worker {
                                 }
                             }
 
+                            // Process ONLY onchain events for spam FIDs (skip their messages but keep signer events, etc.)
+                            if !spam_fids.is_empty() {
+                                info!(
+                                    "Processing onchain events only for {} spam FIDs (skipping messages)",
+                                    spam_fids.len()
+                                );
+
+                                for spam_fid in &spam_fids {
+                                    for processor in &processors {
+                                        match reconciler
+                                            .reconcile_onchain_events_only(
+                                                *spam_fid,
+                                                processor.clone(),
+                                            )
+                                            .await
+                                        {
+                                            Ok((success_count, error_count)) => {
+                                                onchain_events_processed += success_count;
+                                                if error_count > 0 {
+                                                    job_error_count += error_count;
+                                                }
+                                            },
+                                            Err(e) => {
+                                                debug!(
+                                                    "Error processing onchain events for spam FID {}: {:?}",
+                                                    spam_fid, e
+                                                );
+                                            },
+                                        }
+                                    }
+                                }
+
+                                info!(
+                                    "Processed {} onchain events for {} spam FIDs",
+                                    onchain_events_processed,
+                                    spam_fids.len()
+                                );
+                            }
+
                             let elapsed = job_start_time.elapsed();
                             info!(
-                                "Completed backfill job with {} FIDs ({} succeeded, {} failed, {} spam) in {:.2?}",
+                                "Completed backfill job with {} FIDs ({} succeeded, {} failed, {} spam FIDs with {} onchain events) in {:.2?}",
                                 fid_count,
                                 job_success_count,
                                 job_error_count,
                                 job_spam_count,
+                                onchain_events_processed,
                                 elapsed
                             );
 

@@ -883,6 +883,56 @@ impl MessageReconciler {
         Ok(messages)
     }
 
+    /// Reconcile only onchain events for a FID (used for spam FIDs where we skip messages but still need onchain data)
+    pub async fn reconcile_onchain_events_only(
+        &self,
+        fid: u64,
+        processor: Arc<dyn EventProcessor>,
+    ) -> Result<(usize, usize), Error> {
+        trace!("Starting onchain-only reconciliation for FID {}", fid);
+        let start_time = std::time::Instant::now();
+
+        let onchain_events = self.get_all_onchain_events(fid).await?;
+        let onchain_events_count = onchain_events.len();
+
+        if onchain_events_count == 0 {
+            return Ok((0, 0));
+        }
+
+        let mut success_count = 0;
+        let mut error_count = 0;
+
+        // Process onchain events
+        for event in onchain_events {
+            let onchain_event = HubEvent {
+                id: 0,
+                r#type: HubEventType::MergeOnChainEvent as i32,
+                body: Some(proto::hub_event::Body::MergeOnChainEventBody(MergeOnChainEventBody {
+                    on_chain_event: Some(event),
+                })),
+                block_number: 0,
+                shard_index: 0,
+                timestamp: 0,
+            };
+
+            match processor.process_event(onchain_event).await {
+                Ok(_) => success_count += 1,
+                Err(e) => {
+                    error!("Error processing onchain event for FID {}: {:?}", fid, e);
+                    error_count += 1;
+                },
+            }
+        }
+
+        let elapsed = start_time.elapsed();
+        info!(
+            "Completed onchain-only reconciliation for FID {} in {:.2?}: {} events ({} succeeded, {} failed)",
+            fid, elapsed, onchain_events_count, success_count, error_count
+        );
+
+        Ok((success_count, error_count))
+    }
+
     /// Get all onchain events for the given FID
     async fn get_all_onchain_events(&self, fid: u64) -> Result<Vec<proto::OnChainEvent>, Error> {
         let mut events = Vec::new();
