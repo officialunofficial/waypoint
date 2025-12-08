@@ -1,7 +1,11 @@
 use crate::{
-    backfill::reconciler::MessageReconciler, hub::filter::SpamFilter, metrics,
-    processor::consumer::EventProcessor, redis::client::Redis,
+    backfill::reconciler::{MessageReconciler, ReconcileStats},
+    hub::filter::SpamFilter,
+    metrics,
+    processor::consumer::EventProcessor,
+    redis::client::Redis,
 };
+use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -645,22 +649,32 @@ impl Worker {
                             let job_start_time = std::time::Instant::now();
                             let mut job_success_count = 0;
                             let mut job_error_count = 0;
-                            let mut job_spam_count = 0;
-                            let mut onchain_events_processed = 0;
+                            let mut onchain_stats = ReconcileStats::default();
 
-                            // Separate spam FIDs from non-spam FIDs
-                            let mut non_spam_fids = Vec::new();
-                            let mut spam_fids = Vec::new();
-                            for fid in fids {
-                                if spam_filter.is_spam(fid).await {
-                                    spam_fids.push(fid);
-                                    job_spam_count += 1;
-                                } else {
-                                    non_spam_fids.push(fid);
-                                }
-                            }
+                            // Check spam status concurrently for all FIDs
+                            let spam_checks: Vec<(u64, bool)> = stream::iter(fids)
+                                .map(|fid| {
+                                    let filter = Arc::clone(&spam_filter);
+                                    async move { (fid, filter.is_spam(fid).await) }
+                                })
+                                .buffer_unordered(50)
+                                .collect()
+                                .await;
 
-                            let _hub_permit = hub_connection_limiter.acquire().await.unwrap();
+                            // Partition into spam and non-spam FIDs
+                            let (spam_tuples, non_spam_tuples): (Vec<_>, Vec<_>) =
+                                spam_checks.into_iter().partition(|(_, is_spam)| *is_spam);
+
+                            let spam_fids: Vec<u64> =
+                                spam_tuples.into_iter().map(|(fid, _)| fid).collect();
+                            let non_spam_fids: Vec<u64> =
+                                non_spam_tuples.into_iter().map(|(fid, _)| fid).collect();
+                            let spam_count = spam_fids.len();
+
+                            let _hub_permit = hub_connection_limiter
+                                .acquire()
+                                .await
+                                .expect("hub connection semaphore should not be closed");
 
                             // Process full reconciliation for non-spam FIDs
                             if !non_spam_fids.is_empty() {
@@ -682,63 +696,57 @@ impl Worker {
 
                                             metrics::increment_fids_processed(success_count as u64);
                                             if error_count > 0 {
-                                                if let Err(e) =
-                                                    tx_clone.send(StatsUpdate::Error).await
-                                                {
-                                                    error!("Failed to send error update: {}", e);
-                                                }
+                                                let _ = tx_clone.send(StatsUpdate::Error).await;
                                                 metrics::increment_job_errors();
                                             }
                                         },
                                         Err(e) => {
                                             error!("Error in batch reconciliation: {:?}", e);
                                             job_error_count += non_spam_fids.len();
-                                            if let Err(e) = tx_clone.send(StatsUpdate::Error).await
-                                            {
-                                                error!("Failed to send error update: {}", e);
-                                            }
+                                            let _ = tx_clone.send(StatsUpdate::Error).await;
                                             metrics::increment_job_errors();
                                         },
                                     }
                                 }
                             }
 
-                            // Process ONLY onchain events for spam FIDs (skip their messages but keep signer events, etc.)
+                            // Process ONLY onchain events for spam FIDs concurrently
                             if !spam_fids.is_empty() {
                                 info!(
                                     "Processing onchain events only for {} spam FIDs (skipping messages)",
-                                    spam_fids.len()
+                                    spam_count
                                 );
 
-                                for spam_fid in &spam_fids {
-                                    for processor in &processors {
-                                        match reconciler
-                                            .reconcile_onchain_events_only(
-                                                *spam_fid,
-                                                processor.clone(),
-                                            )
-                                            .await
-                                        {
-                                            Ok((success_count, error_count)) => {
-                                                onchain_events_processed += success_count;
-                                                if error_count > 0 {
-                                                    job_error_count += error_count;
-                                                }
-                                            },
-                                            Err(e) => {
-                                                debug!(
-                                                    "Error processing onchain events for spam FID {}: {:?}",
-                                                    spam_fid, e
-                                                );
-                                            },
+                                // Process spam FIDs concurrently with bounded parallelism
+                                let spam_results: Vec<_> = stream::iter(spam_fids)
+                                    .map(|fid| {
+                                        let reconciler = Arc::clone(&reconciler);
+                                        let processor = Arc::clone(&processors[0]); // Use first processor
+                                        async move {
+                                            reconciler
+                                                .reconcile_onchain_events_only(fid, processor)
+                                                .await
                                         }
+                                    })
+                                    .buffer_unordered(10)
+                                    .collect()
+                                    .await;
+
+                                for result in spam_results {
+                                    match result {
+                                        Ok(stats) => onchain_stats.merge(stats),
+                                        Err(e) => {
+                                            debug!(
+                                                "Error processing onchain events for spam FID: {:?}",
+                                                e
+                                            );
+                                        },
                                     }
                                 }
 
                                 info!(
-                                    "Processed {} onchain events for {} spam FIDs",
-                                    onchain_events_processed,
-                                    spam_fids.len()
+                                    "Processed {} onchain events for {} spam FIDs ({} errors)",
+                                    onchain_stats.success, spam_count, onchain_stats.errors
                                 );
                             }
 
@@ -748,8 +756,8 @@ impl Worker {
                                 fid_count,
                                 job_success_count,
                                 job_error_count,
-                                job_spam_count,
-                                onchain_events_processed,
+                                spam_count,
+                                onchain_stats.success,
                                 elapsed
                             );
 
@@ -757,7 +765,7 @@ impl Worker {
                             if let Err(e) = tx_clone
                                 .send(StatsUpdate::JobCompleted {
                                     fid_count: job_success_count,
-                                    spam_count: job_spam_count,
+                                    spam_count,
                                 })
                                 .await
                             {
