@@ -256,6 +256,7 @@ pub struct SpammyUser {
     pub id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub fid: i64,
     pub source: String,
 }
@@ -267,6 +268,7 @@ pub struct NerfedUser {
     pub id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub fid: i64,
     pub source: String,
 }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE spammy_users\n            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP\n            WHERE deleted_at IS NULL\n              AND source = $1\n              AND fid != ALL($2::bigint[])\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4c6d4a29aeded94e18434a9fb4d32034dc6010a6f5827e7d6f6da396bd088c5a"
+}

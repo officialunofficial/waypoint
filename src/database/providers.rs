@@ -7,8 +7,9 @@ use crate::core::{
 use crate::database::client::Database as DbPool;
 use async_trait::async_trait;
 use sqlx::Row;
+use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 
 /// Read-only PostgreSQL data provider
 #[derive(Clone)]
@@ -44,6 +45,94 @@ impl PostgresDatabaseClient {
             MessageType::OnchainTierPurchase => "tier_purchases",
             MessageType::LendStorage => "lend_storage",
         }
+    }
+
+    /// Batch upsert spammy users efficiently using unnest
+    /// Inserts new FIDs and clears deleted_at for existing ones
+    /// Soft-deletes FIDs that are no longer in the set
+    pub async fn sync_spammy_users(
+        &self,
+        fids: &HashSet<u64>,
+        source: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        let fids_vec: Vec<i64> = fids.iter().map(|&f| f as i64).collect();
+
+        // Upsert all current FIDs (insert or clear deleted_at)
+        sqlx::query!(
+            r#"
+            INSERT INTO spammy_users (fid, source)
+            SELECT unnest($1::bigint[]), $2
+            ON CONFLICT (fid) DO UPDATE SET
+                deleted_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+            &fids_vec,
+            source
+        )
+        .execute(&self.db.pool)
+        .await?;
+
+        // Soft-delete FIDs that are no longer in the set
+        sqlx::query!(
+            r#"
+            UPDATE spammy_users
+            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE deleted_at IS NULL
+              AND source = $1
+              AND fid != ALL($2::bigint[])
+            "#,
+            source,
+            &fids_vec
+        )
+        .execute(&self.db.pool)
+        .await?;
+
+        info!("Synced {} spammy users from source '{}'", fids.len(), source);
+        Ok(())
+    }
+
+    /// Batch upsert nerfed users efficiently using unnest
+    /// Inserts new FIDs and clears deleted_at for existing ones
+    /// Soft-deletes FIDs that are no longer in the set
+    pub async fn sync_nerfed_users(
+        &self,
+        fids: &HashSet<u64>,
+        source: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        let fids_vec: Vec<i64> = fids.iter().map(|&f| f as i64).collect();
+
+        // Upsert all current FIDs (insert or clear deleted_at)
+        sqlx::query!(
+            r#"
+            INSERT INTO nerfed_users (fid, source)
+            SELECT unnest($1::bigint[]), $2
+            ON CONFLICT (fid) DO UPDATE SET
+                deleted_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+            &fids_vec,
+            source
+        )
+        .execute(&self.db.pool)
+        .await?;
+
+        // Soft-delete FIDs that are no longer in the set
+        sqlx::query!(
+            r#"
+            UPDATE nerfed_users
+            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE deleted_at IS NULL
+              AND source = $1
+              AND fid != ALL($2::bigint[])
+            "#,
+            source,
+            &fids_vec
+        )
+        .execute(&self.db.pool)
+        .await?;
+
+        info!("Synced {} nerfed users from source '{}'", fids.len(), source);
+        Ok(())
     }
 }
 
