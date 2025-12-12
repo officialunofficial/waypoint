@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # Async runtime
 tokio = { version = "1.40.0", features = ["full", "io-std"] }
 tokio-stream = "0.1.15"
-tokio-util = { version = "0.7.14" }
+tokio-util = { version = "0.7.14", features = ["io"] }
 async-trait = "0.1.68"
 futures = "0.3.28"
 
@@ -87,7 +87,7 @@ url = "2.3.1"
 rand = "0.9.1"
 
 # HTTP client
-reqwest = "0.12.10"
+reqwest = { version = "0.12.10", features = ["stream"] }
 
 # Metrics
 cadence = "1.5.0"
