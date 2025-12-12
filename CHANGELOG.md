@@ -2,19 +2,28 @@
 
 All notable changes to Waypoint will be documented in this file.
 
-## [unreleased]
-
-### Documentation
-
-- Update MCP documentation for rmcp 0.8.0
+## [2025.12.1] - 2025-12-12
 
 ### Features
 
+- Add spammy_users and nerfed_users tables for spam label persistence
+- Parse nerfed users (label_value=3) from merkle spam.jsonl
+- Stream ~96MB spam list instead of loading into memory
+- Add efficient batch sync methods using sqlx compile-time checked queries
+- Add spam filtering to backfill queue command
 - Add support for multiple spam.jsonl sources
+- Upgrade MCP to rmcp 0.10 with Streamable HTTP transport
+
+### Bug Fixes
+
+- Always process onchain events for spam FIDs
+- Embed database migrations in binary for Docker deployment
+- Docker compose migration skip
+- Improve Docker networking guidance and error messages for Snapchain connection
 
 ### Miscellaneous Tasks
 
-- Update Snapchain to v0.9.1
+- Update Snapchain to v0.11.0
 
 ## [2025.10.3] - 2025-10-07
 
