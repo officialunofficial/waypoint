@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO nerfed_users (fid, source)\n            SELECT unnest($1::bigint[]), $2\n            ON CONFLICT (fid) DO UPDATE SET\n                deleted_at = NULL,\n                updated_at = CURRENT_TIMESTAMP\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7903a72c90503c2e5cd6985113a34292660059c0d1e5c47d40aaed1ec166a6af"
+}

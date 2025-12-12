@@ -6,6 +6,7 @@ CREATE TABLE public.spammy_users (
     id uuid DEFAULT public.generate_ulid() NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at timestamp with time zone,
     fid bigint NOT NULL,
     source text NOT NULL,  -- Source of the spam label (e.g., 'merkle', 'uno')
     CONSTRAINT spammy_users_pkey PRIMARY KEY (id),
@@ -14,6 +15,7 @@ CREATE TABLE public.spammy_users (
 
 CREATE INDEX spammy_users_fid_index ON public.spammy_users USING btree (fid);
 CREATE INDEX spammy_users_created_at_index ON public.spammy_users USING btree (created_at);
+CREATE INDEX spammy_users_active_index ON public.spammy_users USING btree (fid) WHERE (deleted_at IS NULL);
 
 -- Add trigger for updated_at
 CREATE TRIGGER update_spammy_users_updated_at BEFORE UPDATE ON public.spammy_users
@@ -28,6 +30,7 @@ CREATE TABLE public.nerfed_users (
     id uuid DEFAULT public.generate_ulid() NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at timestamp with time zone,
     fid bigint NOT NULL,
     source text NOT NULL,  -- Source of the nerf label (e.g., 'merkle', 'uno')
     CONSTRAINT nerfed_users_pkey PRIMARY KEY (id),
@@ -36,6 +39,7 @@ CREATE TABLE public.nerfed_users (
 
 CREATE INDEX nerfed_users_fid_index ON public.nerfed_users USING btree (fid);
 CREATE INDEX nerfed_users_created_at_index ON public.nerfed_users USING btree (created_at);
+CREATE INDEX nerfed_users_active_index ON public.nerfed_users USING btree (fid) WHERE (deleted_at IS NULL);
 
 -- Add trigger for updated_at
 CREATE TRIGGER update_nerfed_users_updated_at BEFORE UPDATE ON public.nerfed_users
