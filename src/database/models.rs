@@ -249,6 +249,28 @@ pub struct StorageRentEvent {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
+/// Represents a spammy user (label_value = 0)
+/// These users are completely filtered from the feed
+#[derive(Debug, Clone)]
+pub struct SpammyUser {
+    pub id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub fid: i64,
+    pub source: String,
+}
+
+/// Represents a nerfed user (label_value = 3)
+/// These users have reduced visibility but are not completely filtered
+#[derive(Debug, Clone)]
+pub struct NerfedUser {
+    pub id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub fid: i64,
+    pub source: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
