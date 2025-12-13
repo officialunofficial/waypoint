@@ -207,6 +207,16 @@ impl SpamFilter {
         self.nerfed_fids.read().await.contains(&fid)
     }
 
+    /// Remove a FID from the spam set (when label_value=2 is received)
+    pub async fn remove_spam_fid(&self, fid: u64) -> bool {
+        self.spam_fids.write().await.remove(&fid)
+    }
+
+    /// Remove a FID from the nerfed set
+    pub async fn remove_nerfed_fid(&self, fid: u64) -> bool {
+        self.nerfed_fids.write().await.remove(&fid)
+    }
+
     /// Returns the current set of spam FIDs
     pub async fn get_spam_fids(&self) -> HashSet<u64> {
         self.spam_fids.read().await.clone()
