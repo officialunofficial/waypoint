@@ -91,6 +91,32 @@ impl PostgresDatabaseClient {
         Ok(())
     }
 
+    /// Remove a single user from the spammy_users table (soft-delete)
+    /// Called when a label_value=2 is received, indicating the user is no longer spammy
+    pub async fn remove_spammy_user(
+        &self,
+        fid: u64,
+        source: &str,
+    ) -> std::result::Result<bool, sqlx::Error> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE spammy_users
+            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE fid = $1 AND source = $2 AND deleted_at IS NULL
+            "#,
+            fid as i64,
+            source
+        )
+        .execute(&self.db.pool)
+        .await?;
+
+        let removed = result.rows_affected() > 0;
+        if removed {
+            info!("Removed spammy user fid={} from source '{}'", fid, source);
+        }
+        Ok(removed)
+    }
+
     /// Batch upsert nerfed users efficiently using unnest
     /// Inserts new FIDs and clears deleted_at for existing ones
     /// Soft-deletes FIDs that are no longer in the set
@@ -133,6 +159,32 @@ impl PostgresDatabaseClient {
 
         info!("Synced {} nerfed users from source '{}'", fids.len(), source);
         Ok(())
+    }
+
+    /// Remove a single user from the nerfed_users table (soft-delete)
+    /// Called when a user is no longer considered nerfed
+    pub async fn remove_nerfed_user(
+        &self,
+        fid: u64,
+        source: &str,
+    ) -> std::result::Result<bool, sqlx::Error> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE nerfed_users
+            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE fid = $1 AND source = $2 AND deleted_at IS NULL
+            "#,
+            fid as i64,
+            source
+        )
+        .execute(&self.db.pool)
+        .await?;
+
+        let removed = result.rows_affected() > 0;
+        if removed {
+            info!("Removed nerfed user fid={} from source '{}'", fid, source);
+        }
+        Ok(removed)
     }
 }
 
