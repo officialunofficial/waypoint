@@ -2,6 +2,14 @@
 
 All notable changes to Waypoint will be documented in this file.
 
+## [2025.12.2] - 2025-12-12
+
+### Features
+
+- Add `remove_spammy_user` and `remove_nerfed_user` methods for soft-deleting users from database
+- Add `remove_spam_fid` and `remove_nerfed_fid` methods to SpamFilter for in-memory removal
+- Support handling `label_value=2` events indicating a user is no longer considered spammy
+
 ## [2025.12.1] - 2025-12-12
 
 ### Features
