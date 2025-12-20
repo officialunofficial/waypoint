@@ -345,8 +345,9 @@ impl Redis {
         key: &str,
         count: u64,
     ) -> Result<Vec<(String, Vec<u8>)>, Error> {
-        // Use short blocking timeout to balance efficiency and connection availability
-        let block_timeout = if self.is_pool_under_pressure() { 0 } else { 10 };
+        // Use 2 second blocking to reduce CPU usage from busy-waiting
+        // This balances responsiveness with efficiency
+        let block_timeout: u64 = 2000;
 
         // Use xreadgroup from fred - let it return raw RedisValue to avoid parse errors
         use fred::prelude::*;
@@ -356,7 +357,7 @@ impl Redis {
                 group,
                 consumer,
                 Some(count),
-                Some(block_timeout as u64),
+                Some(block_timeout),
                 false,
                 key, // Single key
                 ">", // Read new messages only
@@ -430,8 +431,18 @@ impl Redis {
         Ok(results)
     }
 
-    pub async fn xack(&self, key: &str, group: &str, id: &str) -> Result<(), Error> {
-        let _: u64 = self.pool.xack(key, group, id).await.map_err(Error::RedisError)?;
+    /// Acknowledge message IDs - accepts anything convertible to Vec<String>
+    pub async fn xack<I>(&self, key: &str, group: &str, ids: I) -> Result<(), Error>
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        let ids_vec: Vec<String> = ids.into_iter().map(Into::into).collect();
+        if ids_vec.is_empty() {
+            return Ok(());
+        }
+
+        let _: u64 = self.pool.xack(key, group, ids_vec).await.map_err(Error::RedisError)?;
 
         Ok(())
     }

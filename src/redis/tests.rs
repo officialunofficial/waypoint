@@ -12,8 +12,6 @@ mod redis_client_tests {
             consumer_rebalance_interval_seconds: 300,
             metrics_collection_interval_seconds: 60,
             connection_timeout_ms: 5000,
-            idle_timeout_secs: 300,
-            max_connection_lifetime_secs: 300,
         }
     }
 
@@ -75,40 +73,205 @@ mod redis_stream_tests {
         std::sync::Arc::new(client::Redis::empty())
     }
 
-    #[tokio::test]
-    async fn test_stream_initialization() {
+    #[test]
+    fn test_stream_initialization() {
         let redis = mock_redis();
         let stream = stream::RedisStream::new(redis.clone());
 
-        // Test that metrics are initialized
-        let metrics = stream.get_metrics().await;
+        // Test that metrics are initialized (lock-free)
+        let metrics = stream.get_metrics();
         assert_eq!(metrics.processed_count, 0);
         assert_eq!(metrics.error_count, 0);
         assert_eq!(metrics.retry_count, 0);
     }
 
-    #[tokio::test]
-    async fn test_stream_with_dead_letter_queue() {
+    #[test]
+    fn test_stream_with_dead_letter_queue() {
         let redis = mock_redis();
         let stream =
             stream::RedisStream::new(redis.clone()).with_dead_letter_queue("dlq:test".to_string());
 
-        // Verify dead letter queue is configured
-        // This would be tested more thoroughly with integration tests
-        let metrics = stream.get_metrics().await;
+        // Verify dead letter queue is configured (lock-free)
+        let metrics = stream.get_metrics();
         assert_eq!(metrics.dead_letter_count, 0);
     }
 
-    #[tokio::test]
-    async fn test_stream_metrics_update() {
+    #[test]
+    fn test_stream_metrics_update() {
         let redis = mock_redis();
         let stream = stream::RedisStream::new(redis.clone());
 
-        // Test successful processing metrics update
-        stream.update_success_metrics(100).await;
-        let metrics = stream.get_metrics().await;
+        // Test successful processing metrics update (lock-free)
+        stream.update_success_metrics(100);
+        let metrics = stream.get_metrics();
         assert_eq!(metrics.processed_count, 1);
         assert!(metrics.average_latency_ms > 0.0);
+    }
+
+    #[test]
+    fn test_stream_error_metrics() {
+        let redis = mock_redis();
+        let stream = stream::RedisStream::new(redis.clone());
+
+        // Test error metrics (lock-free)
+        stream.update_error_metrics();
+        stream.update_error_metrics();
+        let metrics = stream.get_metrics();
+        assert_eq!(metrics.error_count, 2);
+    }
+
+    #[test]
+    fn test_stream_retry_metrics() {
+        let redis = mock_redis();
+        let stream = stream::RedisStream::new(redis.clone());
+
+        // Test retry metrics (lock-free)
+        stream.update_retry_metrics();
+        let metrics = stream.get_metrics();
+        assert_eq!(metrics.retry_count, 1);
+    }
+
+    #[test]
+    fn test_stream_dead_letter_metrics() {
+        let redis = mock_redis();
+        let stream = stream::RedisStream::new(redis.clone());
+
+        // Test dead letter metrics (lock-free)
+        stream.update_dead_letter_metrics();
+        stream.update_dead_letter_metrics();
+        stream.update_dead_letter_metrics();
+        let metrics = stream.get_metrics();
+        assert_eq!(metrics.dead_letter_count, 3);
+    }
+
+    #[test]
+    fn test_concurrent_metrics_updates() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let redis = mock_redis();
+        let stream = Arc::new(stream::RedisStream::new(redis.clone()));
+
+        // Spawn multiple threads updating metrics concurrently
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let stream_clone = Arc::clone(&stream);
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    stream_clone.update_success_metrics(50);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let metrics = stream.get_metrics();
+        assert_eq!(metrics.processed_count, 1000); // 10 threads * 100 updates
+    }
+
+    #[test]
+    fn test_latency_averaging() {
+        let redis = mock_redis();
+        let stream = stream::RedisStream::new(redis.clone());
+
+        // First update sets the initial latency
+        stream.update_success_metrics(100);
+        let metrics = stream.get_metrics();
+        assert!((metrics.average_latency_ms - 100.0).abs() < 0.1);
+
+        // Subsequent updates use exponential moving average (0.9 * old + 0.1 * new)
+        stream.update_success_metrics(200);
+        let metrics = stream.get_metrics();
+        // Expected: 0.9 * 100 + 0.1 * 200 = 90 + 20 = 110
+        assert!((metrics.average_latency_ms - 110.0).abs() < 1.0);
+    }
+}
+
+#[cfg(test)]
+mod atomic_metrics_tests {
+    use super::super::types::AtomicStreamMetrics;
+
+    #[test]
+    fn test_atomic_metrics_initialization() {
+        let metrics = AtomicStreamMetrics::default();
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.processed_count, 0);
+        assert_eq!(snapshot.error_count, 0);
+        assert_eq!(snapshot.retry_count, 0);
+        assert_eq!(snapshot.dead_letter_count, 0);
+        assert_eq!(snapshot.processing_rate, 0.0);
+        assert_eq!(snapshot.average_latency_ms, 0.0);
+    }
+
+    #[test]
+    fn test_atomic_increment_operations() {
+        let metrics = AtomicStreamMetrics::default();
+
+        metrics.increment_processed();
+        metrics.increment_processed();
+        metrics.increment_error();
+        metrics.increment_retry();
+        metrics.increment_dead_letter();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.processed_count, 2);
+        assert_eq!(snapshot.error_count, 1);
+        assert_eq!(snapshot.retry_count, 1);
+        assert_eq!(snapshot.dead_letter_count, 1);
+    }
+
+    #[test]
+    fn test_atomic_latency_update() {
+        let metrics = AtomicStreamMetrics::default();
+
+        metrics.update_latency(100);
+        let snapshot = metrics.snapshot();
+        assert!((snapshot.average_latency_ms - 100.0).abs() < 0.1);
+
+        // Second update should use EMA
+        metrics.update_latency(200);
+        let snapshot = metrics.snapshot();
+        // 0.9 * 100 + 0.1 * 200 = 110
+        assert!((snapshot.average_latency_ms - 110.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_atomic_concurrent_updates() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let metrics = Arc::new(AtomicStreamMetrics::default());
+        let mut handles = vec![];
+
+        // Spawn threads for different operations
+        for _ in 0..5 {
+            let m = Arc::clone(&metrics);
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    m.increment_processed();
+                }
+            }));
+        }
+
+        for _ in 0..3 {
+            let m = Arc::clone(&metrics);
+            handles.push(thread::spawn(move || {
+                for _ in 0..50 {
+                    m.increment_error();
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.processed_count, 500); // 5 threads * 100
+        assert_eq!(snapshot.error_count, 150); // 3 threads * 50
     }
 }
 

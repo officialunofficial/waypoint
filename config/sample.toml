@@ -18,12 +18,10 @@ store_messages = true
 [redis]
 # Redis connection URL
 url = "redis://localhost:6379"
-# Connection pool size (increased for multiple stream consumers)
+# Connection pool size (fred's auto-pipelining means fewer connections needed)
 max_pool_size = 50
-# Connection idle timeout in seconds (reduced churn)
-idle_timeout_secs = 300
-# Maximum connection lifetime in seconds
-max_connection_lifetime_secs = 300
+# Connection timeout in milliseconds
+connection_timeout_ms = 5000
 
 # Farcaster Hub Configuration
 [hub]

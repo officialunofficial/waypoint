@@ -106,3 +106,85 @@ jobs:
       # Also test without database features
       - name: Run tests without database connection
         run: cargo test --no-default-features
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: waypoint
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc and database clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler redis-tools postgresql-client
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run database migrations
+        run: ./scripts/run-migrations.sh
+        env:
+          PGPASSWORD: postgres
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_NAME: waypoint
+
+      - name: Generate coverage report
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Check coverage threshold
+        run: |
+          # Extract total coverage percentage
+          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary-only 2>&1 | grep -oP '\d+\.\d+(?=%)' | head -1)
+          echo "Total coverage: ${COVERAGE}%"
+
+          # Enforce minimum 40% coverage (adjust as needed)
+          MIN_COVERAGE=40
+          if (( $(echo "$COVERAGE < $MIN_COVERAGE" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below minimum threshold of ${MIN_COVERAGE}%"
+            exit 1
+          else
+            echo "✅ Coverage ${COVERAGE}% meets minimum threshold of ${MIN_COVERAGE}%"
+          fi
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
+          REDIS_URL: redis://localhost:6379

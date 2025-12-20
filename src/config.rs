@@ -55,14 +55,10 @@ pub struct RedisConfig {
     pub metrics_collection_interval_seconds: u64,
     #[serde(default = "default_connection_timeout_ms")]
     pub connection_timeout_ms: u64,
-    #[serde(default = "default_idle_timeout_secs")]
-    pub idle_timeout_secs: u64,
-    #[serde(default = "default_max_connection_lifetime_secs")]
-    pub max_connection_lifetime_secs: u64,
 }
 
 fn default_max_pool_size() -> u32 {
-    200 // Increased pool size to handle 11 concurrent stream processors + background tasks
+    50 // Fred's auto-pipelining means fewer connections needed than concurrent operations
 }
 
 fn default_redis_batch_size() -> usize {
@@ -71,14 +67,6 @@ fn default_redis_batch_size() -> usize {
 
 fn default_connection_timeout_ms() -> u64 {
     5000 // 5 second connection timeout - balanced for pool contention scenarios
-}
-
-fn default_idle_timeout_secs() -> u64 {
-    300 // 5 minute idle timeout - reduce connection churn
-}
-
-fn default_max_connection_lifetime_secs() -> u64 {
-    300 // 5 minute max connection lifetime - prevent stale connections
 }
 
 fn default_enable_dead_letter() -> bool {
@@ -326,8 +314,6 @@ impl Default for RedisConfig {
             consumer_rebalance_interval_seconds: default_consumer_rebalance_interval(),
             metrics_collection_interval_seconds: default_metrics_collection_interval(),
             connection_timeout_ms: default_connection_timeout_ms(),
-            idle_timeout_secs: default_idle_timeout_secs(),
-            max_connection_lifetime_secs: default_max_connection_lifetime_secs(),
         }
     }
 }
