@@ -49,7 +49,7 @@ impl Redis {
             Some(perf_config),
             Some(connection_config),
             Some(reconnect_policy),
-            config.pool_size as usize,
+            config.max_pool_size as usize,
         )
         .map_err(|e| Error::PoolError(format!("Failed to create Redis pool: {}", e)))?;
 
@@ -77,12 +77,12 @@ impl Redis {
 
         info!(
             "Initialized Redis pool with {} connections, {}ms timeout",
-            config.pool_size, config.connection_timeout_ms,
+            config.max_pool_size, config.connection_timeout_ms,
         );
 
         // Start pool health monitoring
         let pool_monitor = pool.clone();
-        let _max_pool_size = config.pool_size;
+        let _max_pool_size = config.max_pool_size;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
@@ -120,7 +120,7 @@ impl Redis {
     pub fn get_pool_health(&self) -> (u32, u32) {
         // Fred doesn't expose pool stats the same way as bb8
         // Return approximations - fred manages pooling internally
-        let pool_size = self.config.as_ref().map(|c| c.pool_size).unwrap_or(1);
+        let pool_size = self.config.as_ref().map(|c| c.max_pool_size).unwrap_or(1);
         // Always report as healthy since fred handles connection management
         (pool_size, pool_size)
     }

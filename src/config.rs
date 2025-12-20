@@ -43,8 +43,8 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     pub url: String,
-    #[serde(default = "default_redis_pool_size")]
-    pub pool_size: u32,
+    #[serde(default = "default_max_pool_size")]
+    pub max_pool_size: u32,
     #[serde(default = "default_redis_batch_size")]
     pub batch_size: usize,
     #[serde(default = "default_enable_dead_letter")]
@@ -61,7 +61,7 @@ pub struct RedisConfig {
     pub max_connection_lifetime_secs: u64,
 }
 
-fn default_redis_pool_size() -> u32 {
+fn default_max_pool_size() -> u32 {
     200 // Increased pool size to handle 11 concurrent stream processors + background tasks
 }
 
@@ -320,7 +320,7 @@ impl Default for RedisConfig {
     fn default() -> Self {
         Self {
             url: "redis://localhost:6379".to_string(),
-            pool_size: default_redis_pool_size(),
+            max_pool_size: default_max_pool_size(),
             batch_size: default_redis_batch_size(),
             enable_dead_letter: default_enable_dead_letter(),
             consumer_rebalance_interval_seconds: default_consumer_rebalance_interval(),

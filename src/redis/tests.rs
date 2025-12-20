@@ -6,7 +6,7 @@ mod redis_client_tests {
     fn test_config() -> crate::config::RedisConfig {
         crate::config::RedisConfig {
             url: "redis://localhost:6379".to_string(),
-            pool_size: 10,
+            max_pool_size: 10,
             batch_size: 100,
             enable_dead_letter: true,
             consumer_rebalance_interval_seconds: 300,
