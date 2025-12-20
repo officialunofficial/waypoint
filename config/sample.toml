@@ -19,7 +19,7 @@ store_messages = true
 # Redis connection URL
 url = "redis://localhost:6379"
 # Connection pool size (increased for multiple stream consumers)
-pool_size = 50
+max_pool_size = 50
 # Connection idle timeout in seconds (reduced churn)
 idle_timeout_secs = 300
 # Maximum connection lifetime in seconds

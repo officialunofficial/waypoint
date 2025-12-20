@@ -21,7 +21,7 @@ async fn test_stream_create_consume_cycle() {
         return;
     }
 
-    let config = RedisConfig { pool_size: 20, batch_size: 10, ..Default::default() };
+    let config = RedisConfig { max_pool_size: 20, batch_size: 10, ..Default::default() };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
     let stream = RedisStream::new(redis.clone());
@@ -79,7 +79,7 @@ async fn test_pending_message_recovery() {
         return;
     }
 
-    let config = RedisConfig { pool_size: 20, batch_size: 10, ..Default::default() };
+    let config = RedisConfig { max_pool_size: 20, batch_size: 10, ..Default::default() };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
     let stream = RedisStream::new(redis.clone());
@@ -140,7 +140,7 @@ async fn test_concurrent_consumers() {
         return;
     }
 
-    let config = RedisConfig { pool_size: 50, batch_size: 10, ..Default::default() };
+    let config = RedisConfig { max_pool_size: 50, batch_size: 10, ..Default::default() };
 
     let redis = Arc::new(Redis::new(&config).await.expect("Failed to create Redis client"));
     let stream = RedisStream::new(redis.clone());
@@ -208,7 +208,7 @@ async fn test_pool_stress() {
     }
 
     let config = RedisConfig {
-        pool_size: 20, // Limited pool size to test contention
+        max_pool_size: 20, // Limited pool size to test contention
         batch_size: 10,
         connection_timeout_ms: 2000, // Shorter timeout to detect issues faster
         ..Default::default()

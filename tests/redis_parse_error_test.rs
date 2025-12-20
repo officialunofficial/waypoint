@@ -13,7 +13,7 @@ mod tests {
     fn test_config() -> RedisConfig {
         RedisConfig {
             url: "redis://localhost:6379".to_string(),
-            pool_size: 5,
+            max_pool_size: 5,
             batch_size: 10,
             enable_dead_letter: false,
             consumer_rebalance_interval_seconds: 300,

@@ -24,7 +24,7 @@ conn_timeout_ms = 30000
 
 [redis]
 url = "redis://localhost:6379"
-pool_size = 5
+max_pool_size = 5
 batch_size = 100
 enable_dead_letter = true
 consumer_rebalance_interval_seconds = 300
