@@ -188,6 +188,10 @@ pub struct StreamProcessorConfig {
     /// Batch size for force reclaim operations
     #[serde(default = "default_reclaim_batch_size")]
     pub reclaim_batch_size: usize,
+
+    /// Backpressure configuration
+    #[serde(default)]
+    pub backpressure: BackpressureConfig,
 }
 
 fn default_stream_group_name() -> String {
@@ -258,6 +262,7 @@ impl Default for StreamProcessorConfig {
             max_message_retries: default_max_message_retries(),
             health_check_interval_secs: default_health_check_interval_secs(),
             reclaim_batch_size: default_reclaim_batch_size(),
+            backpressure: BackpressureConfig::default(),
         }
     }
 }
@@ -536,6 +541,116 @@ impl CircuitBreakerConfig {
             slow_call_threshold: std::time::Duration::from_millis(self.slow_call_threshold_ms),
             slow_call_rate_threshold: self.slow_call_rate_threshold,
             minimum_calls_for_rate: self.minimum_calls_for_rate,
+        }
+    }
+}
+
+/// Backpressure configuration for stream processing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackpressureConfig {
+    /// Enable backpressure control
+    #[serde(default = "default_backpressure_enabled")]
+    pub enabled: bool,
+
+    /// Pending messages threshold for Light pressure
+    #[serde(default = "default_bp_light_threshold")]
+    pub light_threshold: u64,
+
+    /// Pending messages threshold for Moderate pressure
+    #[serde(default = "default_bp_moderate_threshold")]
+    pub moderate_threshold: u64,
+
+    /// Pending messages threshold for Heavy pressure
+    #[serde(default = "default_bp_heavy_threshold")]
+    pub heavy_threshold: u64,
+
+    /// Pending messages threshold for Critical pressure
+    #[serde(default = "default_bp_critical_threshold")]
+    pub critical_threshold: u64,
+
+    /// Base delay in milliseconds when under pressure
+    #[serde(default = "default_bp_base_delay_ms")]
+    pub base_delay_ms: u64,
+
+    /// How often to evaluate backpressure (milliseconds)
+    #[serde(default = "default_bp_evaluation_interval_ms")]
+    pub evaluation_interval_ms: u64,
+
+    /// Enable adaptive rate limiting based on latency
+    #[serde(default = "default_bp_adaptive_rate_limit")]
+    pub adaptive_rate_limit: bool,
+
+    /// Target latency in milliseconds for adaptive rate limiting
+    #[serde(default = "default_bp_target_latency_ms")]
+    pub target_latency_ms: u64,
+}
+
+fn default_backpressure_enabled() -> bool {
+    true
+}
+
+fn default_bp_light_threshold() -> u64 {
+    1000
+}
+
+fn default_bp_moderate_threshold() -> u64 {
+    5000
+}
+
+fn default_bp_heavy_threshold() -> u64 {
+    10000
+}
+
+fn default_bp_critical_threshold() -> u64 {
+    50000
+}
+
+fn default_bp_base_delay_ms() -> u64 {
+    50
+}
+
+fn default_bp_evaluation_interval_ms() -> u64 {
+    1000
+}
+
+fn default_bp_adaptive_rate_limit() -> bool {
+    true
+}
+
+fn default_bp_target_latency_ms() -> u64 {
+    100
+}
+
+impl Default for BackpressureConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_backpressure_enabled(),
+            light_threshold: default_bp_light_threshold(),
+            moderate_threshold: default_bp_moderate_threshold(),
+            heavy_threshold: default_bp_heavy_threshold(),
+            critical_threshold: default_bp_critical_threshold(),
+            base_delay_ms: default_bp_base_delay_ms(),
+            evaluation_interval_ms: default_bp_evaluation_interval_ms(),
+            adaptive_rate_limit: default_bp_adaptive_rate_limit(),
+            target_latency_ms: default_bp_target_latency_ms(),
+        }
+    }
+}
+
+impl BackpressureConfig {
+    /// Convert to the backpressure controller's internal config format
+    pub fn to_backpressure_config(&self) -> crate::redis::backpressure::BackpressureConfig {
+        crate::redis::backpressure::BackpressureConfig {
+            light_threshold: self.light_threshold,
+            moderate_threshold: self.moderate_threshold,
+            heavy_threshold: self.heavy_threshold,
+            critical_threshold: self.critical_threshold,
+            base_delay_ms: self.base_delay_ms,
+            evaluation_interval_ms: self.evaluation_interval_ms,
+            rate_window_secs: 60,
+            max_processing_rate: None,
+            adaptive_rate_limit: self.adaptive_rate_limit,
+            target_latency_ms: self.target_latency_ms,
         }
     }
 }
