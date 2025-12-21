@@ -12,6 +12,7 @@ mod redis_client_tests {
             consumer_rebalance_interval_seconds: 300,
             metrics_collection_interval_seconds: 60,
             connection_timeout_ms: 5000,
+            circuit_breaker: crate::config::CircuitBreakerConfig::default(),
         }
     }
 
@@ -83,6 +84,41 @@ mod redis_stream_tests {
         assert_eq!(metrics.processed_count, 0);
         assert_eq!(metrics.error_count, 0);
         assert_eq!(metrics.retry_count, 0);
+    }
+
+    #[test]
+    fn test_stream_with_config() {
+        let redis = mock_redis();
+
+        // Create a custom config with non-default values
+        let config = crate::config::StreamProcessorConfig {
+            max_retry_attempts: 10,
+            retry_delay_ms: 500,
+            health_check_interval_secs: 120,
+            max_message_retries: 15,
+            ..Default::default()
+        };
+
+        let stream = stream::RedisStream::new(redis.clone()).with_config(&config);
+
+        // Verify config was applied by checking the stream can be created
+        // (Internal fields are private, but we verify no panic/error occurs)
+        let metrics = stream.get_metrics();
+        assert_eq!(metrics.processed_count, 0);
+    }
+
+    #[test]
+    fn test_stream_with_config_chaining() {
+        let redis = mock_redis();
+        let config = crate::config::StreamProcessorConfig::default();
+
+        // Test that with_config chains with other builder methods
+        let stream = stream::RedisStream::new(redis.clone())
+            .with_config(&config)
+            .with_dead_letter_queue("dlq:test".to_string());
+
+        let metrics = stream.get_metrics();
+        assert_eq!(metrics.dead_letter_count, 0);
     }
 
     #[test]

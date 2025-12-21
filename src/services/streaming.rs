@@ -3,6 +3,7 @@ use crate::{
     app::{
         AppError, ProcessorRegistry, Result, Service, ServiceContext, ServiceError, ServiceHandle,
     },
+    config::StreamProcessorConfig,
     core::MessageType,
     hub::subscriber::{HubSubscriber, SubscriberOptions},
     proto::HubEvent,
@@ -20,11 +21,6 @@ use tokio::{
 };
 use tracing::{error, info, trace, warn};
 
-const DEFAULT_BATCH_SIZE: u64 = 10;
-const DEFAULT_CONCURRENCY: usize = 200;
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
-const DEFAULT_EVENT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
-
 /// Consumer state used across tasks
 #[derive(Default)]
 struct ConsumerState {
@@ -39,6 +35,7 @@ pub struct Consumer {
     hub_host: String,
     group_name: String,
     state: Arc<RwLock<ConsumerState>>,
+    config: StreamProcessorConfig,
     batch_size: u64,
     concurrency: usize,
     timeout: Duration,
@@ -46,12 +43,13 @@ pub struct Consumer {
 }
 
 impl Consumer {
-    /// Create a new consumer
+    /// Create a new consumer with configuration
     pub fn new(
         stream: Arc<RedisStream>,
         processors: Arc<ProcessorRegistry>,
         hub_host: String,
         group_name: String,
+        config: StreamProcessorConfig,
     ) -> Self {
         Self {
             stream,
@@ -59,32 +57,33 @@ impl Consumer {
             hub_host,
             group_name,
             state: Arc::new(RwLock::new(ConsumerState::default())),
-            batch_size: DEFAULT_BATCH_SIZE,
-            concurrency: DEFAULT_CONCURRENCY,
-            timeout: DEFAULT_TIMEOUT,
-            retention: DEFAULT_EVENT_RETENTION,
+            batch_size: config.batch_size,
+            concurrency: config.concurrency,
+            timeout: Duration::from_secs(config.event_processing_timeout_secs),
+            retention: Duration::from_secs(config.event_retention_secs),
+            config,
         }
     }
 
-    /// Set batch size
+    /// Set batch size (overrides config)
     pub fn with_batch_size(mut self, size: u64) -> Self {
         self.batch_size = size;
         self
     }
 
-    /// Set processing concurrency
+    /// Set processing concurrency (overrides config)
     pub fn with_concurrency(mut self, concurrency: usize) -> Self {
         self.concurrency = concurrency;
         self
     }
 
-    /// Set processing timeout
+    /// Set processing timeout (overrides config)
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
-    /// Set event retention
+    /// Set event retention (overrides config)
     pub fn with_retention(mut self, retention: Duration) -> Self {
         self.retention = retention;
         self
@@ -239,13 +238,12 @@ impl Consumer {
     /// Run a periodic task to clean up idle consumers from Redis streams
     /// and force reclaim any stuck messages that have been in the pending state too long
     pub async fn run_consumer_cleanup(&self) {
-        // Constants for cleanup behavior
-        const CLEANUP_INTERVAL_SECS: u64 = 30 * 60; // 30 minutes
-        // Threshold for considering consumers/messages as extremely idle (1 hour)
-        const EXTREME_IDLE_THRESHOLD_MS: u64 = 3600000; // 1 hour in milliseconds
+        // Use config values for cleanup behavior
+        let cleanup_interval_secs = self.config.cleanup_interval_secs;
+        let idle_threshold_ms = self.config.idle_consumer_threshold_ms;
 
         // Create a cleanup interval with skipped tick behavior to avoid queuing
-        let mut interval = tokio::time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+        let mut interval = tokio::time::interval(Duration::from_secs(cleanup_interval_secs));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // Wait for the first tick to occur immediately
@@ -263,7 +261,7 @@ impl Consumer {
 
             // Run consumer cleanup for all streams with the default group
             info!("Starting scheduled consumer cleanup for all streams");
-            self.cleanup_all_consumer_groups(EXTREME_IDLE_THRESHOLD_MS).await;
+            self.cleanup_all_consumer_groups(idle_threshold_ms).await;
             info!("Scheduled consumer cleanup completed");
         }
     }
@@ -484,8 +482,8 @@ impl Consumer {
         group_name: &str,
         idle_threshold: u64,
     ) -> std::result::Result<usize, crate::redis::error::Error> {
-        // Constants for batch processing
-        const BATCH_SIZE: usize = 100;
+        // Use config value for batch processing
+        let batch_size = self.config.reclaim_batch_size;
 
         // No need to get connection with fred - it handles this internally
 
@@ -521,7 +519,7 @@ impl Consumer {
                         stream_key,
                         group_name,
                         Duration::from_millis(idle_threshold),
-                        BATCH_SIZE as u64,
+                        batch_size as u64,
                     )
                     .await;
 
@@ -1159,7 +1157,9 @@ impl Service for StreamingService {
 
         // Create a single Redis stream instance to share
         // We need to wrap in Arc because it will be shared across threads
-        let redis_stream = Arc::new(RedisStream::new(Arc::clone(&context.state.redis)));
+        let redis_stream = Arc::new(
+            RedisStream::new(Arc::clone(&context.state.redis)).with_config(&context.config.stream),
+        );
 
         // First, get hub info to understand available shards
         let hub_info = {
@@ -1288,7 +1288,8 @@ impl Service for StreamingService {
                 HubSubscriber::new(
                     client.clone(),
                     Arc::clone(&context.state.redis),
-                    RedisStream::new(Arc::clone(&context.state.redis)),
+                    RedisStream::new(Arc::clone(&context.state.redis))
+                        .with_config(&context.config.stream),
                     hub_guard.host().to_string(),
                     shard_key.clone(),
                     options,
@@ -1313,21 +1314,36 @@ impl Service for StreamingService {
 
         // Create a single consumer that processes events from all shards
         // The consumer reads from Redis streams that are populated by all subscribers
+        let stream_config = context.config.stream.clone();
         let consumer = Consumer::new(
             redis_stream,
             Arc::new(processor_registry),
             hub_host,
             "all".to_string(), // Consumer processes events from all shards
+            stream_config,
         );
 
-        // Apply options from config
-        let consumer =
-            consumer.with_batch_size(self.options.batch_size.unwrap_or(DEFAULT_BATCH_SIZE));
-        let consumer =
-            consumer.with_concurrency(self.options.concurrency.unwrap_or(DEFAULT_CONCURRENCY));
-        let consumer = consumer.with_timeout(self.options.timeout.unwrap_or(DEFAULT_TIMEOUT));
-        let consumer =
-            consumer.with_retention(self.options.retention.unwrap_or(DEFAULT_EVENT_RETENTION));
+        // Apply overrides from service options if provided
+        let consumer = if let Some(batch_size) = self.options.batch_size {
+            consumer.with_batch_size(batch_size)
+        } else {
+            consumer
+        };
+        let consumer = if let Some(concurrency) = self.options.concurrency {
+            consumer.with_concurrency(concurrency)
+        } else {
+            consumer
+        };
+        let consumer = if let Some(timeout) = self.options.timeout {
+            consumer.with_timeout(timeout)
+        } else {
+            consumer
+        };
+        let consumer = if let Some(retention) = self.options.retention {
+            consumer.with_retention(retention)
+        } else {
+            consumer
+        };
 
         // Start consumer
         let consumer_handle = consumer.start().await;
