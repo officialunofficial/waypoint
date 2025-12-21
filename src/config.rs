@@ -513,3 +513,68 @@ impl Config {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stream_processor_config_defaults() {
+        let config = StreamProcessorConfig::default();
+
+        assert_eq!(config.group_name, "default");
+        assert_eq!(config.batch_size, 50);
+        assert_eq!(config.concurrency, 250);
+        assert_eq!(config.consumers_per_stream, 3);
+        assert_eq!(config.event_processing_timeout_secs, 120);
+        assert_eq!(config.event_retention_secs, 24 * 60 * 60); // 24 hours
+        assert_eq!(config.cleanup_interval_secs, 30 * 60); // 30 minutes
+        assert_eq!(config.idle_consumer_threshold_ms, 3_600_000); // 1 hour
+        assert_eq!(config.max_retry_attempts, 3);
+        assert_eq!(config.retry_delay_ms, 100);
+        assert_eq!(config.max_message_retries, 5);
+        assert_eq!(config.health_check_interval_secs, 60);
+        assert_eq!(config.reclaim_batch_size, 100);
+    }
+
+    #[test]
+    fn test_stream_processor_config_in_main_config() {
+        let config = Config::default();
+
+        // Verify stream config is included and has correct defaults
+        assert_eq!(config.stream.batch_size, 50);
+        assert_eq!(config.stream.concurrency, 250);
+        assert_eq!(config.stream.consumers_per_stream, 3);
+    }
+
+    #[test]
+    fn test_stream_processor_config_serialization() {
+        let config = StreamProcessorConfig::default();
+
+        // Test that config can be serialized/deserialized
+        let json = serde_json::to_string(&config).expect("Should serialize");
+        let deserialized: StreamProcessorConfig =
+            serde_json::from_str(&json).expect("Should deserialize");
+
+        assert_eq!(config.batch_size, deserialized.batch_size);
+        assert_eq!(config.concurrency, deserialized.concurrency);
+        assert_eq!(config.max_retry_attempts, deserialized.max_retry_attempts);
+    }
+
+    #[test]
+    fn test_stream_processor_config_partial_override() {
+        // Test that partial JSON works with defaults for missing fields
+        let partial_json = r#"{"batch_size": 100, "concurrency": 500}"#;
+        let config: StreamProcessorConfig =
+            serde_json::from_str(partial_json).expect("Should deserialize partial config");
+
+        // Overridden values
+        assert_eq!(config.batch_size, 100);
+        assert_eq!(config.concurrency, 500);
+
+        // Default values for non-specified fields
+        assert_eq!(config.consumers_per_stream, 3);
+        assert_eq!(config.max_retry_attempts, 3);
+        assert_eq!(config.group_name, "default");
+    }
+}
