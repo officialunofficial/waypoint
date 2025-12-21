@@ -429,6 +429,54 @@ impl Redis {
         Ok(result)
     }
 
+    /// Add a dead letter entry with metadata to a stream
+    pub async fn xadd_dead_letter(
+        &self,
+        key: &str,
+        data: &[u8],
+        metadata: &crate::redis::types::DeadLetterMetadata,
+    ) -> Result<String, Error> {
+        use fred::prelude::*;
+
+        // Build fields with metadata
+        let fields = vec![
+            // Original message data
+            ("data", fred::types::RedisValue::Bytes(data.to_vec().into())),
+            // Metadata fields
+            ("original_id", fred::types::RedisValue::String(metadata.original_id.clone().into())),
+            (
+                "source_stream",
+                fred::types::RedisValue::String(metadata.source_stream.clone().into()),
+            ),
+            ("group_name", fred::types::RedisValue::String(metadata.group_name.clone().into())),
+            (
+                "consumer_name",
+                fred::types::RedisValue::String(metadata.consumer_name.clone().into()),
+            ),
+            ("delivery_count", fred::types::RedisValue::Integer(metadata.delivery_count as i64)),
+            (
+                "first_delivery_time",
+                fred::types::RedisValue::Integer(metadata.first_delivery_time as i64),
+            ),
+            (
+                "dead_letter_time",
+                fred::types::RedisValue::Integer(metadata.dead_letter_time as i64),
+            ),
+            ("reason", fred::types::RedisValue::String(metadata.reason.to_string().into())),
+            (
+                "error_message",
+                fred::types::RedisValue::String(
+                    metadata.error_message.clone().unwrap_or_default().into(),
+                ),
+            ),
+        ];
+
+        let id: String =
+            self.pool.xadd(key, false, None, "*", fields).await.map_err(Error::RedisError)?;
+
+        Ok(id)
+    }
+
     pub async fn xinfo_groups(
         &self,
         key: &str,

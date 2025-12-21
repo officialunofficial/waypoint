@@ -19,6 +19,53 @@ impl Default for DeadLetterPolicy {
     }
 }
 
+/// Reason a message was sent to the dead letter queue
+#[derive(Debug, Clone)]
+pub enum DeadLetterReason {
+    /// Maximum retries exceeded
+    MaxRetriesExceeded,
+    /// Message could not be decoded
+    DecodeError,
+    /// Processing timeout exceeded
+    Timeout,
+    /// Explicit rejection by processor
+    Rejected,
+}
+
+impl std::fmt::Display for DeadLetterReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeadLetterReason::MaxRetriesExceeded => write!(f, "max_retries_exceeded"),
+            DeadLetterReason::DecodeError => write!(f, "decode_error"),
+            DeadLetterReason::Timeout => write!(f, "timeout"),
+            DeadLetterReason::Rejected => write!(f, "rejected"),
+        }
+    }
+}
+
+/// Metadata for a dead letter queue entry
+#[derive(Debug, Clone)]
+pub struct DeadLetterMetadata {
+    /// Original message ID from the source stream
+    pub original_id: String,
+    /// Source stream key
+    pub source_stream: String,
+    /// Consumer group that was processing
+    pub group_name: String,
+    /// Consumer that last attempted processing
+    pub consumer_name: String,
+    /// Number of delivery attempts before dead-lettering
+    pub delivery_count: u64,
+    /// Unix timestamp (milliseconds) when first delivered
+    pub first_delivery_time: u64,
+    /// Unix timestamp (milliseconds) when dead-lettered
+    pub dead_letter_time: u64,
+    /// Reason for dead-lettering
+    pub reason: DeadLetterReason,
+    /// Optional error message from last processing attempt
+    pub error_message: Option<String>,
+}
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Processing metrics for a stream (atomic version for lock-free updates)

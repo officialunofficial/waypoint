@@ -1,7 +1,25 @@
-use crate::redis::{client::Redis, error::Error, types::AtomicStreamMetrics};
+use crate::redis::{
+    client::Redis,
+    error::Error,
+    types::{AtomicStreamMetrics, DeadLetterMetadata, DeadLetterReason},
+};
 use std::{sync::Arc, time::Duration};
 use tokio::time::interval;
 use tracing::{trace, warn};
+
+/// Context for dead letter handling
+pub struct DeadLetterContext<'a> {
+    /// Stream key
+    pub key: &'a str,
+    /// Consumer group name
+    pub group: &'a str,
+    /// Consumer name
+    pub consumer: &'a str,
+    /// Reason for dead-lettering
+    pub reason: DeadLetterReason,
+    /// Optional error message from processing
+    pub error_message: Option<String>,
+}
 
 // Default values (used when config not provided)
 const DEFAULT_MAX_RETRY_ATTEMPTS: u32 = 3;
@@ -312,7 +330,14 @@ impl RedisStream {
 
                     // Check if message should be retried or sent to dead letter
                     if entry.attempts >= self.max_message_retries {
-                        self.handle_dead_letter(key, &entry).await?;
+                        let ctx = DeadLetterContext {
+                            key,
+                            group,
+                            consumer,
+                            reason: DeadLetterReason::MaxRetriesExceeded,
+                            error_message: Some(e.to_string()),
+                        };
+                        self.handle_dead_letter_with_context(&entry, ctx).await?;
                         // Still acknowledge to remove from pending
                         self.ack(key, group, vec![entry.id]).await?;
                     } else {
@@ -327,18 +352,55 @@ impl RedisStream {
         Ok(processed_count)
     }
 
-    /// Handle dead letter policy for failed messages
-    async fn handle_dead_letter(&self, key: &str, entry: &StreamEntry) -> Result<(), Error> {
+    /// Handle dead letter policy for failed messages with full metadata
+    pub async fn handle_dead_letter_with_context(
+        &self,
+        entry: &StreamEntry,
+        ctx: DeadLetterContext<'_>,
+    ) -> Result<(), Error> {
         match &self.dead_letter_policy {
             crate::redis::types::DeadLetterPolicy::Discard => {
-                warn!("Dropping message {} after max retries", entry.id);
+                warn!(
+                    "Dropping message {} after {} attempts (reason: {})",
+                    entry.id, entry.attempts, ctx.reason
+                );
             },
-            crate::redis::types::DeadLetterPolicy::MoveToDeadLetter { queue_name: _ } => {
-                // Add to dead letter queue with metadata
-                let dead_letter_key = format!("{}:dead_letter", key);
-                self.redis.xadd(&dead_letter_key, &entry.data).await?;
+            crate::redis::types::DeadLetterPolicy::MoveToDeadLetter { queue_name } => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
+                // Estimate first delivery time based on attempts
+                // Each retry typically takes a few hundred ms
+                let estimated_first_delivery = now.saturating_sub(entry.attempts * 1000);
+
+                let metadata = DeadLetterMetadata {
+                    original_id: entry.id.clone(),
+                    source_stream: ctx.key.to_string(),
+                    group_name: ctx.group.to_string(),
+                    consumer_name: ctx.consumer.to_string(),
+                    delivery_count: entry.attempts,
+                    first_delivery_time: estimated_first_delivery,
+                    dead_letter_time: now,
+                    reason: ctx.reason.clone(),
+                    error_message: ctx.error_message,
+                };
+
+                // Use configured queue name or default pattern
+                let dead_letter_key = if queue_name.is_empty() {
+                    format!("{}:dead_letter", ctx.key)
+                } else {
+                    queue_name.clone()
+                };
+
+                self.redis.xadd_dead_letter(&dead_letter_key, &entry.data, &metadata).await?;
                 self.update_dead_letter_metrics();
-                warn!("Moved message {} to dead letter queue", entry.id);
+
+                warn!(
+                    "Moved message {} to dead letter queue {} (reason: {}, attempts: {})",
+                    entry.id, dead_letter_key, ctx.reason, entry.attempts
+                );
             },
         }
         Ok(())
