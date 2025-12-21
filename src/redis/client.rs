@@ -1,16 +1,19 @@
 use crate::{
     config::RedisConfig,
     metrics,
-    redis::{error::Error, types::PendingItem},
+    redis::{circuit_breaker::RedisCircuitBreaker, error::Error, types::PendingItem},
 };
 use fred::prelude::*;
 use fred::types::{ConnectionConfig, Expiration, PerformanceConfig, ReconnectPolicy, SetOptions};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
 pub struct Redis {
     pub pool: RedisPool,
     config: Option<RedisConfig>,
+    /// Circuit breaker for protecting Redis operations
+    circuit_breaker: Option<Arc<RedisCircuitBreaker>>,
 }
 
 impl Redis {
@@ -75,14 +78,25 @@ impl Redis {
             },
         }
 
+        // Create circuit breaker if enabled
+        let circuit_breaker = if config.circuit_breaker.enabled {
+            let cb_config = config.circuit_breaker.to_circuit_breaker_config();
+            Some(Arc::new(RedisCircuitBreaker::new(cb_config)))
+        } else {
+            None
+        };
+
         info!(
-            "Initialized Redis pool with {} connections, {}ms timeout",
-            config.max_pool_size, config.connection_timeout_ms,
+            "Initialized Redis pool with {} connections, {}ms timeout, circuit_breaker={}",
+            config.max_pool_size,
+            config.connection_timeout_ms,
+            circuit_breaker.is_some(),
         );
 
         // Start pool health monitoring
         let pool_monitor = pool.clone();
         let _max_pool_size = config.max_pool_size;
+        let cb_monitor = circuit_breaker.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
@@ -94,12 +108,24 @@ impl Redis {
                     warn!("Redis pool disconnected, reconnecting...");
                 }
 
-                // Stats are tracked internally by fred
-                // pool.clients() can give us individual client info if needed
+                // Log circuit breaker metrics if enabled
+                if let Some(cb) = &cb_monitor {
+                    let metrics = cb.get_metrics();
+                    let state = cb.get_state().await;
+                    if metrics.total_opens > 0 || metrics.failure_count > 0 {
+                        tracing::debug!(
+                            "Circuit breaker status: state={:?}, failures={}, opens={}, rejections={}",
+                            state,
+                            metrics.failure_count,
+                            metrics.total_opens,
+                            metrics.total_rejections
+                        );
+                    }
+                }
             }
         });
 
-        Ok(Self { pool, config: Some(config.clone()) })
+        Ok(Self { pool, config: Some(config.clone()), circuit_breaker })
     }
 
     /// Create an empty Redis instance for testing/placeholder purposes
@@ -109,7 +135,35 @@ impl Redis {
         let pool = RedisPool::new(fred::types::RedisConfig::default(), None, None, None, 1)
             .expect("Failed to create empty pool");
 
-        Self { pool, config: Some(config) }
+        Self { pool, config: Some(config), circuit_breaker: None }
+    }
+
+    /// Get reference to the circuit breaker if enabled
+    pub fn circuit_breaker(&self) -> Option<&Arc<RedisCircuitBreaker>> {
+        self.circuit_breaker.as_ref()
+    }
+
+    /// Check if the circuit breaker is open (requests should fail fast)
+    pub async fn is_circuit_open(&self) -> bool {
+        if let Some(cb) = &self.circuit_breaker {
+            matches!(cb.get_state().await, crate::redis::circuit_breaker::CircuitState::Open)
+        } else {
+            false
+        }
+    }
+
+    /// Record a successful Redis operation with the circuit breaker
+    pub async fn record_success(&self, duration: Duration) {
+        if let Some(cb) = &self.circuit_breaker {
+            cb.record_success(duration).await;
+        }
+    }
+
+    /// Record a failed Redis operation with the circuit breaker
+    pub async fn record_failure(&self) {
+        if let Some(cb) = &self.circuit_breaker {
+            cb.record_failure().await;
+        }
     }
 
     pub fn config(&self) -> Option<&RedisConfig> {

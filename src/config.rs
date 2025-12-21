@@ -55,6 +55,83 @@ pub struct RedisConfig {
     pub metrics_collection_interval_seconds: u64,
     #[serde(default = "default_connection_timeout_ms")]
     pub connection_timeout_ms: u64,
+    /// Circuit breaker configuration
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+/// Circuit breaker configuration for Redis operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerConfig {
+    /// Enable circuit breaker protection
+    #[serde(default = "default_circuit_breaker_enabled")]
+    pub enabled: bool,
+
+    /// Number of consecutive failures before opening the circuit
+    #[serde(default = "default_cb_failure_threshold")]
+    pub failure_threshold: u32,
+
+    /// Time to wait before transitioning from Open to HalfOpen (seconds)
+    #[serde(default = "default_cb_open_timeout_secs")]
+    pub open_timeout_secs: u64,
+
+    /// Number of successful requests needed to close the circuit from HalfOpen
+    #[serde(default = "default_cb_success_threshold")]
+    pub success_threshold: u32,
+
+    /// Timeout for considering an operation slow (milliseconds)
+    #[serde(default = "default_cb_slow_call_threshold_ms")]
+    pub slow_call_threshold_ms: u64,
+
+    /// Ratio of slow calls that triggers circuit open (0.0 - 1.0)
+    #[serde(default = "default_cb_slow_call_rate_threshold")]
+    pub slow_call_rate_threshold: f64,
+
+    /// Minimum number of calls before evaluating slow call rate
+    #[serde(default = "default_cb_minimum_calls")]
+    pub minimum_calls_for_rate: u32,
+}
+
+fn default_circuit_breaker_enabled() -> bool {
+    true
+}
+
+fn default_cb_failure_threshold() -> u32 {
+    5
+}
+
+fn default_cb_open_timeout_secs() -> u64 {
+    30
+}
+
+fn default_cb_success_threshold() -> u32 {
+    3
+}
+
+fn default_cb_slow_call_threshold_ms() -> u64 {
+    5000 // 5 seconds
+}
+
+fn default_cb_slow_call_rate_threshold() -> f64 {
+    0.5 // 50% slow calls triggers open
+}
+
+fn default_cb_minimum_calls() -> u32 {
+    10
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_circuit_breaker_enabled(),
+            failure_threshold: default_cb_failure_threshold(),
+            open_timeout_secs: default_cb_open_timeout_secs(),
+            success_threshold: default_cb_success_threshold(),
+            slow_call_threshold_ms: default_cb_slow_call_threshold_ms(),
+            slow_call_rate_threshold: default_cb_slow_call_rate_threshold(),
+            minimum_calls_for_rate: default_cb_minimum_calls(),
+        }
+    }
 }
 
 /// Stream processor configuration
@@ -444,6 +521,21 @@ impl Default for RedisConfig {
             consumer_rebalance_interval_seconds: default_consumer_rebalance_interval(),
             metrics_collection_interval_seconds: default_metrics_collection_interval(),
             connection_timeout_ms: default_connection_timeout_ms(),
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
+}
+
+impl CircuitBreakerConfig {
+    /// Convert to the circuit breaker's internal config format
+    pub fn to_circuit_breaker_config(&self) -> crate::redis::circuit_breaker::CircuitBreakerConfig {
+        crate::redis::circuit_breaker::CircuitBreakerConfig {
+            failure_threshold: self.failure_threshold,
+            open_timeout: std::time::Duration::from_secs(self.open_timeout_secs),
+            success_threshold: self.success_threshold,
+            slow_call_threshold: std::time::Duration::from_millis(self.slow_call_threshold_ms),
+            slow_call_rate_threshold: self.slow_call_rate_threshold,
+            minimum_calls_for_rate: self.minimum_calls_for_rate,
         }
     }
 }

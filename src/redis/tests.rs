@@ -12,6 +12,7 @@ mod redis_client_tests {
             consumer_rebalance_interval_seconds: 300,
             metrics_collection_interval_seconds: 60,
             connection_timeout_ms: 5000,
+            circuit_breaker: crate::config::CircuitBreakerConfig::default(),
         }
     }
 

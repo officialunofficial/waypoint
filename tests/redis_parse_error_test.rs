@@ -19,6 +19,7 @@ mod tests {
             consumer_rebalance_interval_seconds: 300,
             metrics_collection_interval_seconds: 60,
             connection_timeout_ms: 5000,
+            circuit_breaker: waypoint::config::CircuitBreakerConfig::default(),
         }
     }
 
