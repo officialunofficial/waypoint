@@ -53,7 +53,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -76,7 +76,7 @@ jobs:
         run: redis-cli ping
 
       - name: Verify Postgres Connection
-        run: pg_isready -h localhost -p 5432
+        run: pg_isready -h localhost -p 5432 -U postgres
 
       - name: Run database migrations
         run: ./scripts/run-migrations.sh
@@ -125,7 +125,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -148,6 +148,9 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+
+      - name: Verify Postgres Connection
+        run: pg_isready -h localhost -p 5432 -U postgres
 
       - name: Run database migrations
         run: ./scripts/run-migrations.sh
