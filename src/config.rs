@@ -57,6 +57,134 @@ pub struct RedisConfig {
     pub connection_timeout_ms: u64,
 }
 
+/// Stream processor configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamProcessorConfig {
+    /// Base consumer group name prefix
+    #[serde(default = "default_stream_group_name")]
+    pub group_name: String,
+
+    /// Number of messages to fetch per batch
+    #[serde(default = "default_stream_batch_size")]
+    pub batch_size: u64,
+
+    /// Maximum concurrent message processing tasks
+    #[serde(default = "default_stream_concurrency")]
+    pub concurrency: usize,
+
+    /// Number of parallel consumers per stream type
+    #[serde(default = "default_consumers_per_stream")]
+    pub consumers_per_stream: usize,
+
+    /// Timeout for processing a single event (seconds)
+    #[serde(default = "default_event_processing_timeout_secs")]
+    pub event_processing_timeout_secs: u64,
+
+    /// How long to retain events in streams (seconds)
+    #[serde(default = "default_event_retention_secs")]
+    pub event_retention_secs: u64,
+
+    /// Interval between cleanup runs (seconds)
+    #[serde(default = "default_cleanup_interval_secs")]
+    pub cleanup_interval_secs: u64,
+
+    /// Threshold for considering a consumer extremely idle (ms)
+    #[serde(default = "default_idle_consumer_threshold_ms")]
+    pub idle_consumer_threshold_ms: u64,
+
+    /// Maximum retry attempts for Redis operations
+    #[serde(default = "default_max_retry_attempts")]
+    pub max_retry_attempts: u32,
+
+    /// Delay between retries (ms)
+    #[serde(default = "default_retry_delay_ms")]
+    pub retry_delay_ms: u64,
+
+    /// Maximum retries for a message before dead letter
+    #[serde(default = "default_max_message_retries")]
+    pub max_message_retries: u64,
+
+    /// Health check interval (seconds)
+    #[serde(default = "default_health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+
+    /// Batch size for force reclaim operations
+    #[serde(default = "default_reclaim_batch_size")]
+    pub reclaim_batch_size: usize,
+}
+
+fn default_stream_group_name() -> String {
+    "default".to_string()
+}
+
+fn default_stream_batch_size() -> u64 {
+    50 // Optimized for throughput while maintaining reasonable memory usage
+}
+
+fn default_stream_concurrency() -> usize {
+    250 // Maximum concurrent message processing tasks
+}
+
+fn default_consumers_per_stream() -> usize {
+    3 // Parallel consumers per stream type for higher throughput
+}
+
+fn default_event_processing_timeout_secs() -> u64 {
+    120 // 2 minutes timeout per event
+}
+
+fn default_event_retention_secs() -> u64 {
+    24 * 60 * 60 // 24 hours retention
+}
+
+fn default_cleanup_interval_secs() -> u64 {
+    30 * 60 // Run cleanup every 30 minutes
+}
+
+fn default_idle_consumer_threshold_ms() -> u64 {
+    3_600_000 // 1 hour - consumers idle longer than this are considered stale
+}
+
+fn default_max_retry_attempts() -> u32 {
+    3 // Retry Redis operations up to 3 times
+}
+
+fn default_retry_delay_ms() -> u64 {
+    100 // Wait 100ms between retries
+}
+
+fn default_max_message_retries() -> u64 {
+    5 // Move to dead letter after 5 failed processing attempts
+}
+
+fn default_health_check_interval_secs() -> u64 {
+    60 // Check stream health every minute
+}
+
+fn default_reclaim_batch_size() -> usize {
+    100 // Process 100 stale messages at a time during force reclaim
+}
+
+impl Default for StreamProcessorConfig {
+    fn default() -> Self {
+        Self {
+            group_name: default_stream_group_name(),
+            batch_size: default_stream_batch_size(),
+            concurrency: default_stream_concurrency(),
+            consumers_per_stream: default_consumers_per_stream(),
+            event_processing_timeout_secs: default_event_processing_timeout_secs(),
+            event_retention_secs: default_event_retention_secs(),
+            cleanup_interval_secs: default_cleanup_interval_secs(),
+            idle_consumer_threshold_ms: default_idle_consumer_threshold_ms(),
+            max_retry_attempts: default_max_retry_attempts(),
+            retry_delay_ms: default_retry_delay_ms(),
+            max_message_retries: default_max_message_retries(),
+            health_check_interval_secs: default_health_check_interval_secs(),
+            reclaim_batch_size: default_reclaim_batch_size(),
+        }
+    }
+}
+
 fn default_max_pool_size() -> u32 {
     50 // Fred's auto-pipelining means fewer connections needed than concurrent operations
 }
@@ -259,6 +387,8 @@ pub struct Config {
     pub mcp: McpConfig,
     #[serde(default)]
     pub eth: EthConfig,
+    #[serde(default)]
+    pub stream: StreamProcessorConfig,
     #[serde(default = "default_clear_db")]
     pub clear_db: bool,
 }

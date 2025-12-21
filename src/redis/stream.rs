@@ -3,12 +3,11 @@ use std::{sync::Arc, time::Duration};
 use tokio::time::interval;
 use tracing::{trace, warn};
 
-const MAX_RETRY_ATTEMPTS: u32 = 3;
-const RETRY_DELAY: Duration = Duration::from_millis(100);
-const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
-
-/// Maximum number of attempts before sending to dead letter queue
-const MAX_MESSAGE_RETRIES: u64 = 5;
+// Default values (used when config not provided)
+const DEFAULT_MAX_RETRY_ATTEMPTS: u32 = 3;
+const DEFAULT_RETRY_DELAY_MS: u64 = 100;
+const DEFAULT_HEALTH_CHECK_INTERVAL_SECS: u64 = 60;
+const DEFAULT_MAX_MESSAGE_RETRIES: u64 = 5;
 
 #[derive(Clone)]
 pub struct RedisStream {
@@ -18,6 +17,14 @@ pub struct RedisStream {
     dead_letter_policy: crate::redis::types::DeadLetterPolicy,
     /// Lock-free metric tracking for this stream
     metrics: Arc<AtomicStreamMetrics>,
+    /// Maximum retry attempts for Redis operations
+    max_retry_attempts: u32,
+    /// Delay between retries
+    retry_delay: Duration,
+    /// Health check interval
+    health_check_interval: Duration,
+    /// Maximum message retries before dead letter
+    max_message_retries: u64,
 }
 
 #[derive(Debug)]
@@ -41,7 +48,20 @@ impl RedisStream {
             health_check_enabled: false,
             dead_letter_policy: crate::redis::types::DeadLetterPolicy::default(),
             metrics: Arc::new(AtomicStreamMetrics::default()),
+            max_retry_attempts: DEFAULT_MAX_RETRY_ATTEMPTS,
+            retry_delay: Duration::from_millis(DEFAULT_RETRY_DELAY_MS),
+            health_check_interval: Duration::from_secs(DEFAULT_HEALTH_CHECK_INTERVAL_SECS),
+            max_message_retries: DEFAULT_MAX_MESSAGE_RETRIES,
         }
+    }
+
+    /// Configure stream with values from StreamProcessorConfig
+    pub fn with_config(mut self, config: &crate::config::StreamProcessorConfig) -> Self {
+        self.max_retry_attempts = config.max_retry_attempts;
+        self.retry_delay = Duration::from_millis(config.retry_delay_ms);
+        self.health_check_interval = Duration::from_secs(config.health_check_interval_secs);
+        self.max_message_retries = config.max_message_retries;
+        self
     }
 
     // Note: With fred, we don't need to manually get connections
@@ -86,9 +106,10 @@ impl RedisStream {
 
         let redis = self.redis.clone();
         let metrics = self.metrics.clone();
+        let health_check_interval = self.health_check_interval;
 
         tokio::spawn(async move {
-            let mut ticker = interval(HEALTH_CHECK_INTERVAL);
+            let mut ticker = interval(health_check_interval);
             loop {
                 ticker.tick().await;
 
@@ -147,10 +168,10 @@ impl RedisStream {
                 },
                 Err(e) => {
                     attempts += 1;
-                    if attempts >= MAX_RETRY_ATTEMPTS {
+                    if attempts >= self.max_retry_attempts {
                         return Err(e);
                     }
-                    tokio::time::sleep(RETRY_DELAY).await;
+                    tokio::time::sleep(self.retry_delay).await;
                 },
             }
         }
@@ -290,7 +311,7 @@ impl RedisStream {
                     self.update_error_metrics();
 
                     // Check if message should be retried or sent to dead letter
-                    if entry.attempts >= MAX_MESSAGE_RETRIES {
+                    if entry.attempts >= self.max_message_retries {
                         self.handle_dead_letter(key, &entry).await?;
                         // Still acknowledge to remove from pending
                         self.ack(key, group, vec![entry.id]).await?;
