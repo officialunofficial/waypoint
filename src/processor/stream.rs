@@ -100,7 +100,7 @@ impl StreamProcessor {
         let processing_time = process_start_time.elapsed().as_millis() as u64;
 
         // Update performance metrics
-        self.stream.update_success_metrics(processing_time).await;
+        self.stream.update_success_metrics(processing_time);
 
         let successful_ids: Vec<String> = results.into_iter().filter_map(|r| r.ok()).collect();
 
@@ -116,7 +116,7 @@ impl StreamProcessor {
                         Ok(true)
                     } else {
                         // Update error metrics
-                        self.stream.update_error_metrics().await;
+                        self.stream.update_error_metrics();
                         Err(e)
                     }
                 },
@@ -264,7 +264,7 @@ impl StreamProcessor {
         let processing_time = process_start_time.elapsed().as_millis() as u64;
 
         // Update metrics
-        self.stream.update_success_metrics(processing_time).await;
+        self.stream.update_success_metrics(processing_time);
 
         let successful_ids: Vec<String> = results.into_iter().filter_map(|r| r.ok()).collect();
 
@@ -272,7 +272,7 @@ impl StreamProcessor {
             match self.stream.ack(&self.stream_key, &self.group_name, successful_ids).await {
                 Ok(_) => {},
                 Err(e) => {
-                    self.stream.update_error_metrics().await;
+                    self.stream.update_error_metrics();
                     return Err(e);
                 },
             }
@@ -298,7 +298,7 @@ impl StreamProcessor {
         }
 
         // Update retry metrics for stale events
-        self.stream.update_retry_metrics().await;
+        self.stream.update_retry_metrics();
 
         // Process the entries using our shared helper
         self.process_entries(stale_entries).await

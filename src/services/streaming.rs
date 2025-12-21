@@ -572,16 +572,17 @@ impl Consumer {
                                     );
                                     total_reclaimed += reclaim_count;
 
-                                    // Try to acknowledge them to clear the backlog
-                                    for id in &msg_ids {
-                                        if let Err(e) =
-                                            self.stream.redis.xack(stream_key, group_name, id).await
-                                        {
-                                            error!(
-                                                "[{}] Error acknowledging stale message {}: {}",
-                                                stream_key, id, e
-                                            );
-                                        }
+                                    // Batch acknowledge to clear the backlog
+                                    if let Err(e) = self
+                                        .stream
+                                        .redis
+                                        .xack(stream_key, group_name, msg_ids.clone())
+                                        .await
+                                    {
+                                        error!(
+                                            "[{}] Error acknowledging stale messages: {}",
+                                            stream_key, e
+                                        );
                                     }
                                 },
                                 Err(e) => {
@@ -708,8 +709,14 @@ impl Consumer {
                     )
                     .await
                 {
-                    Ok(count) if !count.is_empty() => {
-                        trace!("Processed {} stale events for {}", count.len(), stream_key);
+                    Ok(entries) if !entries.is_empty() => {
+                        // Return claimed stale entries for processing and ACK
+                        trace!(
+                            "Claimed {} stale events for {} - returning for processing",
+                            entries.len(),
+                            stream_key
+                        );
+                        return Ok(Some(entries));
                     },
                     Ok(_) => {
                         // No stale messages either, wait briefly before next poll

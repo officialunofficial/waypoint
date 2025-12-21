@@ -1,7 +1,7 @@
-use crate::redis::{client::Redis, error::Error};
+use crate::redis::{client::Redis, error::Error, types::AtomicStreamMetrics};
 use std::{sync::Arc, time::Duration};
 use tokio::time::interval;
-use tracing::{error, trace, warn};
+use tracing::{trace, warn};
 
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(100);
@@ -16,8 +16,8 @@ pub struct RedisStream {
     health_check_enabled: bool,
     /// Policy for handling messages that exceed max retries
     dead_letter_policy: crate::redis::types::DeadLetterPolicy,
-    /// Metric tracking for this stream
-    metrics: Arc<tokio::sync::RwLock<crate::redis::types::StreamMetrics>>,
+    /// Lock-free metric tracking for this stream
+    metrics: Arc<AtomicStreamMetrics>,
 }
 
 #[derive(Debug)]
@@ -40,9 +40,7 @@ impl RedisStream {
             redis,
             health_check_enabled: false,
             dead_letter_policy: crate::redis::types::DeadLetterPolicy::default(),
-            metrics: Arc::new(tokio::sync::RwLock::new(
-                crate::redis::types::StreamMetrics::default(),
-            )),
+            metrics: Arc::new(AtomicStreamMetrics::default()),
         }
     }
 
@@ -56,67 +54,30 @@ impl RedisStream {
         self
     }
 
-    /// Get current metrics for this stream
-    /// Returns a copy of the metrics with primitive types (no deep cloning)
-    pub async fn get_metrics(&self) -> crate::redis::types::StreamMetrics {
-        let metrics_guard = self.metrics.read().await;
-        crate::redis::types::StreamMetrics {
-            processed_count: metrics_guard.processed_count,
-            error_count: metrics_guard.error_count,
-            retry_count: metrics_guard.retry_count,
-            dead_letter_count: metrics_guard.dead_letter_count,
-            processing_rate: metrics_guard.processing_rate,
-            average_latency_ms: metrics_guard.average_latency_ms,
-        }
+    /// Get current metrics for this stream (lock-free snapshot)
+    pub fn get_metrics(&self) -> crate::redis::types::StreamMetrics {
+        self.metrics.snapshot()
     }
 
-    /// Update metrics with a successful processing
-    pub async fn update_success_metrics(&self, processing_time_ms: u64) {
-        // Calculate new average latency and rate outside of any locks
-        let (new_avg_latency, new_rate, update_rate) = {
-            let metrics = self.metrics.read().await;
-            let avg_latency = if metrics.average_latency_ms == 0.0 {
-                processing_time_ms as f64
-            } else {
-                0.9 * metrics.average_latency_ms + 0.1 * processing_time_ms as f64
-            };
-
-            // Check if we need to update processing rate
-            let (rate, update) = if (metrics.processed_count + 1) % 100 == 0 {
-                let avg_time_per_msg = avg_latency / 1000.0; // seconds
-                if avg_time_per_msg > 0.0 { (1.0 / avg_time_per_msg, true) } else { (0.0, false) }
-            } else {
-                (0.0, false)
-            };
-
-            (avg_latency, rate, update)
-        };
-
-        // Now acquire write lock and update
-        let mut metrics = self.metrics.write().await;
-        metrics.processed_count += 1;
-        metrics.average_latency_ms = new_avg_latency;
-        if update_rate {
-            metrics.processing_rate = new_rate;
-        }
+    /// Update metrics with a successful processing (lock-free)
+    pub fn update_success_metrics(&self, processing_time_ms: u64) {
+        self.metrics.increment_processed();
+        self.metrics.update_latency(processing_time_ms);
     }
 
-    /// Update metrics with an error
-    pub async fn update_error_metrics(&self) {
-        let mut metrics = self.metrics.write().await;
-        metrics.error_count += 1;
+    /// Update metrics with an error (lock-free)
+    pub fn update_error_metrics(&self) {
+        self.metrics.increment_error();
     }
 
-    /// Update metrics with a retry
-    pub async fn update_retry_metrics(&self) {
-        let mut metrics = self.metrics.write().await;
-        metrics.retry_count += 1;
+    /// Update metrics with a retry (lock-free)
+    pub fn update_retry_metrics(&self) {
+        self.metrics.increment_retry();
     }
 
-    /// Update metrics with a dead letter event
-    pub async fn update_dead_letter_metrics(&self) {
-        let mut metrics = self.metrics.write().await;
-        metrics.dead_letter_count += 1;
+    /// Update metrics with a dead letter event (lock-free)
+    pub fn update_dead_letter_metrics(&self) {
+        self.metrics.increment_dead_letter();
     }
 
     /// Start health check monitoring for the stream
@@ -137,8 +98,8 @@ impl RedisStream {
                     warn!("Redis connection pool exhausted!");
                 }
 
-                // Log metrics periodically
-                let current_metrics = metrics.read().await;
+                // Log metrics periodically (lock-free snapshot)
+                let current_metrics = metrics.snapshot();
                 tracing::debug!(
                     "Stream metrics - Processed: {}, Errors: {}, Retries: {}, Dead Letter: {}, Rate: {:.2} msg/s",
                     current_metrics.processed_count,
@@ -229,22 +190,15 @@ impl RedisStream {
             .collect())
     }
 
-    /// Acknowledge successfully processed messages
+    /// Acknowledge successfully processed messages (batched in single Redis command)
     pub async fn ack(&self, key: &str, group: &str, ids: Vec<String>) -> Result<(), Error> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
         trace!("Acknowledging {} messages for key='{}', group='{}'", ids.len(), key, group);
 
-        for id in &ids {
-            match self.redis.xack(key, group, id).await {
-                Ok(_) => {
-                    trace!("Acknowledged message id='{}'", id);
-                },
-                Err(e) => {
-                    error!("Failed to acknowledge message id='{}' for key='{}': {}", id, key, e);
-                    return Err(e);
-                },
-            }
-        }
-        Ok(())
+        self.redis.xack(key, group, ids).await
     }
 
     /// Create a consumer group for the stream
@@ -330,10 +284,10 @@ impl RedisStream {
                     processed_count += 1;
 
                     let elapsed = start.elapsed().as_millis() as u64;
-                    self.update_success_metrics(elapsed).await;
+                    self.update_success_metrics(elapsed);
                 },
                 Err(e) => {
-                    self.update_error_metrics().await;
+                    self.update_error_metrics();
 
                     // Check if message should be retried or sent to dead letter
                     if entry.attempts >= MAX_MESSAGE_RETRIES {
@@ -342,7 +296,7 @@ impl RedisStream {
                         self.ack(key, group, vec![entry.id]).await?;
                     } else {
                         // Leave unacknowledged for retry
-                        self.update_retry_metrics().await;
+                        self.update_retry_metrics();
                         warn!("Failed to process message {}: {}", entry.id, e);
                     }
                 },
@@ -362,7 +316,7 @@ impl RedisStream {
                 // Add to dead letter queue with metadata
                 let dead_letter_key = format!("{}:dead_letter", key);
                 self.redis.xadd(&dead_letter_key, &entry.data).await?;
-                self.update_dead_letter_metrics().await;
+                self.update_dead_letter_metrics();
                 warn!("Moved message {} to dead letter queue", entry.id);
             },
         }

@@ -19,8 +19,6 @@ mod tests {
             consumer_rebalance_interval_seconds: 300,
             metrics_collection_interval_seconds: 60,
             connection_timeout_ms: 5000,
-            idle_timeout_secs: 300,
-            max_connection_lifetime_secs: 300,
         }
     }
 
@@ -70,7 +68,7 @@ mod tests {
                 assert_eq!(read_data, &binary_data, "Binary data should match what was stored");
 
                 // Acknowledge the message
-                let _ = redis.xack(stream_key, group_name, read_id).await;
+                let _ = redis.xack(stream_key, group_name, [read_id.clone()]).await;
             },
             Err(e) => {
                 panic!("XREADGROUP failed with binary data: {}", e);
@@ -123,10 +121,9 @@ mod tests {
                 assert_eq!(messages[1].1, binary_data);
                 assert_eq!(messages[2].1, json_like_data);
 
-                // Acknowledge all messages
-                for (id, _) in &messages {
-                    let _ = redis.xack(stream_key, group_name, id).await;
-                }
+                // Acknowledge all messages in batch
+                let ids: Vec<String> = messages.iter().map(|(id, _)| id.clone()).collect();
+                let _ = redis.xack(stream_key, group_name, ids).await;
             },
             Err(e) => {
                 panic!("XREADGROUP failed with mixed data types: {}", e);
@@ -183,7 +180,7 @@ mod tests {
                 group_name,
                 consumer2,
                 std::time::Duration::from_millis(50),
-                &[message_id.clone()],
+                std::slice::from_ref(&message_id),
             )
             .await;
 
@@ -198,7 +195,7 @@ mod tests {
                 assert_eq!(claimed_data, &binary_data, "Binary data should match what was stored");
 
                 // Acknowledge the message
-                let _ = redis.xack(stream_key, group_name, claimed_id).await;
+                let _ = redis.xack(stream_key, group_name, [claimed_id.clone()]).await;
             },
             Err(e) => {
                 panic!("XCLAIM failed with binary data: {}", e);
