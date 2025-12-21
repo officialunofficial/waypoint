@@ -1,19 +1,43 @@
 use crate::{
     config::RedisConfig,
     metrics,
-    redis::{circuit_breaker::RedisCircuitBreaker, error::Error, types::PendingItem},
+    redis::{
+        circuit_breaker::RedisCircuitBreaker,
+        error::Error,
+        types::{PendingItem, PoolHealth, PoolHealthStatus},
+    },
 };
 use fred::prelude::*;
 use fred::types::{ConnectionConfig, Expiration, PerformanceConfig, ReconnectPolicy, SetOptions};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{info, warn};
+
+/// Internal metrics tracking for pool health
+struct PoolMetrics {
+    total_operations: AtomicU64,
+    total_errors: AtomicU64,
+    in_flight_ops: AtomicU64,
+}
+
+impl Default for PoolMetrics {
+    fn default() -> Self {
+        Self {
+            total_operations: AtomicU64::new(0),
+            total_errors: AtomicU64::new(0),
+            in_flight_ops: AtomicU64::new(0),
+        }
+    }
+}
 
 pub struct Redis {
     pub pool: RedisPool,
     config: Option<RedisConfig>,
     /// Circuit breaker for protecting Redis operations
     circuit_breaker: Option<Arc<RedisCircuitBreaker>>,
+    /// Internal metrics for pool health monitoring
+    pool_metrics: Arc<PoolMetrics>,
 }
 
 impl Redis {
@@ -125,7 +149,12 @@ impl Redis {
             }
         });
 
-        Ok(Self { pool, config: Some(config.clone()), circuit_breaker })
+        Ok(Self {
+            pool,
+            config: Some(config.clone()),
+            circuit_breaker,
+            pool_metrics: Arc::new(PoolMetrics::default()),
+        })
     }
 
     /// Create an empty Redis instance for testing/placeholder purposes
@@ -135,7 +164,26 @@ impl Redis {
         let pool = RedisPool::new(fred::types::RedisConfig::default(), None, None, None, 1)
             .expect("Failed to create empty pool");
 
-        Self { pool, config: Some(config), circuit_breaker: None }
+        Self {
+            pool,
+            config: Some(config),
+            circuit_breaker: None,
+            pool_metrics: Arc::new(PoolMetrics::default()),
+        }
+    }
+
+    /// Track the start of an operation
+    pub fn start_operation(&self) {
+        self.pool_metrics.in_flight_ops.fetch_add(1, Ordering::Relaxed);
+        self.pool_metrics.total_operations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Track the end of an operation
+    pub fn end_operation(&self, success: bool) {
+        self.pool_metrics.in_flight_ops.fetch_sub(1, Ordering::Relaxed);
+        if !success {
+            self.pool_metrics.total_errors.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Get reference to the circuit breaker if enabled
@@ -170,20 +218,89 @@ impl Redis {
         self.config.as_ref()
     }
 
-    /// Get Redis connection pool health metrics
+    /// Get Redis connection pool health metrics (legacy format for compatibility)
+    /// Returns (total_connections, available_connections)
     pub fn get_pool_health(&self) -> (u32, u32) {
-        // Fred doesn't expose pool stats the same way as bb8
-        // Return approximations - fred manages pooling internally
         let pool_size = self.config.as_ref().map(|c| c.max_pool_size).unwrap_or(1);
-        // Always report as healthy since fred handles connection management
-        (pool_size, pool_size)
+        let in_flight = self.pool_metrics.in_flight_ops.load(Ordering::Relaxed) as u32;
+
+        // Estimate available connections based on in-flight operations
+        let available = pool_size.saturating_sub(in_flight.min(pool_size));
+        (pool_size, available)
     }
 
-    /// Check if pool is under pressure
+    /// Check if pool is under pressure based on multiple signals
     pub fn is_pool_under_pressure(&self) -> bool {
-        // Fred manages pooling internally, no pressure metrics available
-        // Return false to use normal operation
-        false
+        let pool_size = self.config.as_ref().map(|c| c.max_pool_size).unwrap_or(1);
+        let in_flight = self.pool_metrics.in_flight_ops.load(Ordering::Relaxed);
+
+        // Consider under pressure if in-flight ops exceed 80% of pool size
+        let ops_pressure = in_flight > (pool_size as u64 * 80 / 100);
+
+        // Check connection state
+        let state = self.pool.state();
+        let disconnected = matches!(state, fred::types::ClientState::Disconnected);
+
+        ops_pressure || disconnected
+    }
+
+    /// Get comprehensive pool health information
+    pub async fn get_detailed_pool_health(&self) -> PoolHealth {
+        let pool_size = self.config.as_ref().map(|c| c.max_pool_size).unwrap_or(1);
+        let total_ops = self.pool_metrics.total_operations.load(Ordering::Relaxed);
+        let total_errors = self.pool_metrics.total_errors.load(Ordering::Relaxed);
+        let in_flight = self.pool_metrics.in_flight_ops.load(Ordering::Relaxed) as u32;
+
+        // Get connection state from fred
+        let state = self.pool.state();
+        let connection_state = format!("{:?}", state);
+
+        // Check circuit breaker state
+        let circuit_breaker_open = if let Some(cb) = &self.circuit_breaker {
+            matches!(cb.get_state().await, crate::redis::circuit_breaker::CircuitState::Open)
+        } else {
+            false
+        };
+
+        // Calculate error rate
+        let error_rate =
+            if total_ops > 0 { Some(total_errors as f64 / total_ops as f64) } else { None };
+
+        // Get average latency from circuit breaker metrics if available
+        let avg_latency_ms = self.circuit_breaker.as_ref().and_then(|cb| {
+            let metrics = cb.get_metrics();
+            if metrics.total_call_count > 0 {
+                // Circuit breaker tracks slow calls but not average latency
+                // Could add avg_latency_ms to CircuitBreakerMetrics in the future
+                None
+            } else {
+                None
+            }
+        });
+
+        // Determine overall status
+        let status = if matches!(state, fred::types::ClientState::Disconnected) {
+            PoolHealthStatus::Disconnected
+        } else if circuit_breaker_open {
+            PoolHealthStatus::Unhealthy
+        } else if self.is_pool_under_pressure() || error_rate.map(|r| r > 0.1).unwrap_or(false) {
+            PoolHealthStatus::Degraded
+        } else {
+            PoolHealthStatus::Healthy
+        };
+
+        PoolHealth {
+            status,
+            connection_state,
+            circuit_breaker_open,
+            backpressure_level: None, // Set by stream processor if backpressure controller is used
+            pool_size,
+            in_flight_ops: Some(in_flight),
+            avg_latency_ms,
+            error_rate,
+            total_operations: total_ops,
+            total_errors,
+        }
     }
 
     /// Get consumer group information and health metrics

@@ -151,3 +151,48 @@ pub struct ConsumerInfo {
     pub pending_count: u64,
     pub idle_time: u64,
 }
+
+/// Redis pool health status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolHealthStatus {
+    /// Pool is healthy and operating normally
+    Healthy,
+    /// Pool is under pressure but still functional
+    Degraded,
+    /// Pool is unhealthy, connections may be failing
+    Unhealthy,
+    /// Pool is disconnected
+    Disconnected,
+}
+
+impl PoolHealthStatus {
+    /// Returns true if the pool is usable (Healthy or Degraded)
+    pub fn is_usable(&self) -> bool {
+        matches!(self, PoolHealthStatus::Healthy | PoolHealthStatus::Degraded)
+    }
+}
+
+/// Comprehensive Redis pool health information
+#[derive(Debug, Clone)]
+pub struct PoolHealth {
+    /// Overall health status
+    pub status: PoolHealthStatus,
+    /// Connection state from fred
+    pub connection_state: String,
+    /// Whether circuit breaker is open
+    pub circuit_breaker_open: bool,
+    /// Current backpressure level (if available)
+    pub backpressure_level: Option<String>,
+    /// Configured pool size
+    pub pool_size: u32,
+    /// Number of in-flight operations (if tracked)
+    pub in_flight_ops: Option<u32>,
+    /// Average latency in milliseconds (if tracked)
+    pub avg_latency_ms: Option<f64>,
+    /// Error rate (errors per total operations)
+    pub error_rate: Option<f64>,
+    /// Total operations since startup
+    pub total_operations: u64,
+    /// Total errors since startup
+    pub total_errors: u64,
+}
