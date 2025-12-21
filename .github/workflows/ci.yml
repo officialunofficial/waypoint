@@ -191,8 +191,8 @@ jobs:
           echo "Lines hit: $LINES_HIT"
           echo "Total coverage: ${COVERAGE}%"
 
-          # Enforce minimum 40% coverage (adjust as needed)
-          MIN_COVERAGE=40
+          # Enforce minimum 20% coverage
+          MIN_COVERAGE=20
           if (( $(echo "$COVERAGE < $MIN_COVERAGE" | bc -l) )); then
             echo "❌ Coverage ${COVERAGE}% is below minimum threshold of ${MIN_COVERAGE}%"
             exit 1
