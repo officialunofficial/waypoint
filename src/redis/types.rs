@@ -75,11 +75,8 @@ impl AtomicStreamMetrics {
             let current_bits = self.average_latency_bits.load(Ordering::Relaxed);
             let current = f64::from_bits(current_bits);
 
-            let updated = if current == 0.0 {
-                new_latency
-            } else {
-                0.9 * current + 0.1 * new_latency
-            };
+            let updated =
+                if current == 0.0 { new_latency } else { 0.9 * current + 0.1 * new_latency };
 
             if self
                 .average_latency_bits

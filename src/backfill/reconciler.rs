@@ -1096,8 +1096,7 @@ mod tests {
         ];
 
         // Check that tier purchase is included
-        let has_tier_purchase =
-            event_types.iter().any(|&et| et == OnChainEventType::EventTypeTierPurchase);
+        let has_tier_purchase = event_types.contains(&OnChainEventType::EventTypeTierPurchase);
 
         assert!(has_tier_purchase, "Tier purchase event type should be included in reconciler");
 

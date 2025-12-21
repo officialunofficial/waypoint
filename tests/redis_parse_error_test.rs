@@ -180,7 +180,7 @@ mod tests {
                 group_name,
                 consumer2,
                 std::time::Duration::from_millis(50),
-                &[message_id.clone()],
+                std::slice::from_ref(&message_id),
             )
             .await;
 

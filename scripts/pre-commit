@@ -1,0 +1,27 @@
+#!/bin/bash
+# Pre-commit hook for waypoint
+# Runs formatting and linting checks before allowing commits
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Check formatting
+echo "Checking formatting with cargo fmt..."
+if ! cargo fmt --all -- --check; then
+    echo ""
+    echo "ERROR: Formatting check failed!"
+    echo "Run 'cargo fmt --all' to fix formatting issues."
+    exit 1
+fi
+
+# Run clippy (with SQLX_OFFLINE for CI compatibility)
+echo "Running clippy..."
+if ! SQLX_OFFLINE=true cargo clippy --all-targets --all-features -- -D warnings 2>/dev/null; then
+    echo ""
+    echo "ERROR: Clippy found issues!"
+    echo "Fix the warnings above before committing."
+    exit 1
+fi
+
+echo "All pre-commit checks passed!"

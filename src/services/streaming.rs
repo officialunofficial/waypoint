@@ -573,8 +573,11 @@ impl Consumer {
                                     total_reclaimed += reclaim_count;
 
                                     // Batch acknowledge to clear the backlog
-                                    if let Err(e) =
-                                        self.stream.redis.xack(stream_key, group_name, msg_ids.clone()).await
+                                    if let Err(e) = self
+                                        .stream
+                                        .redis
+                                        .xack(stream_key, group_name, msg_ids.clone())
+                                        .await
                                     {
                                         error!(
                                             "[{}] Error acknowledging stale messages: {}",
