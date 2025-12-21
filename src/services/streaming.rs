@@ -709,8 +709,14 @@ impl Consumer {
                     )
                     .await
                 {
-                    Ok(count) if !count.is_empty() => {
-                        trace!("Processed {} stale events for {}", count.len(), stream_key);
+                    Ok(entries) if !entries.is_empty() => {
+                        // Return claimed stale entries for processing and ACK
+                        trace!(
+                            "Claimed {} stale events for {} - returning for processing",
+                            entries.len(),
+                            stream_key
+                        );
+                        return Ok(Some(entries));
                     },
                     Ok(_) => {
                         // No stale messages either, wait briefly before next poll
