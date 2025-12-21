@@ -176,8 +176,19 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          # Extract total coverage percentage
-          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary-only 2>&1 | grep -oP '\d+\.\d+(?=%)' | head -1)
+          # Extract total coverage percentage from lcov.info
+          # Parse the LCOV file to calculate line coverage
+          LINES_FOUND=$(grep -E "^LF:" lcov.info | cut -d: -f2 | awk '{sum += $1} END {print sum}')
+          LINES_HIT=$(grep -E "^LH:" lcov.info | cut -d: -f2 | awk '{sum += $1} END {print sum}')
+
+          if [ "$LINES_FOUND" -gt 0 ]; then
+            COVERAGE=$(echo "scale=2; $LINES_HIT * 100 / $LINES_FOUND" | bc)
+          else
+            COVERAGE="0.00"
+          fi
+
+          echo "Lines found: $LINES_FOUND"
+          echo "Lines hit: $LINES_HIT"
           echo "Total coverage: ${COVERAGE}%"
 
           # Enforce minimum 40% coverage (adjust as needed)
@@ -188,6 +199,3 @@ jobs:
           else
             echo "✅ Coverage ${COVERAGE}% meets minimum threshold of ${MIN_COVERAGE}%"
           fi
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waypoint
-          REDIS_URL: redis://localhost:6379
