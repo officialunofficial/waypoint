@@ -1,7 +1,4 @@
-# Version and Directory Configuration
-SNAPCHAIN_VER := v0.11.0
-SNAPCHAIN_DIR := snapchain-0.11.0
-PROTO_DIR := src/proto
+# Directory Configuration
 REGISTRY ?= localhost
 IMAGE_NAME := waypoint
 DEFAULT_TAG := latest
@@ -13,10 +10,7 @@ ifneq (,$(wildcard ./.env))
 	export
 endif
 
-.PHONY: proto clean init build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-update-user-data backfill-update-user-data-max backfill-onchain-all backfill-onchain-fid backfill-onchain-missing migrate test docker-build docker-run docker-push docker-tag metrics-start metrics-stop metrics-open fmt fmt-rust fmt-biome changelog help env-setup
-
-init:
-	mkdir -p $(PROTO_DIR)
+.PHONY: proto clean build run backfill-queue backfill-queue-fids backfill-queue-max backfill-worker backfill-update-user-data backfill-update-user-data-max backfill-onchain-all backfill-onchain-fid backfill-onchain-missing migrate test docker-build docker-run docker-push docker-tag metrics-start metrics-stop metrics-open fmt fmt-rust fmt-biome changelog help env-setup
 
 # Create a .env file from .env.example if it doesn't exist
 env-setup:
@@ -28,15 +22,13 @@ env-setup:
 		echo ".env file already exists. Skipping."; \
 	fi
 
-proto: init
-	curl -s -L "https://github.com/farcasterxyz/snapchain/archive/refs/tags/$(SNAPCHAIN_VER).tar.gz" \
-	| tar -zxvf - -C $(PROTO_DIR) --strip-components 3 $(SNAPCHAIN_DIR)/src/proto/
+proto:
+	git submodule update --init --recursive
 
 build: proto
 	SQLX_OFFLINE=true cargo build
 
 clean:
-	rm -rf $(PROTO_DIR)/*
 	cargo clean
 
 run: proto build env-setup
@@ -218,7 +210,7 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  make clean                    - Clean build artifacts"
-	@echo "  make proto                    - Generate protobuf files"
+	@echo "  make proto                    - Initialize snapchain submodule for protobuf files"
 	@echo "  make changelog                - Generate changelog"
 	@echo ""
 	@echo "Environment Variables:"
