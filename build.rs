@@ -2,8 +2,11 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Tell Cargo to rerun this build script if migrations change
     println!("cargo:rerun-if-changed=migrations");
+    // Rerun if proto definitions change
+    println!("cargo:rerun-if-changed=vendor/snapchain/proto/definitions");
 
-    // Use out_dir to set a different output directory for admin_rpc.proto
+    let proto_dir = "vendor/snapchain/proto/definitions";
+
     tonic_prost_build::configure()
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add an attribute to silence large_enum_variant warnings in generated code
@@ -11,19 +14,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(false)
         .compile_protos(
             &[
-                "src/proto/admin_rpc.proto",
-                "src/proto/blocks.proto",
-                "src/proto/gossip.proto",
-                "src/proto/hub_event.proto",
-                "src/proto/message.proto",
-                "src/proto/node_state.proto",
-                "src/proto/onchain_event.proto",
-                "src/proto/request_response.proto",
-                "src/proto/rpc.proto",
-                "src/proto/sync_trie.proto",
-                "src/proto/username_proof.proto",
+                "vendor/snapchain/proto/definitions/admin_rpc.proto",
+                "vendor/snapchain/proto/definitions/blocks.proto",
+                "vendor/snapchain/proto/definitions/gossip.proto",
+                "vendor/snapchain/proto/definitions/hub_event.proto",
+                "vendor/snapchain/proto/definitions/message.proto",
+                "vendor/snapchain/proto/definitions/node_state.proto",
+                "vendor/snapchain/proto/definitions/onchain_event.proto",
+                "vendor/snapchain/proto/definitions/request_response.proto",
+                "vendor/snapchain/proto/definitions/rpc.proto",
+                "vendor/snapchain/proto/definitions/sync_trie.proto",
+                "vendor/snapchain/proto/definitions/username_proof.proto",
             ],
-            &["src/proto"],
+            &[proto_dir],
         )?;
     Ok(())
 }

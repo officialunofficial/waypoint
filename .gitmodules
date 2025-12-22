@@ -1,0 +1,3 @@
+[submodule "vendor/snapchain"]
+	path = vendor/snapchain
+	url = https://github.com/farcasterxyz/snapchain.git
