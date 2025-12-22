@@ -2,36 +2,57 @@
 
 All notable changes to Waypoint will be documented in this file.
 
-## [2025.12.2] - 2025-12-12
-
-### Features
-
-- Add `remove_spammy_user` and `remove_nerfed_user` methods for soft-deleting users from database
-- Add `remove_spam_fid` and `remove_nerfed_fid` methods to SpamFilter for in-memory removal
-- Support handling `label_value=2` events indicating a user is no longer considered spammy
-
-## [2025.12.1] - 2025-12-12
-
-### Features
-
-- Add spammy_users and nerfed_users tables for spam label persistence
-- Parse nerfed users (label_value=3) from merkle spam.jsonl
-- Stream ~96MB spam list instead of loading into memory
-- Add efficient batch sync methods using sqlx compile-time checked queries
-- Add spam filtering to backfill queue command
-- Add support for multiple spam.jsonl sources
-- Upgrade MCP to rmcp 0.10 with Streamable HTTP transport
+## [unreleased]
 
 ### Bug Fixes
 
-- Always process onchain events for spam FIDs
-- Embed database migrations in binary for Docker deployment
-- Docker compose migration skip
-- Improve Docker networking guidance and error messages for Snapchain connection
+- Rename pool_size to max_pool_size to match ConfigMap
+- Update remaining pool_size references to max_pool_size
+
+### Features
+
+- Add methods to remove users from spam/nerf lists (#65)
+- Add resilience improvements (#67)
 
 ### Miscellaneous Tasks
 
+- Bump version to 2025.12.2
+- Use snapchain submodule for proto files (#69)
+
+### Performance
+
+- Optimize Redis connection usage and event processing (#66)
+
+## [2025.12.1] - 2025-12-12
+
+### Bug Fixes
+
+- Improve Docker networking guidance and error messages for Snapchain connection (#58)
+- Embed database migrations in binary for Docker deployment (#60)
+- Skip migrations env var
+- Docker compose migration skip
+- Always process onchain events for spam FIDs (#62)
+- Add deleted_at to spammy_users and nerfed_users tables (#64)
+
+### Documentation
+
+- Update MCP documentation for rmcp 0.8.0
+
+### Features
+
+- Add support for multiple spam.jsonl sources
+- Add spam filtering to backfill queue command
+- Upgrade MCP to rmcp 0.10 with Streamable HTTP transport (#61)
+- Add nerfed_users and spammy_users tables (#63)
+
+### Miscellaneous Tasks
+
+- Update Snapchain to v0.9.1
+- Update Snapchain to v0.9.2
+- Update Snapchain to v0.10.0
 - Update Snapchain to v0.11.0
+- Fmt
+- Bump version to 2025.12.1
 
 ## [2025.10.3] - 2025-10-07
 
