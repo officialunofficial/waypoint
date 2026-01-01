@@ -5,7 +5,7 @@ use crate::{
     metrics,
     processor::consumer::EventProcessor,
     proto::{
-        HubEvent, Message, OnChainEvent, UserNameProof,
+        CastId, HubEvent, Message, OnChainEvent, UserNameProof,
         cast_add_body::Parent,
         hub_event::Body,
         link_body::Target as LinkTarget,
@@ -22,7 +22,29 @@ use rayon::prelude::*;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
 use std::hash::Hasher;
 use std::sync::Arc;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
+
+/// Extracts parent info from a proto::Message (the Hub gRPC response type)
+fn extract_parent_from_proto(msg: &Message) -> (Option<u64>, Option<Vec<u8>>, Option<String>) {
+    if let Some(data) = &msg.data {
+        if let Some(CastAddBody(cast_body)) = &data.body {
+            let parent_fid = match &cast_body.parent {
+                Some(Parent::ParentCastId(id)) => Some(id.fid),
+                _ => None,
+            };
+            let parent_hash = match &cast_body.parent {
+                Some(Parent::ParentCastId(id)) => Some(id.hash.clone()),
+                _ => None,
+            };
+            let parent_url = match &cast_body.parent {
+                Some(Parent::ParentUrl(url)) => Some(url.clone()),
+                _ => None,
+            };
+            return (parent_fid, parent_hash, parent_url);
+        }
+    }
+    (None, None, None)
+}
 
 #[derive(Clone)]
 pub struct DatabaseProcessor {
@@ -40,6 +62,144 @@ impl DatabaseProcessor {
         OffsetDateTime::from_unix_timestamp(unix_time as i64).unwrap()
     }
 
+    /// Resolves root parent by looking up the parent cast.
+    /// Priority: 1) Check DB for parent's root  2) Query Hub if not in DB  3) Fallback to parent as root
+    async fn resolve_root_parent(
+        &self,
+        pool: &PgPool,
+        parent_fid: Option<i64>,
+        parent_hash: Option<&[u8]>,
+        parent_url: Option<&str>,
+    ) -> Result<
+        (Option<i64>, Option<Vec<u8>>, Option<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        // No parent = root cast
+        if parent_hash.is_none() && parent_url.is_none() {
+            return Ok((None, None, None));
+        }
+
+        // URL parent = root is the URL itself
+        if let Some(url) = parent_url {
+            return Ok((None, None, Some(url.to_string())));
+        }
+
+        // Cast parent = look up parent's root
+        if let (Some(p_hash), Some(p_fid)) = (parent_hash, parent_fid) {
+            // First check our database for the parent cast
+            let db_result = sqlx::query!(
+                r#"
+                SELECT
+                    COALESCE(root_parent_fid, fid) as "root_fid!: i64",
+                    COALESCE(root_parent_hash, hash) as "root_hash!: Vec<u8>",
+                    root_parent_url as "root_url: String"
+                FROM casts
+                WHERE hash = $1 AND deleted_at IS NULL
+                "#,
+                p_hash
+            )
+            .fetch_optional(pool)
+            .await?;
+
+            if let Some(row) = db_result {
+                return Ok((Some(row.root_fid), Some(row.root_hash), row.root_url));
+            }
+
+            // Parent not in DB - query Hub and traverse chain to find root
+            return self.resolve_root_from_hub(p_fid, p_hash).await;
+        }
+
+        Ok((None, None, None))
+    }
+
+    /// Traverses parent chain via Hub gRPC API to find the true root cast.
+    /// Uses iterative approach with max depth to prevent infinite loops.
+    /// Returns None for all fields if the root cannot be definitively determined.
+    async fn resolve_root_from_hub(
+        &self,
+        start_fid: i64,
+        start_hash: &[u8],
+    ) -> Result<
+        (Option<i64>, Option<Vec<u8>>, Option<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        const MAX_DEPTH: usize = 100; // Prevent runaway traversal
+
+        let mut current_fid = start_fid as u64;
+        let mut current_hash = start_hash.to_vec();
+
+        for depth in 0..MAX_DEPTH {
+            // Fetch the cast from Hub via gRPC
+            let mut hub = self.resources.hub.lock().await;
+
+            // Ensure connected
+            if !hub.check_connection().await.unwrap_or(false) {
+                warn!("Hub not connected while resolving root parent, leaving root_parent NULL");
+                return Ok((None, None, None));
+            }
+
+            let cast_id = CastId { fid: current_fid, hash: current_hash.clone() };
+
+            let client = match hub.client() {
+                Some(c) => c,
+                None => {
+                    warn!("Hub client not initialized, leaving root_parent NULL");
+                    return Ok((None, None, None));
+                },
+            };
+
+            let result = client.get_cast(tonic::Request::new(cast_id)).await;
+
+            drop(hub); // Release lock before processing
+
+            let proto_msg = match result {
+                Ok(response) => response.into_inner(),
+                Err(status) if status.code() == tonic::Code::NotFound => {
+                    // Cast not found in Hub - we cannot determine the true root
+                    // Leave root_parent NULL rather than incorrectly assume parent is root
+                    trace!(
+                        "Cast not found in Hub at depth {}, leaving root_parent NULL (chain broken)",
+                        depth
+                    );
+                    return Ok((None, None, None));
+                },
+                Err(e) => {
+                    warn!("Error fetching cast from Hub: {}, leaving root_parent NULL", e);
+                    return Ok((None, None, None));
+                },
+            };
+
+            // Extract parent info from protobuf
+            let (parent_fid_opt, parent_hash_opt, parent_url_opt) =
+                extract_parent_from_proto(&proto_msg);
+
+            match (parent_hash_opt, parent_url_opt) {
+                (None, None) => {
+                    // Found root! This cast has no parent.
+                    trace!("Found root cast at depth {}", depth);
+                    return Ok((Some(current_fid as i64), Some(current_hash), None));
+                },
+                (None, Some(url)) => {
+                    // Root is a URL (channel root)
+                    trace!("Found URL root at depth {}: {}", depth, url);
+                    return Ok((None, None, Some(url)));
+                },
+                (Some(p_hash), _) => {
+                    // Continue traversing up
+                    current_fid = parent_fid_opt.unwrap_or(current_fid);
+                    current_hash = p_hash;
+                },
+            }
+        }
+
+        // Max depth reached - cannot determine root definitively
+        warn!(
+            "Max depth {} reached while resolving root parent, leaving root_parent NULL",
+            MAX_DEPTH
+        );
+        Ok((None, None, None))
+    }
+
     async fn add_cast(
         &self,
         pool: &PgPool,
@@ -53,7 +213,7 @@ impl DatabaseProcessor {
                     _ => None,
                 };
 
-                let parent_hash = match &cast_body.parent {
+                let parent_hash: Option<&[u8]> = match &cast_body.parent {
                     Some(Parent::ParentCastId(cast_id)) => Some(&cast_id.hash),
                     _ => None,
                 };
@@ -65,18 +225,26 @@ impl DatabaseProcessor {
 
                 let ts = Self::convert_timestamp(data.timestamp);
 
+                // Resolve root parent by traversing the parent chain
+                let (root_parent_fid, root_parent_hash, root_parent_url) =
+                    self.resolve_root_parent(pool, parent_fid, parent_hash, parent_url).await?;
+
                 sqlx::query!(
                     r#"
                 INSERT INTO casts (
-                    fid, hash, text, parent_fid, parent_hash, parent_url, 
+                    fid, hash, text, parent_fid, parent_hash, parent_url,
+                    root_parent_fid, root_parent_hash, root_parent_url,
                     timestamp, embeds, mentions, mentions_positions
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT (hash) DO UPDATE SET
                     text = EXCLUDED.text,
                     parent_fid = EXCLUDED.parent_fid,
                     parent_hash = EXCLUDED.parent_hash,
                     parent_url = EXCLUDED.parent_url,
+                    root_parent_fid = EXCLUDED.root_parent_fid,
+                    root_parent_hash = EXCLUDED.root_parent_hash,
+                    root_parent_url = EXCLUDED.root_parent_url,
                     timestamp = EXCLUDED.timestamp,
                     embeds = EXCLUDED.embeds,
                     mentions = EXCLUDED.mentions,
@@ -88,6 +256,9 @@ impl DatabaseProcessor {
                     parent_fid,
                     parent_hash,
                     parent_url,
+                    root_parent_fid,
+                    root_parent_hash.as_deref(),
+                    root_parent_url.as_deref(),
                     ts,
                     serde_json::to_value(
                         cast_body
@@ -1412,5 +1583,111 @@ mod tests {
         // Verify deterministic hashing
         assert_eq!(hash1, hash2);
         assert_eq!(hash1.len(), 8); // 64-bit hash as 8 bytes
+    }
+
+    #[test]
+    fn test_extract_parent_from_proto_no_parent() {
+        // Create a cast message with no parent (root cast)
+        let msg = Message {
+            hash: vec![0x01; 20],
+            data: Some(crate::proto::MessageData {
+                fid: 12345,
+                timestamp: 1700000000,
+                network: 1,
+                r#type: 1, // CastAdd
+                body: Some(CastAddBody(crate::proto::CastAddBody {
+                    text: "Hello world".to_string(),
+                    parent: None,
+                    embeds: vec![],
+                    mentions: vec![],
+                    mentions_positions: vec![],
+                    embeds_deprecated: vec![],
+                    r#type: 0,
+                })),
+            }),
+            hash_scheme: 1,
+            signature: vec![],
+            signature_scheme: 1,
+            signer: vec![],
+            data_bytes: None,
+        };
+
+        let (parent_fid, parent_hash, parent_url) = super::extract_parent_from_proto(&msg);
+        assert!(parent_fid.is_none());
+        assert!(parent_hash.is_none());
+        assert!(parent_url.is_none());
+    }
+
+    #[test]
+    fn test_extract_parent_from_proto_with_cast_parent() {
+        use crate::proto::CastId;
+        use crate::proto::cast_add_body::Parent;
+
+        // Create a cast message with a cast parent
+        let msg = Message {
+            hash: vec![0x02; 20],
+            data: Some(crate::proto::MessageData {
+                fid: 12345,
+                timestamp: 1700000000,
+                network: 1,
+                r#type: 1, // CastAdd
+                body: Some(CastAddBody(crate::proto::CastAddBody {
+                    text: "Reply to cast".to_string(),
+                    parent: Some(Parent::ParentCastId(CastId { fid: 67890, hash: vec![0xAA; 20] })),
+                    embeds: vec![],
+                    mentions: vec![],
+                    mentions_positions: vec![],
+                    embeds_deprecated: vec![],
+                    r#type: 0,
+                })),
+            }),
+            hash_scheme: 1,
+            signature: vec![],
+            signature_scheme: 1,
+            signer: vec![],
+            data_bytes: None,
+        };
+
+        let (parent_fid, parent_hash, parent_url) = super::extract_parent_from_proto(&msg);
+        assert_eq!(parent_fid, Some(67890));
+        assert_eq!(parent_hash, Some(vec![0xAA; 20]));
+        assert!(parent_url.is_none());
+    }
+
+    #[test]
+    fn test_extract_parent_from_proto_with_url_parent() {
+        use crate::proto::cast_add_body::Parent;
+
+        // Create a cast message with a URL parent (channel post)
+        let msg = Message {
+            hash: vec![0x03; 20],
+            data: Some(crate::proto::MessageData {
+                fid: 12345,
+                timestamp: 1700000000,
+                network: 1,
+                r#type: 1, // CastAdd
+                body: Some(CastAddBody(crate::proto::CastAddBody {
+                    text: "Channel post".to_string(),
+                    parent: Some(Parent::ParentUrl(
+                        "https://warpcast.com/~/channel/rust".to_string(),
+                    )),
+                    embeds: vec![],
+                    mentions: vec![],
+                    mentions_positions: vec![],
+                    embeds_deprecated: vec![],
+                    r#type: 0,
+                })),
+            }),
+            hash_scheme: 1,
+            signature: vec![],
+            signature_scheme: 1,
+            signer: vec![],
+            data_bytes: None,
+        };
+
+        let (parent_fid, parent_hash, parent_url) = super::extract_parent_from_proto(&msg);
+        assert!(parent_fid.is_none());
+        assert!(parent_hash.is_none());
+        assert_eq!(parent_url, Some("https://warpcast.com/~/channel/rust".to_string()));
     }
 }

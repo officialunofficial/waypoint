@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO casts (\n                    fid, hash, text, parent_fid, parent_hash, parent_url,\n                    root_parent_fid, root_parent_hash, root_parent_url,\n                    timestamp, embeds, mentions, mentions_positions\n                )\n                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)\n                ON CONFLICT (hash) DO UPDATE SET\n                    text = EXCLUDED.text,\n                    parent_fid = EXCLUDED.parent_fid,\n                    parent_hash = EXCLUDED.parent_hash,\n                    parent_url = EXCLUDED.parent_url,\n                    root_parent_fid = EXCLUDED.root_parent_fid,\n                    root_parent_hash = EXCLUDED.root_parent_hash,\n                    root_parent_url = EXCLUDED.root_parent_url,\n                    timestamp = EXCLUDED.timestamp,\n                    embeds = EXCLUDED.embeds,\n                    mentions = EXCLUDED.mentions,\n                    mentions_positions = EXCLUDED.mentions_positions\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Text",
+        "Int8",
+        "Bytea",
+        "Text",
+        "Int8",
+        "Bytea",
+        "Text",
+        "Timestamptz",
+        "Json",
+        "Json",
+        "Json"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "733db5d1482bf9fa7b5c3ada8c56b084667297326fe7c21a26c5aad4789ef1ec"
+}
