@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT\n                    COALESCE(root_parent_fid, fid) as \"root_fid!: i64\",\n                    COALESCE(root_parent_hash, hash) as \"root_hash!: Vec<u8>\",\n                    root_parent_url as \"root_url: String\"\n                FROM casts\n                WHERE hash = $1 AND deleted_at IS NULL\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "root_fid!: i64",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "root_hash!: Vec<u8>",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 2,
+        "name": "root_url: String",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "a531c9570328fb6b0e06ed5eef85e0155883f229d6544df254e2b02ac977e5c8"
+}

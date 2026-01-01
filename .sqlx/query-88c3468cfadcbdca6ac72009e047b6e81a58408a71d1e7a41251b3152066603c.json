@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE casts\n        SET root_parent_url = parent_url\n        WHERE parent_url IS NOT NULL\n          AND root_parent_url IS NULL\n          AND deleted_at IS NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "88c3468cfadcbdca6ac72009e047b6e81a58408a71d1e7a41251b3152066603c"
+}

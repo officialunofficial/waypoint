@@ -78,8 +78,12 @@ pub struct CastInsert<'a> {
     pub fid: Fid,
     pub hash: &'a [u8],
     pub text: &'a str,
+    pub parent_fid: Option<i64>,
     pub parent_hash: Option<&'a [u8]>,
     pub parent_url: Option<&'a str>,
+    pub root_parent_fid: Option<i64>,
+    pub root_parent_hash: Option<Vec<u8>>,
+    pub root_parent_url: Option<String>,
     pub timestamp: OffsetDateTime,
     pub embeds: Value,
     pub mentions: Value,
@@ -87,6 +91,8 @@ pub struct CastInsert<'a> {
 }
 
 impl<'a> CastInsert<'a> {
+    /// Creates a CastInsert from a Message. Root parent fields are set to None
+    /// and must be resolved separately before bulk insertion.
     pub fn from_message(msg: &'a Message) -> Option<Self> {
         let data = msg.data.as_ref()?;
         let cast_body = match &data.body {
@@ -101,6 +107,11 @@ impl<'a> CastInsert<'a> {
 
         let parent_hash = match &cast_body.parent {
             Some(Parent::ParentCastId(cast_id)) => Some(cast_id.hash.as_slice()),
+            _ => None,
+        };
+
+        let parent_fid = match &cast_body.parent {
+            Some(Parent::ParentCastId(cast_id)) => Some(cast_id.fid as i64),
             _ => None,
         };
 
@@ -120,8 +131,14 @@ impl<'a> CastInsert<'a> {
             fid: data.fid,
             hash: &msg.hash,
             text: &cast_body.text,
+            parent_fid,
             parent_hash,
             parent_url,
+            // Root parent fields are set to None here and should be resolved
+            // before bulk insertion using resolve_root_parents_for_batch
+            root_parent_fid: None,
+            root_parent_hash: None,
+            root_parent_url: None,
             timestamp,
             embeds,
             mentions,
@@ -411,6 +428,7 @@ impl<'a> BatchInserter<'a> {
     }
 
     /// Bulk insert casts
+    /// Note: Root parent fields in CastInsert should be resolved before calling this.
     pub async fn bulk_insert_casts(
         &self,
         casts: Vec<CastInsert<'_>>,
@@ -428,8 +446,12 @@ impl<'a> BatchInserter<'a> {
                     "fid",
                     "hash",
                     "text",
+                    "parent_fid",
                     "parent_hash",
                     "parent_url",
+                    "root_parent_fid",
+                    "root_parent_hash",
+                    "root_parent_url",
                     "timestamp",
                     "embeds",
                     "mentions",
@@ -439,8 +461,12 @@ impl<'a> BatchInserter<'a> {
                 "hash",
                 &[
                     "text = EXCLUDED.text",
+                    "parent_fid = EXCLUDED.parent_fid",
                     "parent_hash = EXCLUDED.parent_hash",
                     "parent_url = EXCLUDED.parent_url",
+                    "root_parent_fid = EXCLUDED.root_parent_fid",
+                    "root_parent_hash = EXCLUDED.root_parent_hash",
+                    "root_parent_url = EXCLUDED.root_parent_url",
                     "timestamp = EXCLUDED.timestamp",
                     "embeds = EXCLUDED.embeds",
                     "mentions = EXCLUDED.mentions",
@@ -456,8 +482,12 @@ impl<'a> BatchInserter<'a> {
                     .bind(cast.fid as i64)
                     .bind(cast.hash)
                     .bind(cast.text)
+                    .bind(cast.parent_fid)
                     .bind(cast.parent_hash)
                     .bind(cast.parent_url)
+                    .bind(cast.root_parent_fid)
+                    .bind(cast.root_parent_hash.as_deref())
+                    .bind(cast.root_parent_url.as_deref())
                     .bind(cast.timestamp)
                     .bind(&cast.embeds)
                     .bind(&cast.mentions)
