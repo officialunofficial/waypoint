@@ -1,6 +1,7 @@
 pub mod bench;
 pub mod fid;
 pub mod onchain_events;
+pub mod root_parent;
 
 use clap::{ArgMatches, Command};
 use color_eyre::eyre::Result;
@@ -27,6 +28,9 @@ pub fn register_commands(app: Command) -> Command {
                 .value_name("COUNT")
                 .help("Number of messages to generate for the benchmark")
                 .default_value("10000")))
+        // Root parent backfill commands
+        .subcommand(root_parent::register_commands(Command::new("root-parent")
+            .about("Backfill root_parent columns for existing casts")))
 }
 
 /// Handle backfill commands based on matches
@@ -36,6 +40,7 @@ pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()>
         Some(("onchain-events", submatches)) => {
             onchain_events::handle_command(submatches, config).await
         },
+        Some(("root-parent", submatches)) => root_parent::handle_command(submatches, config).await,
         Some(("bench", submatches)) => {
             // Get the message count parameter
             let messages = submatches
@@ -71,6 +76,7 @@ pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()>
             println!("Please specify a backfill subcommand. Available command groups:");
             println!("  fid             - FID-based backfill operations");
             println!("  onchain-events  - Backfill onchain events for Farcaster FIDs");
+            println!("  root-parent     - Backfill root_parent columns for casts");
             println!("  bench           - Database benchmark operations");
             Ok(())
         },
@@ -78,6 +84,7 @@ pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()>
             println!("Unknown command group: {}. Available command groups:", cmd);
             println!("  fid             - FID-based backfill operations");
             println!("  onchain-events  - Backfill onchain events for Farcaster FIDs");
+            println!("  root-parent     - Backfill root_parent columns for casts");
             println!("  bench           - Database benchmark operations");
             Ok(())
         },
