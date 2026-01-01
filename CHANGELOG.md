@@ -8,6 +8,7 @@ All notable changes to Waypoint will be documented in this file.
 
 - Increase Redis max_pool_size to 50
 - Fix docker compose timing and add worker improvements (#71)
+- Support crates.io packaging without proto submodule (#74)
 
 ### Features
 
@@ -19,6 +20,7 @@ All notable changes to Waypoint will be documented in this file.
 ### Miscellaneous Tasks
 
 - Release v2026.1.1
+- Release v2026.1.2
 - Release v2026.1.2
 
 ## [2025.12.3] - 2025-12-22
