@@ -7,34 +7,48 @@ use crate::{
     core::MessageType,
     hub::subscriber::{HubSubscriber, SubscriberOptions},
     proto::HubEvent,
-    redis::stream::RedisStream,
+    redis::{
+        stream::{DeadLetterContext, RedisStream, StreamEntry},
+        types::DeadLetterReason,
+    },
 };
 use async_trait::async_trait;
 use prost::Message as ProstMessage;
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::{
-    sync::{Mutex, RwLock, oneshot},
+    sync::{Mutex, Semaphore, oneshot},
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 
-/// Consumer state used across tasks
-#[derive(Default)]
-struct ConsumerState {
-    shutdown: bool,
-    startup_complete: bool,
+/// Result of processing a single message
+#[derive(Debug)]
+enum ProcessingResult {
+    /// Successfully processed, should be acknowledged
+    Success(String),
+    /// Failed but should be acknowledged (moved to DLQ or discarded)
+    FailedAndHandled(String),
+    /// Failed and should NOT be acknowledged (will be retried)
+    FailedRetryable(String),
 }
 
 /// Consumer for processing message batches
 pub struct Consumer {
     stream: Arc<RedisStream>,
     processors: Arc<ProcessorRegistry>,
-    hub_host: String,
-    group_name: String,
-    state: Arc<RwLock<ConsumerState>>,
+    hub_host: Arc<str>,
+    group_name: Arc<str>,
+    /// Cancellation token for graceful shutdown
+    cancel: CancellationToken,
+    /// Tracks whether startup is complete (for coordinated startup)
+    startup_complete: Arc<AtomicBool>,
     config: StreamProcessorConfig,
     batch_size: u64,
     concurrency: usize,
@@ -54,9 +68,10 @@ impl Consumer {
         Self {
             stream,
             processors,
-            hub_host,
-            group_name,
-            state: Arc::new(RwLock::new(ConsumerState::default())),
+            hub_host: Arc::from(hub_host),
+            group_name: Arc::from(group_name),
+            cancel: CancellationToken::new(),
+            startup_complete: Arc::new(AtomicBool::new(false)),
             batch_size: config.batch_size,
             concurrency: config.concurrency,
             timeout: Duration::from_secs(config.event_processing_timeout_secs),
@@ -93,29 +108,15 @@ impl Consumer {
     pub async fn start(self) -> JoinHandle<()> {
         let consumer = Arc::new(self);
 
-        // Set initial state
-        {
-            let mut state = consumer.state.write().await;
-            state.shutdown = false;
-            state.startup_complete = false;
-        }
+        // Reset startup state
+        consumer.startup_complete.store(false, Ordering::SeqCst);
 
         // Start stream tasks for each message type
         let mut handles = Vec::new();
 
-        // Create a barrier for synchronizing startup across all tasks
-        // Count message types for calculating channel capacity
-        let message_types_count = MessageType::all().collect::<Vec<_>>().len();
-        let total_tasks = message_types_count * 2 + 1; // *2 for processor and cleanup tasks + 1 for consumer cleanup
-        let (startup_tx, mut startup_rx) = tokio::sync::mpsc::channel(total_tasks);
-
         // Start consumer cleanup task to periodically clean up idle consumers
         let consumer_clone = Arc::clone(&consumer);
-        let startup_tx_clone = startup_tx.clone();
         let consumer_cleanup_handle = tokio::spawn(async move {
-            // Signal that initialization is starting
-            let _ = startup_tx_clone.send(()).await;
-
             // Wait briefly to avoid contention
             tokio::time::sleep(Duration::from_millis(10)).await;
 
@@ -127,14 +128,9 @@ impl Consumer {
 
         for (index, message_type) in MessageType::all().enumerate() {
             let consumer_clone = Arc::clone(&consumer);
-            let startup_tx_clone = startup_tx.clone();
 
             let handle = tokio::spawn(async move {
-                // Signal that initialization is about to start
-                let _ = startup_tx_clone.send(()).await;
-
                 // Stagger startup to prevent thundering herd on Redis pool
-                // Each processor waits an additional 50ms to spread out the initial connections
                 tokio::time::sleep(Duration::from_millis(10 + (50 * index as u64))).await;
 
                 if let Err(e) = consumer_clone.process_stream(message_type).await {
@@ -145,18 +141,13 @@ impl Consumer {
             handles.push(handle);
         }
 
-        // Start cleanup task for old events and track their handles
+        // Start cleanup task for old events
         let mut cleanup_handles = Vec::new();
         for (index, message_type) in MessageType::all().enumerate() {
             let consumer_clone = Arc::clone(&consumer);
-            let startup_tx_clone = startup_tx.clone();
 
             let cleanup_handle = tokio::spawn(async move {
-                // Signal that initialization is about to start
-                let _ = startup_tx_clone.send(()).await;
-
-                // Stagger cleanup tasks even more to avoid contention
-                // Cleanup is less critical, so we can wait longer
+                // Stagger cleanup tasks to avoid contention
                 tokio::time::sleep(Duration::from_millis(10 + (100 * index as u64))).await;
 
                 consumer_clone.cleanup_old_events(message_type).await;
@@ -165,44 +156,12 @@ impl Consumer {
             cleanup_handles.push(cleanup_handle);
         }
 
-        // Drop our reference to the sender so the receiver can complete
-        drop(startup_tx);
-
-        // Wait for all tasks to signal they're ready to start
-        let consumer_clone = Arc::clone(&consumer);
-
-        // Spawn a dedicated task to track initialization and set the startup_complete flag
-        tokio::spawn(async move {
-            // Wait for all tasks to signal they've started initializing
-            let mut count = 0;
-            while let Some(()) = startup_rx.recv().await {
-                count += 1;
-                // For debugging purposes
-                trace!("Task initialization signal received ({}/{})", count, total_tasks);
-            }
-
-            info!("All {} tasks initialized. Marking startup as complete.", count);
-
-            // Now mark startup as complete - IMPORTANT: This is what unblocks the processing!
-            {
-                let mut state = consumer_clone.state.write().await;
-                state.startup_complete = true;
-
-                // Add this to explicitly log the state change
-                info!("Startup phase complete - processors will now begin processing events");
-            }
-        });
-
-        // Add an immediate initialization for the state to mark it as started
-        {
-            let mut state = consumer.state.write().await;
-            state.startup_complete = true;
-            info!("Preemptively marking startup as complete to allow immediate processing");
-        }
+        // Mark startup as complete
+        consumer.startup_complete.store(true, Ordering::SeqCst);
+        info!("Consumer startup complete - all tasks spawned");
 
         // Return a handle that waits for all tasks and reports progress
         tokio::spawn(async move {
-            // Use join_set to manage both types of tasks
             let mut remaining_tasks = handles.len() + cleanup_handles.len();
             info!("Consumer monitoring {} tasks for graceful shutdown", remaining_tasks);
 
@@ -228,11 +187,9 @@ impl Consumer {
         })
     }
 
-    /// Stop the consumer
-    pub async fn stop(&self) {
-        // Mark the shutdown flag
-        let mut state = self.state.write().await;
-        state.shutdown = true;
+    /// Stop the consumer (triggers graceful shutdown of all tasks)
+    pub fn stop(&self) {
+        self.cancel.cancel();
     }
 
     /// Run a periodic task to clean up idle consumers from Redis streams
@@ -249,11 +206,11 @@ impl Consumer {
         // Wait for the first tick to occur immediately
         interval.tick().await;
 
-        while !self.should_shutdown().await {
+        while !self.is_cancelled() {
             // Wait for the next interval or shutdown using select for responsiveness
             tokio::select! {
                 _ = interval.tick() => {},
-                _ = self.wait_for_shutdown() => {
+                _ = self.cancelled() => {
                     info!("Shutdown signal detected in consumer cleanup task");
                     break;
                 }
@@ -627,7 +584,7 @@ impl Consumer {
         trace!("Starting stream processor for {:?}", message_type);
 
         // Main processing loop
-        while !self.should_shutdown().await {
+        while !self.is_cancelled() {
             // 1. Reserve messages from stream
             let entries =
                 match self.try_reserve_messages(&stream_key, &group_name, message_type).await {
@@ -641,7 +598,7 @@ impl Consumer {
 
             // 3. Acknowledge processed messages
             if !successful_ids.is_empty() {
-                if self.should_shutdown().await {
+                if self.is_cancelled() {
                     info!("Shutdown signal detected before acknowledgment for {:?}", message_type);
                     break;
                 }
@@ -654,7 +611,7 @@ impl Consumer {
             }
 
             // Check shutdown before next iteration
-            if self.should_shutdown().await {
+            if self.is_cancelled() {
                 info!("Shutdown signal detected at end of processing loop for {:?}", message_type);
                 break;
             }
@@ -675,7 +632,7 @@ impl Consumer {
         crate::redis::error::Error,
     > {
         // Check shutdown before starting the operation
-        if self.should_shutdown().await {
+        if self.is_cancelled() {
             info!("Shutdown signal detected before stream reservation for {:?}", message_type);
             return Ok(None);
         }
@@ -688,7 +645,7 @@ impl Consumer {
                 }
 
                 // No entries reserved, try to claim stale messages
-                if self.should_shutdown().await {
+                if self.is_cancelled() {
                     info!(
                         "Shutdown signal detected before claiming stale messages for {:?}",
                         message_type
@@ -718,7 +675,7 @@ impl Consumer {
                     },
                     Ok(_) => {
                         // No stale messages either, wait briefly before next poll
-                        if self.should_shutdown().await {
+                        if self.is_cancelled() {
                             info!(
                                 "Shutdown signal detected before idle wait for {:?}",
                                 message_type
@@ -729,7 +686,7 @@ impl Consumer {
                         // Use a more responsive wait with shutdown checking
                         tokio::select! {
                             _ = tokio::time::sleep(Duration::from_millis(10)) => {},
-                            _ = self.wait_for_shutdown() => {
+                            _ = self.cancelled() => {
                                 info!("Shutdown signal detected during idle wait for {:?}", message_type);
                                 return Ok(None);
                             }
@@ -754,7 +711,7 @@ impl Consumer {
                     let retry_delay = Duration::from_millis(500);
                     tokio::select! {
                         _ = tokio::time::sleep(retry_delay) => {},
-                        _ = self.wait_for_shutdown() => {
+                        _ = self.cancelled() => {
                             info!("Shutdown signal detected during pool timeout retry for {:?}", message_type);
                             return Ok(None);
                         }
@@ -763,7 +720,7 @@ impl Consumer {
                     error!("Error reserving messages from {}: {}", stream_key, e);
 
                     // Check shutdown before sleeping
-                    if self.should_shutdown().await {
+                    if self.is_cancelled() {
                         info!(
                             "Shutdown signal detected after reserve error for {:?}",
                             message_type
@@ -774,7 +731,7 @@ impl Consumer {
                     // Wait a brief moment before retrying
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(100)) => {},
-                        _ = self.wait_for_shutdown() => {
+                        _ = self.cancelled() => {
                             info!("Shutdown signal detected during error wait for {:?}", message_type);
                             return Ok(None);
                         }
@@ -789,52 +746,187 @@ impl Consumer {
     /// Process a batch of messages and return IDs of successfully processed ones
     async fn process_message_batch(
         &self,
-        entries: Vec<crate::redis::stream::StreamEntry>,
+        entries: Vec<StreamEntry>,
         message_type: MessageType,
     ) -> Vec<String> {
-        let mut successful_ids = Vec::with_capacity(entries.len());
+        if entries.is_empty() {
+            return Vec::new();
+        }
+
+        let entry_count = entries.len();
+        let concurrency = self.concurrency.max(1);
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+
+        // Build stream key for DLQ context - use Arc<str> to avoid cloning in hot path
+        let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
+        let stream_key: Arc<str> =
+            Arc::from(crate::types::get_stream_key(clean_host, message_type.to_stream_key()));
+        let consumer_id: Arc<str> =
+            Arc::from(crate::redis::stream::RedisStream::get_stable_consumer_id());
+        let group_name = Arc::clone(&self.group_name);
+
+        // Process entries concurrently with semaphore-based throttling
+        let mut handles = Vec::with_capacity(entry_count);
 
         for entry in entries {
-            // Check shutdown periodically during processing
-            if self.should_shutdown().await {
+            let permit = semaphore.clone().acquire_owned().await;
+            let processors = Arc::clone(&self.processors);
+            let stream = Arc::clone(&self.stream);
+            let stream_key = Arc::clone(&stream_key);
+            let group_name = Arc::clone(&group_name);
+            let consumer_id = Arc::clone(&consumer_id);
+            let timeout = self.timeout;
+
+            let handle = tokio::spawn(async move {
+                let _permit = permit; // Hold permit until processing completes
+
+                let entry_id = entry.id.clone();
+                let start_time = Instant::now();
+
+                // Try to decode the event
+                let event = match HubEvent::decode(entry.data.as_slice()) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        error!("Error decoding event {}: {}", entry_id, e);
+                        crate::metrics::increment_events_decode_error();
+
+                        // Send to DLQ for decode errors (not retryable)
+                        let ctx = DeadLetterContext {
+                            key: &stream_key,
+                            group: &group_name,
+                            consumer: &consumer_id,
+                            reason: DeadLetterReason::DecodeError,
+                            error_message: Some(e.to_string()),
+                        };
+                        if let Err(dlq_err) =
+                            stream.handle_dead_letter_with_context(&entry, ctx).await
+                        {
+                            error!("Failed to send to DLQ: {}", dlq_err);
+                        }
+                        return ProcessingResult::FailedAndHandled(entry_id);
+                    },
+                };
+
+                trace!("Decoded event {} (type={})", entry_id, event.r#type);
+                crate::metrics::increment_events_received();
+
+                // Process with timeout
+                let process_result =
+                    tokio::time::timeout(timeout, processors.process_event(event)).await;
+
+                let elapsed = start_time.elapsed();
+                crate::metrics::record_event_processing_time(elapsed);
+
+                match process_result {
+                    Ok(Ok(_)) => {
+                        trace!("Processed event {} in {:?}", entry_id, elapsed);
+                        crate::metrics::increment_events_processed();
+                        ProcessingResult::Success(entry_id)
+                    },
+                    Ok(Err(e)) => {
+                        error!("Error processing event {}: {}", entry_id, e);
+                        crate::metrics::increment_events_processing_error();
+
+                        // Check if we've exceeded max retries
+                        if entry.attempts >= 5 {
+                            // Send to DLQ after max retries
+                            let ctx = DeadLetterContext {
+                                key: &stream_key,
+                                group: &group_name,
+                                consumer: &consumer_id,
+                                reason: DeadLetterReason::MaxRetriesExceeded,
+                                error_message: Some(e.to_string()),
+                            };
+                            if let Err(dlq_err) =
+                                stream.handle_dead_letter_with_context(&entry, ctx).await
+                            {
+                                error!("Failed to send to DLQ: {}", dlq_err);
+                            }
+                            ProcessingResult::FailedAndHandled(entry_id)
+                        } else {
+                            // Don't ack - will be retried
+                            ProcessingResult::FailedRetryable(entry_id)
+                        }
+                    },
+                    Err(_) => {
+                        error!("Timeout processing event {} after {:?}", entry_id, timeout);
+                        crate::metrics::increment_events_timeout();
+
+                        // Check if we've exceeded max retries
+                        if entry.attempts >= 5 {
+                            let ctx = DeadLetterContext {
+                                key: &stream_key,
+                                group: &group_name,
+                                consumer: &consumer_id,
+                                reason: DeadLetterReason::Timeout,
+                                error_message: Some(format!("Timeout after {:?}", timeout)),
+                            };
+                            if let Err(dlq_err) =
+                                stream.handle_dead_letter_with_context(&entry, ctx).await
+                            {
+                                error!("Failed to send to DLQ: {}", dlq_err);
+                            }
+                            ProcessingResult::FailedAndHandled(entry_id)
+                        } else {
+                            ProcessingResult::FailedRetryable(entry_id)
+                        }
+                    },
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        // Collect results
+        let mut successful_ids = Vec::with_capacity(entry_count);
+        let mut failed_retryable = 0usize;
+
+        for handle in handles {
+            // Check shutdown between processing results
+            if self.is_cancelled() {
                 info!("Shutdown signal detected during message processing for {:?}", message_type);
                 break;
             }
 
-            match HubEvent::decode(entry.data.as_slice()) {
-                Ok(event) => {
-                    trace!("Decoded event {} (type={})", entry.id, event.r#type);
-                    crate::metrics::increment_events_received();
-
-                    let start_time = Instant::now();
-                    match self.processors.process_event(event).await {
-                        Ok(_) => {
-                            trace!("Processed event {}", entry.id);
-                            crate::metrics::increment_events_processed();
-                            crate::metrics::record_event_processing_time(start_time.elapsed());
-                            successful_ids.push(entry.id)
-                        },
-                        Err(e) => {
-                            error!("Error processing event {}: {}", entry.id, e);
-                            crate::metrics::record_event_processing_time(start_time.elapsed());
-                            successful_ids.push(entry.id); // Ack anyway to avoid reprocessing
-                        },
-                    }
+            match handle.await {
+                Ok(ProcessingResult::Success(id)) => {
+                    successful_ids.push(id);
+                },
+                Ok(ProcessingResult::FailedAndHandled(id)) => {
+                    // Event was sent to DLQ or discarded, acknowledge it
+                    successful_ids.push(id);
+                },
+                Ok(ProcessingResult::FailedRetryable(_id)) => {
+                    // Don't acknowledge - will be retried via XCLAIM
+                    failed_retryable += 1;
                 },
                 Err(e) => {
-                    error!("Error decoding event {}: {}", entry.id, e);
-                    successful_ids.push(entry.id); // Ack anyway to avoid reprocessing
+                    error!("Task panic during event processing: {}", e);
+                    crate::metrics::increment_events_processing_error();
                 },
             }
         }
 
+        if failed_retryable > 0 {
+            warn!(
+                "{} events for {:?} will be retried (not acknowledged)",
+                failed_retryable, message_type
+            );
+        }
+
+        trace!(
+            "Batch complete for {:?}: {} successful, {} retryable",
+            message_type,
+            successful_ids.len(),
+            failed_retryable
+        );
+
         successful_ids
     }
 
-    /// Helper method to check if the consumer should shut down
-    async fn should_shutdown(&self) -> bool {
-        let state = self.state.read().await;
-        state.shutdown
+    /// Check if shutdown has been requested (lock-free)
+    fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
     }
 
     /// Clean up old events from the stream
@@ -852,18 +944,18 @@ impl Consumer {
         // Initial tick happens immediately, so consume it first
         interval.tick().await;
 
-        while !self.should_shutdown().await {
+        while !self.is_cancelled() {
             // Wait for the next interval tick with shutdown checking
             tokio::select! {
                 _ = interval.tick() => {},
-                _ = self.wait_for_shutdown() => {
+                _ = self.cancelled() => {
                     info!("Shutdown signal detected during cleanup interval wait for {:?}", message_type);
                     break;
                 }
             }
 
             // Check shutdown flag before trimming
-            if self.should_shutdown().await {
+            if self.is_cancelled() {
                 info!("Shutdown signal detected before trim operation for {:?}", message_type);
                 break;
             }
@@ -878,7 +970,7 @@ impl Consumer {
                     error!("Error trimming old events from {}: {}", stream_key, e);
 
                     // Check shutdown before sleeping on error
-                    if self.should_shutdown().await {
+                    if self.is_cancelled() {
                         info!("Shutdown signal detected after trim error for {:?}", message_type);
                         break;
                     }
@@ -892,15 +984,14 @@ impl Consumer {
         info!("Cleanup task for {:?} shutting down cleanly", message_type);
     }
 
-    /// Helper function that resolves when shutdown is requested
-    async fn wait_for_shutdown(&self) -> bool {
-        let mut interval = tokio::time::interval(Duration::from_millis(50));
-        loop {
-            interval.tick().await;
-            if self.should_shutdown().await {
-                return true;
-            }
-        }
+    /// Returns a future that completes when shutdown is requested
+    fn cancelled(&self) -> tokio_util::sync::WaitForCancellationFuture<'_> {
+        self.cancel.cancelled()
+    }
+
+    /// Request shutdown of all consumer tasks
+    pub fn shutdown(&self) {
+        self.cancel.cancel();
     }
 }
 

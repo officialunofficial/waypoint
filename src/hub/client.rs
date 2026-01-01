@@ -128,6 +128,8 @@ pub struct Hub {
     client: Option<HubServiceClient<Channel>>,
     config: Arc<HubConfig>,
     host: String,
+    // Headers wrapped in Arc for cheap cloning in retry closures
+    headers: Arc<HashMap<String, String>>,
     // Track consecutive errors for advanced retry behavior
     error_count: Arc<std::sync::atomic::AtomicU32>,
     last_success: Arc<std::sync::atomic::AtomicU64>,
@@ -137,11 +139,13 @@ impl Hub {
     pub fn new(config: impl Into<Arc<HubConfig>>) -> Result<Self, Error> {
         let config = config.into();
         let host = config.url.clone();
+        let headers = Arc::new(config.headers.clone());
         Ok(Hub {
             channel: None,
             client: None,
             config,
             host,
+            headers,
             error_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             last_success: Arc::new(std::sync::atomic::AtomicU64::new(
                 std::time::SystemTime::now()
@@ -154,7 +158,7 @@ impl Hub {
 
     /// Add custom headers to request
     fn add_custom_headers<T>(&self, request: tonic::Request<T>) -> tonic::Request<T> {
-        crate::hub::add_custom_headers(request, &self.config.headers)
+        crate::hub::add_custom_headers(request, &self.headers)
     }
 
     /// Create an empty hub instance for testing or mock purposes
@@ -176,12 +180,14 @@ impl Hub {
         });
 
         // Create empty hub with default config
-        let config_clone = config.clone();
+        let host = config.url.clone();
+        let headers = Arc::new(config.headers.clone());
         Hub {
             channel: None,
             client: None,
             config,
-            host: config_clone.url.clone(),
+            host,
+            headers,
             error_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             last_success: Arc::new(std::sync::atomic::AtomicU64::new(
                 std::time::SystemTime::now()
@@ -480,16 +486,17 @@ impl Hub {
             self.connect().await?;
         }
 
-        // Clone what we need for the closure to avoid borrowing self
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        // Clone channel (Arc-based, cheap) - create client inside closure
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         // Use retry_with_backoff
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
-            let headers = headers.clone();
+            let channel = channel.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request = tonic::Request::new(ShardChunksRequest {
                     shard_id,
                     start_block_number: start_block,
@@ -517,16 +524,17 @@ impl Hub {
             self.connect().await?;
         }
 
-        // Clone what we need for the closure to avoid borrowing self
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        // Clone channel (Arc-based, cheap) - create client inside closure
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         // Use retry_with_backoff
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
-            let headers = headers.clone();
+            let channel = channel.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request = tonic::Request::new(GetInfoRequest {});
                 let request_with_headers = crate::hub::add_custom_headers(request, &headers);
                 match client.get_info(request_with_headers).await {
@@ -560,17 +568,18 @@ impl Hub {
             self.connect().await?;
         }
 
-        // Clone what we need for the closure to avoid borrowing self
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        // Clone channel (Arc-based, cheap) - create client inside closure
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         // Use retry_with_backoff
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let page_token_clone = page_token.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request = tonic::Request::new(FidsRequest {
                     page_size,
                     page_token: page_token_clone,
@@ -596,15 +605,16 @@ impl Hub {
             self.connect().await?;
         }
 
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let request = request.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request_with_headers =
                     crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
                 match client.get_casts_by_fid(request_with_headers).await {
@@ -625,15 +635,16 @@ impl Hub {
             self.connect().await?;
         }
 
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let request = request.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request_with_headers =
                     crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
                 match client.get_reactions_by_fid(request_with_headers).await {
@@ -654,15 +665,16 @@ impl Hub {
             self.connect().await?;
         }
 
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let request = request.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request_with_headers =
                     crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
                 match client.get_links_by_fid(request_with_headers).await {
@@ -683,15 +695,16 @@ impl Hub {
             self.connect().await?;
         }
 
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let request = request.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request_with_headers =
                     crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
                 match client.get_verifications_by_fid(request_with_headers).await {
@@ -712,15 +725,16 @@ impl Hub {
             self.connect().await?;
         }
 
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let request = request.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request_with_headers =
                     crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
                 match client.get_user_data_by_fid(request_with_headers).await {
@@ -741,15 +755,16 @@ impl Hub {
             self.connect().await?;
         }
 
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let request = request.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request_with_headers =
                     crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
                 match client.get_all_user_data_messages_by_fid(request_with_headers).await {
@@ -770,15 +785,16 @@ impl Hub {
             self.connect().await?;
         }
 
-        let client_clone = self.client.clone();
-        let headers = self.config.headers.clone();
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
 
         self.retry_with_backoff(|| {
-            let client_clone = client_clone.clone();
+            let channel = channel.clone();
             let request = request.clone();
-            let headers = headers.clone();
+            let headers = Arc::clone(&headers);
             Box::pin(async move {
-                let mut client = client_clone.ok_or(Error::NotConnected)?;
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
                 let request_with_headers =
                     crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
                 match client.get_on_chain_events(request_with_headers).await {
@@ -966,5 +982,204 @@ mod tests {
         let (url, use_tls) = format_url("localhost:2283");
         assert_eq!(url, "https://localhost:2283");
         assert!(use_tls);
+    }
+
+    #[test]
+    fn test_retry_policy_should_retry_connection_errors() {
+        let policy = HubRetryPolicy::new(3, 100, 30000, 0.0);
+
+        // Connection errors should be retried
+        let status = Status::internal("h2 protocol error: connection reset");
+        assert!(policy.should_retry(&status));
+
+        let status = Status::unavailable("connection closed");
+        assert!(policy.should_retry(&status));
+    }
+
+    #[test]
+    fn test_retry_policy_should_not_retry_non_connection_errors() {
+        let policy = HubRetryPolicy::new(3, 100, 30000, 0.0);
+
+        // Non-connection errors should not be retried
+        let status = Status::invalid_argument("invalid request");
+        assert!(!policy.should_retry(&status));
+
+        let status = Status::not_found("resource not found");
+        assert!(!policy.should_retry(&status));
+
+        let status = Status::permission_denied("access denied");
+        assert!(!policy.should_retry(&status));
+    }
+
+    #[test]
+    fn test_retry_policy_max_retries_exceeded() {
+        let mut policy = HubRetryPolicy::new(2, 100, 30000, 0.0);
+
+        // First two retries should be allowed
+        let status = Status::internal("h2 protocol error: connection reset");
+        assert!(policy.should_retry(&status));
+        policy.advance();
+        assert!(policy.should_retry(&status));
+        policy.advance();
+
+        // Third retry should be denied (max_retries = 2)
+        assert!(!policy.should_retry(&status));
+    }
+
+    #[test]
+    fn test_retry_policy_advance() {
+        let mut policy = HubRetryPolicy::new(5, 100, 30000, 0.0);
+
+        assert_eq!(policy.current_retry, 0);
+        policy.advance();
+        assert_eq!(policy.current_retry, 1);
+        policy.advance();
+        assert_eq!(policy.current_retry, 2);
+    }
+
+    #[test]
+    fn test_retry_policy_next_backoff() {
+        let mut policy = HubRetryPolicy::new(5, 100, 30000, 0.0);
+
+        // First backoff should be base delay
+        assert_eq!(policy.next_backoff(), Duration::from_millis(100));
+
+        policy.advance();
+        // After first advance, backoff should double
+        assert_eq!(policy.next_backoff(), Duration::from_millis(200));
+
+        policy.advance();
+        assert_eq!(policy.next_backoff(), Duration::from_millis(400));
+    }
+
+    #[test]
+    fn test_retry_policy_backoff_with_jitter() {
+        let policy = HubRetryPolicy::new(5, 100, 30000, 0.5);
+
+        // With jitter, backoff should be between base and base * (1 + jitter_factor)
+        // For attempt 0: base = 100, jitter range = 50, so result is 100-149
+        let backoff = policy.calculate_backoff(0);
+        assert!(backoff >= Duration::from_millis(100));
+        assert!(backoff < Duration::from_millis(150));
+    }
+
+    #[test]
+    fn test_retry_policy_backoff_max_cap() {
+        let policy = HubRetryPolicy::new(20, 100, 1000, 0.0);
+
+        // Even with many retries, backoff should be capped at max_delay
+        assert_eq!(policy.calculate_backoff(15), Duration::from_millis(1000));
+        assert_eq!(policy.calculate_backoff(20), Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn test_retry_policy_from_config() {
+        let config = Arc::new(HubConfig {
+            url: "localhost:3383".to_string(),
+            headers: HashMap::new(),
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 7,
+            retry_base_delay_ms: 200,
+            retry_max_delay_ms: 60000,
+            retry_jitter_factor: 0.3,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+            shard_indices: vec![],
+            subscribe_to_all_shards: false,
+        });
+
+        let policy = HubRetryPolicy::from_config(&config);
+
+        assert_eq!(policy.max_retries, 7);
+        assert_eq!(policy.base_delay_ms, 200);
+        assert_eq!(policy.max_delay_ms, 60000);
+        assert!((policy.jitter_factor - 0.3).abs() < f32::EPSILON);
+        assert_eq!(policy.current_retry, 0);
+    }
+
+    #[test]
+    fn test_hub_empty_creates_valid_instance() {
+        let hub = Hub::empty();
+
+        assert!(hub.channel.is_none());
+        assert!(hub.client.is_none());
+        assert_eq!(hub.host(), "snapchain.farcaster.xyz:3383");
+        assert!(hub.headers.is_empty());
+    }
+
+    #[test]
+    fn test_hub_new_stores_headers_in_arc() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer token123".to_string());
+
+        let config = Arc::new(HubConfig {
+            url: "localhost:3383".to_string(),
+            headers,
+            max_concurrent_connections: 5,
+            max_requests_per_second: 10,
+            retry_max_attempts: 5,
+            retry_base_delay_ms: 100,
+            retry_max_delay_ms: 30000,
+            retry_jitter_factor: 0.25,
+            retry_timeout_ms: 60000,
+            conn_timeout_ms: 30000,
+            shard_indices: vec![],
+            subscribe_to_all_shards: false,
+        });
+
+        let hub = Hub::new(config).unwrap();
+
+        // Headers should be stored in Arc
+        assert_eq!(hub.headers.len(), 1);
+        assert_eq!(hub.headers.get("Authorization").unwrap(), "Bearer token123");
+    }
+
+    #[test]
+    fn test_connection_error_messages() {
+        // Test various connection error message patterns
+        let patterns = vec![
+            "h2 protocol error",
+            "error reading a body from connection",
+            "connection reset",
+            "connection closed",
+            "timed out",
+        ];
+
+        for pattern in patterns {
+            let status = Status::internal(pattern);
+            assert!(
+                HubRetryPolicy::is_connection_error(&status),
+                "Pattern '{}' should be detected as connection error",
+                pattern
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_connection_status_codes() {
+        // These status codes should not trigger retries
+        let non_retryable = vec![
+            Status::cancelled("cancelled"),
+            Status::unknown("unknown error"),
+            Status::invalid_argument("bad argument"),
+            Status::not_found("not found"),
+            Status::already_exists("exists"),
+            Status::permission_denied("denied"),
+            Status::failed_precondition("precondition failed"),
+            Status::aborted("aborted"),
+            Status::out_of_range("out of range"),
+            Status::unimplemented("not implemented"),
+            Status::data_loss("data loss"),
+            Status::unauthenticated("unauthenticated"),
+        ];
+
+        for status in non_retryable {
+            assert!(
+                !HubRetryPolicy::is_connection_error(&status),
+                "Status {:?} should not be detected as connection error",
+                status.code()
+            );
+        }
     }
 }

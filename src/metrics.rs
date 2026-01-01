@@ -562,3 +562,58 @@ where
     std::mem::drop(timer); // Explicit drop to record the metric
     result
 }
+
+// Event processing error metrics
+pub fn increment_events_decode_error() {
+    if let Some(client) = get_client() {
+        client.incr("stream.events_decode_error");
+    }
+    metrics::counter!("waypoint_stream_events_decode_error").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "decode").increment(1);
+}
+
+pub fn increment_events_processing_error() {
+    if let Some(client) = get_client() {
+        client.incr("stream.events_processing_error");
+    }
+    metrics::counter!("waypoint_stream_events_processing_error").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "processing").increment(1);
+}
+
+pub fn increment_events_timeout() {
+    if let Some(client) = get_client() {
+        client.incr("stream.events_timeout");
+    }
+    metrics::counter!("waypoint_stream_events_timeout").increment(1);
+    metrics::counter!("waypoint_errors_total", "type" => "timeout").increment(1);
+}
+
+pub fn increment_events_dead_lettered() {
+    if let Some(client) = get_client() {
+        client.incr("stream.events_dead_lettered");
+    }
+    metrics::counter!("waypoint_stream_events_dead_lettered").increment(1);
+}
+
+pub fn increment_events_retried() {
+    if let Some(client) = get_client() {
+        client.incr("stream.events_retried");
+    }
+    metrics::counter!("waypoint_stream_events_retried").increment(1);
+}
+
+// Consumer lag metrics
+pub fn set_consumer_lag(stream: &str, lag: u64) {
+    if let Some(client) = get_client() {
+        client.gauge(&format!("stream.{}.lag", stream), lag as f64);
+    }
+    metrics::gauge!("waypoint_stream_consumer_lag", "stream" => stream.to_string()).set(lag as f64);
+}
+
+pub fn set_consumer_pending(stream: &str, pending: u64) {
+    if let Some(client) = get_client() {
+        client.gauge(&format!("stream.{}.pending", stream), pending as f64);
+    }
+    metrics::gauge!("waypoint_stream_consumer_pending", "stream" => stream.to_string())
+        .set(pending as f64);
+}
