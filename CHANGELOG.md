@@ -2,7 +2,17 @@
 
 All notable changes to Waypoint will be documented in this file.
 
-## [unreleased]
+## [2026.1.1] - 2026-01-01
+
+### Bug Fixes
+
+- Increase Redis max_pool_size to 50
+
+### Features
+
+- Add unified messages stream and optimize hub client (#70)
+
+## [2025.12.3] - 2025-12-22
 
 ### Bug Fixes
 
@@ -18,6 +28,7 @@ All notable changes to Waypoint will be documented in this file.
 
 - Bump version to 2025.12.2
 - Use snapchain submodule for proto files (#69)
+- Release v2025.12.3
 
 ### Performance
 
