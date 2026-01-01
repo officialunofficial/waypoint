@@ -19,7 +19,12 @@ pub mod redis;
 pub mod services;
 pub mod types;
 
-// Include all proto files in the src/proto directory with empty package name
+// Include proto definitions - either from build-time generation or pre-generated file
+#[cfg(build_protos)]
 pub mod proto {
-    tonic::include_proto!("_"); // use "farcaster" as the package name
+    tonic::include_proto!("_");
 }
+
+#[cfg(not(build_protos))]
+#[path = "proto.gen.rs"]
+pub mod proto;
