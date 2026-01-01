@@ -436,6 +436,7 @@ impl ServerHandler for WaypointMcpTools {
                 self._create_resource_text("memo://farcaster-info", "farcaster-info"),
             ],
             next_cursor: None,
+            meta: None,
         })
     }
 
@@ -467,6 +468,10 @@ impl ServerHandler for WaypointMcpTools {
         _request: Option<PaginatedRequestParam>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        Ok(ListResourceTemplatesResult { resource_templates: vec![], next_cursor: None })
+        Ok(ListResourceTemplatesResult {
+            resource_templates: vec![],
+            next_cursor: None,
+            meta: None,
+        })
     }
 }

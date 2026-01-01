@@ -72,6 +72,7 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
     let server_config = StreamableHttpServerConfig {
         sse_keep_alive: Some(std::time::Duration::from_secs(15)),
         stateful_mode: true,
+        cancellation_token: cancellation_token.clone(),
     };
 
     // Initialize the WaypointMcpService with data context

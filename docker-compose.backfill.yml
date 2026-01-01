@@ -86,7 +86,9 @@ services:
     pull_policy: always
     init: true
     restart: on-failure
-    command: ./waypoint backfill fid worker
+    command: ./waypoint backfill fid worker --exit-on-complete --idle-timeout 60
+    deploy:
+      replicas: ${BACKFILL_WORKERS:-1}
     environment:
       # Database
       WAYPOINT_DATABASE__URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-waypoint}
@@ -125,6 +127,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backfill-queue:
+        condition: service_completed_successfully
     networks:
       - waypoint-network
 

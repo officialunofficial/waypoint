@@ -1,4 +1,4 @@
-use clap::{ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,11 +14,29 @@ use waypoint::{
 
 /// Register worker command
 pub fn register_command() -> Command {
-    Command::new("worker").about("Start FID-based backfill worker")
+    Command::new("worker")
+        .about("Start FID-based backfill worker")
+        .arg(
+            Arg::new("exit_on_complete")
+                .long("exit-on-complete")
+                .help("Exit when backfill queue is empty (instead of running forever)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("idle_timeout")
+                .long("idle-timeout")
+                .help("Seconds to wait with empty queue before considering backfill complete (default: 30)")
+                .value_parser(clap::value_parser!(u64))
+                .default_value("30"),
+        )
 }
 
 /// Run a backfill worker for FIDs
-pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
+pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
+    // Parse arguments
+    let exit_on_complete = args.get_flag("exit_on_complete");
+    let idle_timeout = args.get_one::<u64>("idle_timeout").copied().unwrap_or(30);
+
     // Initialize clients
     let redis = Arc::new(waypoint::redis::client::Redis::new(&config.redis).await?);
     let hub = Arc::new(Mutex::new(waypoint::hub::client::Hub::new(config.hub.clone())?));
@@ -62,6 +80,12 @@ pub async fn execute(config: &Config, _args: &ArgMatches) -> Result<()> {
         concurrency, requested_concurrency, max_concurrency
     );
     let mut worker = Worker::new(reconciler, fid_queue, concurrency);
+
+    // Configure exit behavior
+    if exit_on_complete {
+        worker.set_exit_on_complete(idle_timeout);
+        info!("Worker will exit when queue is empty for {} seconds", idle_timeout);
+    }
 
     // Add processors to worker
     worker.add_processor(db_processor);
