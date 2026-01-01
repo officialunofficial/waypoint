@@ -17,7 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+        with:
+          submodules: recursive
+
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       
@@ -60,6 +62,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install protoc and database clients
         run: |
@@ -132,6 +136,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install protoc and database clients
         run: |
