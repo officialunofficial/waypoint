@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
 COPY Cargo.toml build.rs ./
 COPY .sqlx ./.sqlx
 COPY migrations ./migrations
-COPY src/proto ./src/proto
+COPY vendor/snapchain/proto ./vendor/snapchain/proto
 COPY src ./src
 # SQLx offline mode
 ARG SQLX_OFFLINE=true
@@ -29,7 +29,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /usr/src/waypoint/target/release/waypoint /app/
-COPY --from=builder /usr/src/waypoint/src/proto /app/proto
 RUN chmod +x /app/waypoint
 ENV RUST_BACKTRACE=full
 # Default command
