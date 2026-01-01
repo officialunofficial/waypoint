@@ -280,7 +280,23 @@ impl HubSubscriber {
                     let current_event_id = event.id;
 
                     let bytes = event.encode_to_vec();
-                    batch_state.current_bytes += bytes.len();
+                    let event_size = bytes.len();
+
+                    // Check if adding this event would exceed max_batch_bytes
+                    // If so, flush the current batch BEFORE adding the new event
+                    // This provides backpressure - we block until flush succeeds
+                    if !batch_state.events.is_empty()
+                        && batch_state.current_bytes + event_size >= self.max_batch_bytes
+                    {
+                        trace!(
+                            "Pre-flush: batch would exceed max_batch_bytes ({} + {} >= {})",
+                            batch_state.current_bytes, event_size, self.max_batch_bytes
+                        );
+                        // Block until flush succeeds - this applies backpressure to the stream
+                        self.flush_batch_with_retry(&mut batch_state).await?;
+                    }
+
+                    batch_state.current_bytes += event_size;
                     batch_state.events.push((event, bytes));
 
                     events_since_checkpoint += 1;
@@ -849,9 +865,13 @@ impl HubSubscriber {
         // Process and group non-spam events
         for &idx in &keep_indices {
             let (event, bytes) = &batch.events[idx];
+            // Track if this event contains a message (for the messages stream)
+            let mut is_message_event = false;
+
             let event_type = match event.r#type {
                 1 => {
                     // MERGE_MESSAGE
+                    is_message_event = true;
                     if let Some(hub_event::Body::MergeMessageBody(body)) = &event.body {
                         match body
                             .message
@@ -874,6 +894,7 @@ impl HubSubscriber {
                 },
                 2 => {
                     // PRUNE_MESSAGE
+                    is_message_event = true;
                     if let Some(hub_event::Body::PruneMessageBody(body)) = &event.body {
                         match body
                             .message
@@ -896,6 +917,7 @@ impl HubSubscriber {
                 },
                 3 => {
                     // REVOKE_MESSAGE
+                    is_message_event = true;
                     if let Some(hub_event::Body::RevokeMessageBody(body)) = &event.body {
                         match body
                             .message
@@ -936,6 +958,11 @@ impl HubSubscriber {
                 _ => "unknown",
             };
             event_groups.entry(event_type).or_default().push(bytes.clone());
+
+            // Also add message events to the "messages" stream for external consumption
+            if is_message_event {
+                event_groups.entry("messages").or_default().push(bytes.clone());
+            }
         }
 
         // Check if we have event groups to process

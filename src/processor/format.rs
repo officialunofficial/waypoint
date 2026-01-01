@@ -221,57 +221,578 @@ fn truncate(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::{Protocol, VerificationAddAddressBody, VerificationRemoveBody};
+    use crate::proto::{
+        CastId, LendStorageBody, Protocol, ReactionType, StorageUnitType, UserDataType,
+        VerificationAddAddressBody, VerificationRemoveBody,
+    };
 
-    #[test]
-    fn test_truncate() {
-        // Test basic ASCII string
-        assert_eq!(truncate("Hello world", 5), "Hello...");
+    mod truncate_tests {
+        use super::*;
 
-        // Test string shorter than max_chars
-        assert_eq!(truncate("Hi", 5), "Hi");
+        #[test]
+        fn test_truncate_basic_ascii() {
+            assert_eq!(truncate("Hello world", 5), "Hello...");
+        }
 
-        // Test with emojis
-        assert_eq!(truncate("Hello 🌍🌎🌏", 7), "Hello 🌍...");
+        #[test]
+        fn test_truncate_shorter_than_max() {
+            assert_eq!(truncate("Hi", 5), "Hi");
+        }
 
-        // Test string with emoji at truncation point
-        assert_eq!(truncate("🟨🟨🟨 Test", 3), "🟨🟨🟨...");
+        #[test]
+        fn test_truncate_exact_length() {
+            assert_eq!(truncate("Hello", 5), "Hello");
+        }
 
-        // Test empty string
-        assert_eq!(truncate("", 5), "");
+        #[test]
+        fn test_truncate_with_emojis() {
+            assert_eq!(truncate("Hello 🌍🌎🌏", 7), "Hello 🌍...");
+        }
+
+        #[test]
+        fn test_truncate_emoji_at_truncation_point() {
+            assert_eq!(truncate("🟨🟨🟨 Test", 3), "🟨🟨🟨...");
+        }
+
+        #[test]
+        fn test_truncate_empty_string() {
+            assert_eq!(truncate("", 5), "");
+        }
+
+        #[test]
+        fn test_truncate_unicode_characters() {
+            // Japanese characters - 5 chars
+            assert_eq!(truncate("こんにちは世界", 5), "こんにちは...");
+        }
     }
 
-    #[test]
-    fn test_verification_add_formatting() {
-        let verification = VerificationAddAddressBody {
-            address: hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap(),
-            block_hash: hex::decode(
-                "A9788AB993490646B7AE10A465B264F08DBDD7E346B3EC589C29BA1F85D98DD5",
-            )
-            .unwrap(),
-            verification_type: 0,
-            chain_id: 0,
-            protocol: Protocol::Ethereum as i32,
-            claim_signature: vec![/* ... */],
-        };
+    mod format_eth_tests {
+        use super::*;
 
-        let formatted = format_verification_add(&verification);
-        // Use case-insensitive check
-        assert!(formatted.to_lowercase().contains("0x03118b1c6dc69c12047631538c646a099d851847"));
-        assert!(formatted.contains("EOA"));
-        assert!(formatted.contains("ETH"));
+        #[test]
+        fn test_format_eth_hex_empty() {
+            assert_eq!(format_eth_hex(&[]), "0x");
+        }
+
+        #[test]
+        fn test_format_eth_hex_single_byte() {
+            assert_eq!(format_eth_hex(&[0xab]), "0xab");
+        }
+
+        #[test]
+        fn test_format_eth_hex_multiple_bytes() {
+            assert_eq!(format_eth_hex(&[0x01, 0x23, 0x45]), "0x012345");
+        }
+
+        #[test]
+        fn test_format_eth_hex_leading_zeros() {
+            assert_eq!(format_eth_hex(&[0x00, 0x01, 0x02]), "0x000102");
+        }
+
+        #[test]
+        fn test_format_eth_address_20_bytes() {
+            let address = hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap();
+            let formatted = format_eth_address(&address);
+            assert_eq!(formatted.to_lowercase(), "0x03118b1c6dc69c12047631538c646a099d851847");
+        }
+
+        #[test]
+        fn test_format_eth_address_not_20_bytes() {
+            let address = hex::decode("03118B1C").unwrap();
+            let formatted = format_eth_address(&address);
+            assert_eq!(formatted.to_lowercase(), "0x03118b1c");
+        }
     }
 
-    #[test]
-    fn test_verification_remove_formatting() {
-        let verification = VerificationRemoveBody {
-            address: hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap(),
-            protocol: Protocol::Ethereum as i32,
-        };
+    mod message_type_tests {
+        use super::*;
 
-        let formatted = format_verification_remove(&verification);
-        assert!(formatted.contains("Remove ETH verification"));
-        // Use case-insensitive check
-        assert!(formatted.to_lowercase().contains("0x03118b1c6dc69c12047631538c646a099d851847"));
+        #[test]
+        fn test_format_message_type_cast_add() {
+            assert_eq!(format_message_type(MessageType::CastAdd as i32), "Cast");
+        }
+
+        #[test]
+        fn test_format_message_type_cast_remove() {
+            assert_eq!(format_message_type(MessageType::CastRemove as i32), "Cast Remove");
+        }
+
+        #[test]
+        fn test_format_message_type_reaction_add() {
+            assert_eq!(format_message_type(MessageType::ReactionAdd as i32), "React Add");
+        }
+
+        #[test]
+        fn test_format_message_type_reaction_remove() {
+            assert_eq!(format_message_type(MessageType::ReactionRemove as i32), "React Remove");
+        }
+
+        #[test]
+        fn test_format_message_type_link_add() {
+            assert_eq!(format_message_type(MessageType::LinkAdd as i32), "Link Add");
+        }
+
+        #[test]
+        fn test_format_message_type_link_remove() {
+            assert_eq!(format_message_type(MessageType::LinkRemove as i32), "Link Remove");
+        }
+
+        #[test]
+        fn test_format_message_type_verify_eth() {
+            assert_eq!(
+                format_message_type(MessageType::VerificationAddEthAddress as i32),
+                "Verify ETH"
+            );
+        }
+
+        #[test]
+        fn test_format_message_type_verify_remove() {
+            assert_eq!(
+                format_message_type(MessageType::VerificationRemove as i32),
+                "Remove Verify"
+            );
+        }
+
+        #[test]
+        fn test_format_message_type_user_data() {
+            assert_eq!(format_message_type(MessageType::UserDataAdd as i32), "Profile Update");
+        }
+
+        #[test]
+        fn test_format_message_type_username_proof() {
+            assert_eq!(format_message_type(MessageType::UsernameProof as i32), "Username");
+        }
+
+        #[test]
+        fn test_format_message_type_frame_action() {
+            assert_eq!(format_message_type(MessageType::FrameAction as i32), "Frame Action");
+        }
+
+        #[test]
+        fn test_format_message_type_lend_storage() {
+            assert_eq!(format_message_type(MessageType::LendStorage as i32), "Lend Storage");
+        }
+
+        #[test]
+        fn test_format_message_type_unknown() {
+            assert_eq!(format_message_type(999), "Unknown");
+        }
+    }
+
+    mod verification_tests {
+        use super::*;
+
+        #[test]
+        fn test_verification_add_eoa_ethereum_mainnet() {
+            let verification = VerificationAddAddressBody {
+                address: hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap(),
+                block_hash: hex::decode(
+                    "A9788AB993490646B7AE10A465B264F08DBDD7E346B3EC589C29BA1F85D98DD5",
+                )
+                .unwrap(),
+                verification_type: 0,
+                chain_id: 1,
+                protocol: Protocol::Ethereum as i32,
+                claim_signature: vec![],
+            };
+
+            let formatted = format_verification_add(&verification);
+            assert!(
+                formatted.to_lowercase().contains("0x03118b1c6dc69c12047631538c646a099d851847")
+            );
+            assert!(formatted.contains("EOA"));
+            assert!(formatted.contains("ETH"));
+            assert!(formatted.contains("Mainnet"));
+        }
+
+        #[test]
+        fn test_verification_add_contract_optimism() {
+            let verification = VerificationAddAddressBody {
+                address: hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap(),
+                block_hash: hex::decode(
+                    "A9788AB993490646B7AE10A465B264F08DBDD7E346B3EC589C29BA1F85D98DD5",
+                )
+                .unwrap(),
+                verification_type: 1,
+                chain_id: 10,
+                protocol: Protocol::Ethereum as i32,
+                claim_signature: vec![],
+            };
+
+            let formatted = format_verification_add(&verification);
+            assert!(formatted.contains("Contract"));
+            assert!(formatted.contains("Optimism"));
+        }
+
+        #[test]
+        fn test_verification_add_solana() {
+            let verification = VerificationAddAddressBody {
+                address: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                block_hash: vec![0; 32],
+                verification_type: 0,
+                chain_id: 0,
+                protocol: Protocol::Solana as i32,
+                claim_signature: vec![],
+            };
+
+            let formatted = format_verification_add(&verification);
+            assert!(formatted.contains("SOL"));
+        }
+
+        #[test]
+        fn test_verification_add_unknown_chain() {
+            let verification = VerificationAddAddressBody {
+                address: hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap(),
+                block_hash: vec![0; 32],
+                verification_type: 0,
+                chain_id: 42161, // Arbitrum
+                protocol: Protocol::Ethereum as i32,
+                claim_signature: vec![],
+            };
+
+            let formatted = format_verification_add(&verification);
+            assert!(formatted.contains("Chain 42161"));
+        }
+
+        #[test]
+        fn test_verification_add_unknown_type() {
+            let verification = VerificationAddAddressBody {
+                address: hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap(),
+                block_hash: vec![0; 32],
+                verification_type: 99,
+                chain_id: 1,
+                protocol: Protocol::Ethereum as i32,
+                claim_signature: vec![],
+            };
+
+            let formatted = format_verification_add(&verification);
+            assert!(formatted.contains("Unknown type 99"));
+        }
+
+        #[test]
+        fn test_verification_remove_ethereum() {
+            let verification = VerificationRemoveBody {
+                address: hex::decode("03118B1C6DC69C12047631538C646A099D851847").unwrap(),
+                protocol: Protocol::Ethereum as i32,
+            };
+
+            let formatted = format_verification_remove(&verification);
+            assert!(formatted.contains("Remove ETH verification"));
+            assert!(
+                formatted.to_lowercase().contains("0x03118b1c6dc69c12047631538c646a099d851847")
+            );
+        }
+
+        #[test]
+        fn test_verification_remove_solana() {
+            let verification = VerificationRemoveBody {
+                address: vec![1, 2, 3, 4],
+                protocol: Protocol::Solana as i32,
+            };
+
+            let formatted = format_verification_remove(&verification);
+            assert!(formatted.contains("Remove SOL verification"));
+        }
+    }
+
+    mod reaction_tests {
+        use super::*;
+
+        #[test]
+        fn test_format_reaction_like_cast() {
+            let reaction = ReactionBody {
+                r#type: ReactionType::Like as i32,
+                target: Some(crate::proto::reaction_body::Target::TargetCastId(CastId {
+                    fid: 12345,
+                    hash: vec![0xab, 0xcd, 0xef, 0x12, 0x34, 0x56],
+                })),
+            };
+
+            let formatted = format_reaction(&reaction);
+            assert!(formatted.contains("like"));
+            assert!(formatted.contains("cast 12345:abcdef12"));
+        }
+
+        #[test]
+        fn test_format_reaction_recast_url() {
+            let reaction = ReactionBody {
+                r#type: ReactionType::Recast as i32,
+                target: Some(crate::proto::reaction_body::Target::TargetUrl(
+                    "https://example.com".to_string(),
+                )),
+            };
+
+            let formatted = format_reaction(&reaction);
+            assert!(formatted.contains("recast"));
+            assert!(formatted.contains("url: https://example.com"));
+        }
+
+        #[test]
+        fn test_format_reaction_no_target() {
+            let reaction = ReactionBody { r#type: ReactionType::Like as i32, target: None };
+
+            let formatted = format_reaction(&reaction);
+            assert!(formatted.contains("like"));
+            assert!(formatted.contains("unknown target"));
+        }
+
+        #[test]
+        fn test_format_reaction_unknown_type() {
+            let reaction = ReactionBody {
+                r#type: 999,
+                target: Some(crate::proto::reaction_body::Target::TargetCastId(CastId {
+                    fid: 1,
+                    hash: vec![0, 0, 0, 0],
+                })),
+            };
+
+            let formatted = format_reaction(&reaction);
+            assert!(formatted.contains("unknown"));
+        }
+    }
+
+    mod user_data_tests {
+        use super::*;
+
+        #[test]
+        fn test_format_user_data_display_name() {
+            let user_data =
+                UserDataBody { r#type: UserDataType::Display as i32, value: "Alice".to_string() };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("display name"));
+            assert!(formatted.contains("Alice"));
+        }
+
+        #[test]
+        fn test_format_user_data_bio() {
+            let user_data =
+                UserDataBody { r#type: UserDataType::Bio as i32, value: "Hello world".to_string() };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("bio"));
+            assert!(formatted.contains("Hello world"));
+        }
+
+        #[test]
+        fn test_format_user_data_pfp() {
+            let user_data = UserDataBody {
+                r#type: UserDataType::Pfp as i32,
+                value: "https://example.com/avatar.jpg".to_string(),
+            };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("pfp"));
+        }
+
+        #[test]
+        fn test_format_user_data_username() {
+            let user_data =
+                UserDataBody { r#type: UserDataType::Username as i32, value: "alice".to_string() };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("username"));
+            assert!(formatted.contains("alice"));
+        }
+
+        #[test]
+        fn test_format_user_data_url() {
+            let user_data = UserDataBody {
+                r#type: UserDataType::Url as i32,
+                value: "https://alice.com".to_string(),
+            };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("url"));
+        }
+
+        #[test]
+        fn test_format_user_data_location() {
+            let user_data = UserDataBody {
+                r#type: UserDataType::Location as i32,
+                value: "New York".to_string(),
+            };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("location"));
+            assert!(formatted.contains("New York"));
+        }
+
+        #[test]
+        fn test_format_user_data_twitter() {
+            let user_data =
+                UserDataBody { r#type: UserDataType::Twitter as i32, value: "@alice".to_string() };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("twitter"));
+        }
+
+        #[test]
+        fn test_format_user_data_truncates_long_value() {
+            let user_data = UserDataBody {
+                r#type: UserDataType::Bio as i32,
+                value: "This is a very long bio that should be truncated because it exceeds thirty characters"
+                    .to_string(),
+            };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("..."));
+        }
+
+        #[test]
+        fn test_format_user_data_unknown_type() {
+            let user_data = UserDataBody { r#type: 999, value: "test".to_string() };
+
+            let formatted = format_user_data(&user_data);
+            assert!(formatted.contains("unknown"));
+        }
+    }
+
+    mod lend_storage_tests {
+        use super::*;
+
+        #[test]
+        fn test_format_lend_storage_legacy() {
+            let lend_storage = LendStorageBody {
+                to_fid: 12345,
+                num_units: 10,
+                unit_type: StorageUnitType::UnitTypeLegacy as i32,
+            };
+
+            let formatted = format_lend_storage(&lend_storage);
+            assert!(formatted.contains("Lend 10 legacy units to FID 12345"));
+        }
+
+        #[test]
+        fn test_format_lend_storage_2024() {
+            let lend_storage = LendStorageBody {
+                to_fid: 67890,
+                num_units: 5,
+                unit_type: StorageUnitType::UnitType2024 as i32,
+            };
+
+            let formatted = format_lend_storage(&lend_storage);
+            assert!(formatted.contains("Lend 5 2024 units to FID 67890"));
+        }
+
+        #[test]
+        fn test_format_lend_storage_2025() {
+            let lend_storage = LendStorageBody {
+                to_fid: 11111,
+                num_units: 3,
+                unit_type: StorageUnitType::UnitType2025 as i32,
+            };
+
+            let formatted = format_lend_storage(&lend_storage);
+            assert!(formatted.contains("Lend 3 2025 units to FID 11111"));
+        }
+
+        #[test]
+        fn test_format_lend_storage_unknown_type() {
+            let lend_storage = LendStorageBody { to_fid: 1, num_units: 1, unit_type: 999 };
+
+            let formatted = format_lend_storage(&lend_storage);
+            assert!(formatted.contains("unknown"));
+        }
+    }
+
+    mod cast_tests {
+        use super::*;
+
+        #[test]
+        fn test_format_cast_add_new_thread() {
+            let cast = CastAddBody {
+                text: "Hello world!".to_string(),
+                parent: None,
+                mentions: vec![],
+                embeds_deprecated: vec![],
+                embeds: vec![],
+                mentions_positions: vec![],
+                r#type: 0,
+            };
+
+            let formatted = format_cast_add(&cast);
+            assert!(formatted.contains("Hello world!"));
+            assert!(formatted.contains("new thread"));
+        }
+
+        #[test]
+        fn test_format_cast_add_reply_to_cast() {
+            let cast = CastAddBody {
+                text: "Great post!".to_string(),
+                parent: Some(crate::proto::cast_add_body::Parent::ParentCastId(CastId {
+                    fid: 12345,
+                    hash: vec![0xab, 0xcd, 0xef, 0x12, 0x34, 0x56],
+                })),
+                mentions: vec![],
+                embeds_deprecated: vec![],
+                embeds: vec![],
+                mentions_positions: vec![],
+                r#type: 0,
+            };
+
+            let formatted = format_cast_add(&cast);
+            assert!(formatted.contains("Great post!"));
+            assert!(formatted.contains("reply to 12345:abcdef12"));
+        }
+
+        #[test]
+        fn test_format_cast_add_reply_to_url() {
+            let cast = CastAddBody {
+                text: "Interesting article".to_string(),
+                parent: Some(crate::proto::cast_add_body::Parent::ParentUrl(
+                    "https://example.com/article".to_string(),
+                )),
+                mentions: vec![],
+                embeds_deprecated: vec![],
+                embeds: vec![],
+                mentions_positions: vec![],
+                r#type: 0,
+            };
+
+            let formatted = format_cast_add(&cast);
+            assert!(formatted.contains("reply to url: https://example.com/article"));
+        }
+
+        #[test]
+        fn test_format_cast_add_with_mentions() {
+            let cast = CastAddBody {
+                text: "Hey @alice and @bob!".to_string(),
+                parent: None,
+                mentions: vec![100, 200],
+                embeds_deprecated: vec![],
+                embeds: vec![],
+                mentions_positions: vec![],
+                r#type: 0,
+            };
+
+            let formatted = format_cast_add(&cast);
+            assert!(formatted.contains("mentions: [100,200]"));
+        }
+
+        #[test]
+        fn test_format_cast_add_truncates_long_text() {
+            let cast = CastAddBody {
+                text: "This is a very long cast that should be truncated at fifty characters for display purposes"
+                    .to_string(),
+                parent: None,
+                mentions: vec![],
+                embeds_deprecated: vec![],
+                embeds: vec![],
+                mentions_positions: vec![],
+                r#type: 0,
+            };
+
+            let formatted = format_cast_add(&cast);
+            assert!(formatted.contains("..."));
+        }
+
+        #[test]
+        fn test_format_cast_remove() {
+            let cast = CastRemoveBody { target_hash: vec![0xab, 0xcd, 0xef, 0x12, 0x34, 0x56] };
+
+            let formatted = format_cast_remove(&cast);
+            assert!(formatted.contains("Remove cast abcdef12"));
+        }
     }
 }
