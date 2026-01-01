@@ -201,6 +201,7 @@ impl ServerHandler for MooCow {
                 self._create_resource_text("memo://moo-facts", "moo-facts"),
             ],
             next_cursor: None,
+            meta: None,
         })
     }
 
@@ -232,7 +233,11 @@ impl ServerHandler for MooCow {
         _request: Option<PaginatedRequestParam>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        Ok(ListResourceTemplatesResult { resource_templates: vec![], next_cursor: None })
+        Ok(ListResourceTemplatesResult {
+            resource_templates: vec![],
+            next_cursor: None,
+            meta: None,
+        })
     }
 }
 
@@ -336,6 +341,7 @@ impl Service for McpService {
         let server_config = StreamableHttpServerConfig {
             sse_keep_alive: Some(std::time::Duration::from_secs(15)),
             stateful_mode: true,
+            cancellation_token: ct_for_shutdown.clone(),
         };
 
         // Launch the service
