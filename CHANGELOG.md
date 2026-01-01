@@ -2,7 +2,7 @@
 
 All notable changes to Waypoint will be documented in this file.
 
-## [unreleased]
+## [2026.1.2] - 2026-01-01
 
 ### Bug Fixes
 
@@ -14,10 +14,12 @@ All notable changes to Waypoint will be documented in this file.
 - Add unified messages stream and optimize hub client (#70)
 - Add root_parent tracking columns
 - Add root_parent backfill worker
+- Wire up root_parent backfill command (#73)
 
 ### Miscellaneous Tasks
 
 - Release v2026.1.1
+- Release v2026.1.2
 
 ## [2025.12.3] - 2025-12-22
 
