@@ -2,15 +2,22 @@
 
 All notable changes to Waypoint will be documented in this file.
 
-## [2026.1.1] - 2026-01-01
+## [unreleased]
 
 ### Bug Fixes
 
 - Increase Redis max_pool_size to 50
+- Fix docker compose timing and add worker improvements (#71)
 
 ### Features
 
 - Add unified messages stream and optimize hub client (#70)
+- Add root_parent tracking columns
+- Add root_parent backfill worker
+
+### Miscellaneous Tasks
+
+- Release v2026.1.1
 
 ## [2025.12.3] - 2025-12-22
 
