@@ -68,6 +68,11 @@ docker compose up -d
 # Start the backfill services (uses the same DB and Redis)
 docker compose --profile backfill up -d
 
+# Scale backfill workers for faster processing
+docker compose --profile backfill up -d --scale backfill-worker=4
+# Or use environment variable:
+BACKFILL_WORKERS=4 docker compose --profile backfill up -d
+
 # Start with local Snapchain (optional, requires configuration)
 docker compose --profile snapchain up -d
 
@@ -78,10 +83,24 @@ make docker-build
 make docker-run
 ```
 
+### Backfill Configuration
+
 You can configure the backfill behavior using these environment variables:
 
-- `BACKFILL_BATCH_SIZE`: Number of FIDs per batch (default: 50)
-- `BACKFILL_CONCURRENCY`: Number of concurrent backfill workers (default: 50)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BACKFILL_BATCH_SIZE` | Number of FIDs per batch when queueing | 50 |
+| `BACKFILL_CONCURRENCY` | Concurrent FIDs per worker | 40 |
+| `BACKFILL_WORKERS` | Number of worker container replicas | 1 |
+
+### Backfill Architecture
+
+The backfill system uses a queue/worker architecture:
+
+1. **Queue Service** (`backfill-queue`): Populates the Redis queue with FID batches, then exits
+2. **Worker Service** (`backfill-worker`): Processes jobs from the queue until complete
+
+Workers automatically exit when the queue has been empty for 60 seconds (configurable via `--idle-timeout`). Multiple workers can process the same queue concurrently for faster backfills.
 
 ## Configuration
 

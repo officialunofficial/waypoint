@@ -80,7 +80,9 @@ WAYPOINT_CONFIG=config/sample.toml make run
 
 ## Backfill System
 
-Waypoint includes a powerful backfill system for processing historical data:
+Waypoint includes a powerful backfill system for processing historical data using a queue/worker architecture.
+
+### Local Development (make commands)
 
 ```bash
 # Queue backfill jobs
@@ -95,6 +97,45 @@ make backfill-worker                   # Run backfill worker
 make backfill-update-user-data         # Update user_data for all FIDs
 make backfill-update-user-data-max MAX_FID=1000  # Update user_data for FIDs up to 1000
 ```
+
+### Docker Compose Backfill
+
+For production-like backfills using Docker Compose:
+
+```bash
+# Start backfill with default single worker
+docker compose --profile backfill up
+
+# Scale to multiple workers for faster processing
+docker compose --profile backfill up --scale backfill-worker=4
+
+# Or use dedicated backfill compose file
+docker compose -f docker-compose.backfill.yml up
+
+# Scale workers via environment variable
+BACKFILL_WORKERS=4 docker compose -f docker-compose.backfill.yml up
+```
+
+### Worker CLI Options
+
+The backfill worker supports these command-line options:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--exit-on-complete` | Exit when queue is empty (instead of running forever) | false |
+| `--idle-timeout <secs>` | Seconds to wait with empty queue before exiting | 30 |
+
+Example:
+```bash
+./waypoint backfill fid worker --exit-on-complete --idle-timeout 60
+```
+
+### How It Works
+
+1. **Queue Service**: Connects to the hub, fetches all FIDs, and populates Redis with batched jobs
+2. **Worker Service**: Pulls jobs from Redis, reconciles messages from the hub, and stores in PostgreSQL
+3. **Scaling**: Multiple workers can process the same Redis queue concurrently (BRPOP is atomic)
+4. **Completion**: Workers exit automatically when idle for the configured timeout
 
 ## Metrics
 

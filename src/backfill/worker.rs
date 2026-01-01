@@ -379,6 +379,8 @@ pub struct Worker {
     // Track if we should auto-queue more FIDs when queue is empty
     auto_queue_enabled: bool,
     max_fid_to_process: Option<u64>,
+    // Exit when queue is empty for this many seconds (None = run forever)
+    exit_on_complete_timeout: Option<u64>,
 }
 
 impl Worker {
@@ -415,12 +417,18 @@ impl Worker {
             hub_connection_limiter,
             auto_queue_enabled: false,
             max_fid_to_process: None,
+            exit_on_complete_timeout: None,
         }
     }
 
     pub fn add_processor<P: EventProcessor + 'static>(&mut self, processor: Arc<P>) {
         info!("Adding processor to backfill worker: {}", std::any::type_name::<P>());
         self.processors.push(processor);
+    }
+
+    /// Configure worker to exit when queue has been empty for the specified duration
+    pub fn set_exit_on_complete(&mut self, idle_timeout_secs: u64) {
+        self.exit_on_complete_timeout = Some(idle_timeout_secs);
     }
 
     /// Enable auto-queueing of FIDs when the queue is empty
@@ -524,6 +532,7 @@ impl Worker {
         let mut handles = Vec::new();
         let mut last_progress_log = std::time::Instant::now();
         let mut last_cleanup = std::time::Instant::now();
+        let mut idle_since: Option<std::time::Instant> = None;
 
         loop {
             // Check if we should shutdown
@@ -574,6 +583,9 @@ impl Worker {
 
                 match self.queue.get_job().await {
                     Ok(Some(mut job)) => {
+                        // Reset idle timer when we get a job
+                        idle_since = None;
+
                         // Limit the number of FIDs processed per job to avoid overwhelming the Hub and database
                         // If there are too many FIDs in a job, split it into smaller chunks
                         // Increased batch size since we're no longer limiting database connections per task
@@ -821,8 +833,38 @@ impl Worker {
                             active_tasks
                         );
 
-                        if total_queued == 0 && post_metrics.in_progress_queue_size == 0 {
-                            info!("All queues are empty and no jobs in progress.");
+                        if total_queued == 0
+                            && post_metrics.in_progress_queue_size == 0
+                            && active_tasks == 0
+                        {
+                            // Start idle timer if not already started
+                            if idle_since.is_none() {
+                                idle_since = Some(std::time::Instant::now());
+                                info!(
+                                    "All queues are empty and no jobs in progress. Starting idle timer."
+                                );
+                            }
+
+                            // Check if we should exit due to idle timeout
+                            if let (Some(timeout), Some(idle_start)) =
+                                (self.exit_on_complete_timeout, idle_since)
+                            {
+                                let idle_duration = idle_start.elapsed();
+                                if idle_duration.as_secs() >= timeout {
+                                    info!(
+                                        "Backfill complete! Queue empty for {} seconds (timeout: {}s). Exiting.",
+                                        idle_duration.as_secs(),
+                                        timeout
+                                    );
+                                    break;
+                                } else {
+                                    debug!(
+                                        "Queue empty for {}s, will exit after {}s",
+                                        idle_duration.as_secs(),
+                                        timeout
+                                    );
+                                }
+                            }
 
                             // Check if we should auto-queue more FIDs
                             if self.auto_queue_enabled {
@@ -858,6 +900,8 @@ impl Worker {
                                                     "Successfully auto-queued FIDs {} to {}",
                                                     start_fid, end_fid
                                                 );
+                                                // Reset idle timer since we added more work
+                                                idle_since = None;
                                             },
                                             Err(e) => {
                                                 error!("Failed to auto-queue FIDs: {:?}", e);
@@ -870,13 +914,19 @@ impl Worker {
                                         );
                                     }
                                 }
-                            } else {
-                                info!("Backfill may be complete. Auto-queueing is disabled.");
+                            } else if self.exit_on_complete_timeout.is_none() {
+                                info!(
+                                    "Backfill may be complete. Auto-queueing is disabled. Worker will continue running."
+                                );
                             }
                         } else {
+                            // Reset idle timer if there's work pending
+                            if idle_since.is_some() {
+                                idle_since = None;
+                            }
                             debug!(
-                                "No jobs available but {} jobs still in progress",
-                                post_metrics.in_progress_queue_size
+                                "No jobs available but {} jobs still in progress, {} active tasks",
+                                post_metrics.in_progress_queue_size, active_tasks
                             );
                         }
                         time::sleep(Duration::from_secs(1)).await;

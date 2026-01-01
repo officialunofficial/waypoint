@@ -30,6 +30,23 @@ docker run -e WAYPOINT_DATABASE__URL=postgresql://user:pass@host:5432/waypoint \
   officialunofficial/waypoint:latest
 ```
 
+## Backfill with Docker Compose
+
+The backfill system uses a queue/worker architecture for processing historical data:
+
+```bash
+# Start backfill services (queue populates jobs, worker processes them)
+docker compose --profile backfill up
+
+# Scale workers for faster processing
+docker compose --profile backfill up --scale backfill-worker=4
+
+# Or use environment variable
+BACKFILL_WORKERS=4 docker compose --profile backfill up
+```
+
+Workers automatically exit when the backfill completes (queue empty for 60 seconds).
+
 ## Configuration Options
 
 Waypoint can be configured using environment variables with the `WAYPOINT_` prefix:
@@ -47,8 +64,10 @@ HOST=0.0.0.0
 PORT=8080
 RUST_LOG=info
 
-# Backfill performance tuning
-BACKFILL_CONCURRENCY=4  # Number of concurrent FIDs to process (max: 8)
+# Backfill configuration
+BACKFILL_BATCH_SIZE=50      # FIDs per queue batch
+BACKFILL_CONCURRENCY=40     # Concurrent FIDs per worker
+BACKFILL_WORKERS=1          # Number of worker replicas
 ```
 
 ## Supported Tags
