@@ -47,8 +47,7 @@ CREATE TABLE public.messages
     body             json                                                    NOT NULL,
     raw              bytea                                                   NOT NULL,
     CONSTRAINT messages_pkey PRIMARY KEY (id),
-    CONSTRAINT messages_hash_unique UNIQUE (hash),
-    CONSTRAINT messages_hash_fid_type_unique UNIQUE (hash, fid, type)
+    CONSTRAINT messages_hash_unique UNIQUE (hash)
 );
 
 CREATE TABLE public.casts
@@ -154,7 +153,6 @@ CREATE TABLE public.username_proofs
 
 -- Create indexes
 CREATE INDEX messages_fid_index ON public.messages USING btree (fid);
-CREATE INDEX messages_hash_index ON public.messages USING btree (hash);
 CREATE INDEX messages_signer_index ON public.messages USING btree (signer);
 CREATE INDEX messages_timestamp_index ON public.messages USING btree ("timestamp");
 CREATE INDEX messages_fid_timestamp_type_idx ON public.messages USING btree (fid, "timestamp", type)

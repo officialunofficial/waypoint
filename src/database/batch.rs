@@ -370,6 +370,8 @@ impl<'a> BatchInserter<'a> {
         let mut total_inserted = 0;
 
         for chunk in messages.chunks(self.batch_size) {
+            // Using ON CONFLICT (hash) DO NOTHING to avoid duplicate key errors
+            // and unnecessary retry cycles when reprocessing messages
             let sql = build_insert_sql(
                 "messages",
                 &[
@@ -387,12 +389,8 @@ impl<'a> BatchInserter<'a> {
                     "revoked_at",
                 ],
                 chunk.len(),
-                "hash, fid, type",
-                &[
-                    "deleted_at = EXCLUDED.deleted_at",
-                    "pruned_at = EXCLUDED.pruned_at",
-                    "revoked_at = EXCLUDED.revoked_at",
-                ],
+                "hash",
+                &[], // Empty update actions = DO NOTHING
             );
 
             let mut query = sqlx::query(&sql);
