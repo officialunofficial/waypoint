@@ -1067,6 +1067,8 @@ impl DatabaseProcessor {
                 let raw_data = msg.data_bytes.as_deref().unwrap_or_default();
 
                 // Store message in messages table with transaction
+                // Using ON CONFLICT (hash) DO NOTHING to avoid duplicate key errors
+                // and unnecessary retry cycles when reprocessing messages
                 let result = sqlx::query!(
                     r#"
             INSERT INTO messages (
@@ -1074,10 +1076,7 @@ impl DatabaseProcessor {
                 deleted_at, pruned_at, revoked_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (hash, fid, type) DO UPDATE SET
-                deleted_at = EXCLUDED.deleted_at,
-                pruned_at = EXCLUDED.pruned_at,
-                revoked_at = EXCLUDED.revoked_at
+            ON CONFLICT (hash) DO NOTHING
             "#,
                     data.fid as i64,
                     data.r#type as i16,
