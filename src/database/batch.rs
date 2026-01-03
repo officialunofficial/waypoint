@@ -1,5 +1,5 @@
 use crate::{
-    core::normalize::NormalizedEmbed,
+    core::{normalize::NormalizedEmbed, util::sanitize_json_for_postgres},
     database::models::Fid,
     proto::{
         Message,
@@ -400,7 +400,10 @@ impl<'a> BatchInserter<'a> {
                 if let Some(data) = &msg.data {
                     let ts = convert_timestamp(data.timestamp);
                     let raw_data = msg.data_bytes.as_deref().unwrap_or_default();
-                    let body_json = serde_json::to_value(data).unwrap_or(serde_json::Value::Null);
+                    // Sanitize null bytes from JSON - PostgreSQL jsonb rejects \u0000
+                    let body_json = serde_json::to_value(data)
+                        .map(sanitize_json_for_postgres)
+                        .unwrap_or(serde_json::Value::Null);
 
                     query = query
                         .bind(data.fid as i64)

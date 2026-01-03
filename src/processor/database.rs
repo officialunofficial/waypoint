@@ -1,5 +1,8 @@
 use crate::{
-    core::{normalize::NormalizedEmbed, util::from_farcaster_time},
+    core::{
+        normalize::NormalizedEmbed,
+        util::{from_farcaster_time, sanitize_json_for_postgres},
+    },
     database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
     metrics,
@@ -1066,6 +1069,9 @@ impl DatabaseProcessor {
             if store_messages {
                 let raw_data = msg.data_bytes.as_deref().unwrap_or_default();
 
+                // Sanitize null bytes from JSON - PostgreSQL jsonb rejects \u0000
+                let body_json = sanitize_json_for_postgres(serde_json::to_value(data)?);
+
                 // Store message in messages table with transaction
                 // Using ON CONFLICT (hash) DO NOTHING to avoid duplicate key errors
                 // and unnecessary retry cycles when reprocessing messages
@@ -1085,7 +1091,7 @@ impl DatabaseProcessor {
                     msg.hash_scheme as i16,
                     msg.signature_scheme as i16,
                     &msg.signer,
-                    serde_json::to_value(data)?,
+                    body_json,
                     raw_data,
                     match operation {
                         "delete" => Some(OffsetDateTime::now_utc()),
