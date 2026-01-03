@@ -66,6 +66,30 @@ pub fn calculate_message_hash(data_bytes: &[u8]) -> Vec<u8> {
     blake3::hash(data_bytes).as_bytes()[0..20].to_vec()
 }
 
+/// Strips null bytes from all strings in a JSON Value tree for PostgreSQL jsonb insertion.
+///
+/// PostgreSQL jsonb rejects `\u0000`. Simple string replacement on serialized JSON is unsafe
+/// because it can corrupt valid escape sequences like `\\u0000`. This function walks the
+/// parsed Value tree and strips null bytes from decoded strings, then re-serializes.
+pub fn sanitize_json_for_postgres(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            if s.contains('\0') {
+                serde_json::Value::String(s.replace('\0', ""))
+            } else {
+                serde_json::Value::String(s)
+            }
+        },
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sanitize_json_for_postgres).collect())
+        },
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter().map(|(k, v)| (k, sanitize_json_for_postgres(v))).collect(),
+        ),
+        other => other, // Null, Bool, Number - pass through
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +166,74 @@ mod tests {
         // Test deterministic behavior
         let hash2 = calculate_message_hash(data);
         assert_eq!(hash, hash2);
+    }
+
+    #[test]
+    fn test_sanitize_json_no_null_bytes() {
+        let value = serde_json::json!({"text": "Hello, world!"});
+        let result = sanitize_json_for_postgres(value.clone());
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn test_sanitize_json_with_null_byte() {
+        // String containing actual null byte
+        let value = serde_json::json!({"text": "Hello\0World"});
+        let result = sanitize_json_for_postgres(value);
+        assert_eq!(result, serde_json::json!({"text": "HelloWorld"}));
+    }
+
+    #[test]
+    fn test_sanitize_json_nested() {
+        let value = serde_json::json!({
+            "outer": {
+                "inner": "has\0null"
+            },
+            "array": ["a\0b", "clean"]
+        });
+        let result = sanitize_json_for_postgres(value);
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "outer": {"inner": "hasnull"},
+                "array": ["ab", "clean"]
+            })
+        );
+    }
+
+    #[test]
+    fn test_sanitize_json_preserves_escaped_backslash() {
+        // This is the key test - \\u0000 in source becomes \u0000 in the string
+        // (a literal backslash followed by u0000), which should NOT be corrupted
+        let value = serde_json::json!({"text": r"\u0000"});
+        let result = sanitize_json_for_postgres(value.clone());
+        // The string contains literal \u0000 chars, no null byte, so unchanged
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn test_sanitize_json_numbers_unchanged() {
+        let value = serde_json::json!({"count": 42, "rate": 1.5});
+        let result = sanitize_json_for_postgres(value.clone());
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn test_sanitize_json_realistic_message() {
+        // Simulate a protobuf message with null byte in text
+        let value = serde_json::json!({
+            "fid": 123,
+            "text": "gm\0everyone",
+            "type": 1
+        });
+        let result = sanitize_json_for_postgres(value);
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "fid": 123,
+                "text": "gmeveryone",
+                "type": 1
+            })
+        );
     }
 }
