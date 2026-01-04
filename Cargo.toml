@@ -1,6 +1,6 @@
 [package]
 name = "waypoint"
-version = "2026.1.4"
+version = "2026.1.5"
 edition = "2024"
 default-run = "waypoint"
 rust-version = "1.86.0"

@@ -59,7 +59,7 @@ impl DatabaseProcessor {
         Self { resources }
     }
 
-    fn convert_timestamp(timestamp: u32) -> OffsetDateTime {
+    pub(crate) fn convert_timestamp(timestamp: u32) -> OffsetDateTime {
         // Convert from farcaster time (seconds since epoch) to unix seconds
         let unix_time = from_farcaster_time(timestamp) / 1000; // Convert ms to seconds
         OffsetDateTime::from_unix_timestamp(unix_time as i64).unwrap()
@@ -1528,6 +1528,41 @@ mod tests {
 
         // Verify it's a valid timestamp
         assert!(result.unix_timestamp() > 0);
+    }
+
+    #[test]
+    fn test_convert_timestamp_late_2025() {
+        // This test verifies that a late 2025 Farcaster timestamp converts correctly
+        // and does NOT produce a 1974 date (which would happen if epoch isn't applied)
+
+        // Farcaster timestamp for approximately late Dec 2025
+        // Farcaster epoch: Jan 1, 2021 00:00:00 UTC = 1609459200 Unix seconds
+        // Late Dec 2025 ~= 1767244800 Unix seconds
+        // Farcaster time = 1767244800 - 1609459200 = 157785600 seconds since FC epoch
+        let farcaster_timestamp: u32 = 157785600;
+
+        let result = DatabaseProcessor::convert_timestamp(farcaster_timestamp);
+
+        // The result should be in 2025, not 1974
+        let year = result.year();
+        assert!(
+            (2025..=2026).contains(&year),
+            "Expected year 2025 or 2026, got {}. Unix timestamp: {}",
+            year,
+            result.unix_timestamp()
+        );
+
+        // Specifically verify we're NOT getting 1974 (which would happen without epoch)
+        assert_ne!(year, 1974, "Got 1974 - Farcaster epoch is not being applied!");
+        assert_ne!(year, 1975, "Got 1975 - Farcaster epoch is not being applied!");
+
+        // Verify the Unix timestamp is correct: should be ~1767 billion, not ~157 million
+        let unix_ts = result.unix_timestamp();
+        assert!(
+            unix_ts > 1_700_000_000,
+            "Unix timestamp {} is too low - epoch not applied correctly",
+            unix_ts
+        );
     }
 
     #[test]

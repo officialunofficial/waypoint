@@ -3,7 +3,7 @@ use crate::redis::{
     error::Error,
     types::{AtomicStreamMetrics, DeadLetterMetadata, DeadLetterReason},
 };
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::time::interval;
 use tracing::{trace, warn};
 
@@ -173,9 +173,10 @@ impl RedisStream {
         loop {
             match self.redis.xreadgroup(group, consumer_name, key, count as u64).await {
                 Ok(entries) => {
+                    // When reading with ">", this is the first delivery of each message
                     let stream_entries: Vec<StreamEntry> = entries
                         .into_iter()
-                        .map(|(id, data)| StreamEntry { id, data, attempts: 0 })
+                        .map(|(id, data)| StreamEntry { id, data, attempts: 1 })
                         .collect();
 
                     if stream_entries.is_empty() {
@@ -206,25 +207,31 @@ impl RedisStream {
     ) -> Result<Vec<StreamEntry>, Error> {
         let consumer_name = consumer.unwrap_or("default-consumer");
 
-        // First, get pending messages
+        // Get pending messages with their delivery counts
         let pending = self.redis.xpending(key, group, min_idle_time, count as u64).await?;
 
         if pending.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Extract message IDs
-        let ids: Vec<String> = pending.into_iter().map(|p| p.id).collect();
+        // Single pass: build delivery count map and extract IDs with pre-allocated capacity
+        let mut delivery_counts = HashMap::with_capacity(pending.len());
+        let mut ids = Vec::with_capacity(pending.len());
+
+        for p in pending {
+            delivery_counts.insert(p.id.clone(), p.delivery_count);
+            ids.push(p.id);
+        }
 
         // Claim the messages
         let claimed = self.redis.xclaim(key, group, consumer_name, min_idle_time, &ids).await?;
 
         Ok(claimed
             .into_iter()
-            .map(|(id, data)| StreamEntry {
-                id,
-                data,
-                attempts: 1, // These are retries
+            .map(|(id, data)| {
+                // Look up actual delivery count from xpending, default to 1 if not found
+                let attempts = delivery_counts.get(&id).copied().unwrap_or(1);
+                StreamEntry { id, data, attempts }
             })
             .collect())
     }
