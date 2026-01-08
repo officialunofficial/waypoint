@@ -1,4 +1,5 @@
 use crate::core::types::FARCASTER_EPOCH;
+use std::borrow::Cow;
 
 #[derive(Debug)]
 pub struct HubError {
@@ -64,6 +65,16 @@ pub fn get_time_diff(timestamp: u64) -> String {
 
 pub fn calculate_message_hash(data_bytes: &[u8]) -> Vec<u8> {
     blake3::hash(data_bytes).as_bytes()[0..20].to_vec()
+}
+
+/// Strips null bytes from a string for PostgreSQL text insertion.
+///
+/// PostgreSQL text/varchar columns reject null bytes (`\x00`). This function returns
+/// a `Cow<str>` for efficiency: borrowed if no null bytes are present, owned if sanitization
+/// was needed. This is the idiomatic Rust approach for conditional string transformation.
+#[inline]
+pub fn sanitize_string_for_postgres(s: &str) -> Cow<'_, str> {
+    if s.contains('\0') { Cow::Owned(s.replace('\0', "")) } else { Cow::Borrowed(s) }
 }
 
 /// Strips null bytes from all strings in a JSON Value tree for PostgreSQL jsonb insertion.
@@ -166,6 +177,52 @@ mod tests {
         // Test deterministic behavior
         let hash2 = calculate_message_hash(data);
         assert_eq!(hash, hash2);
+    }
+
+    #[test]
+    fn test_sanitize_string_no_null_bytes() {
+        let s = "Hello, world!";
+        let result = sanitize_string_for_postgres(s);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "Hello, world!");
+    }
+
+    #[test]
+    fn test_sanitize_string_with_null_byte() {
+        let s = "Hello\0World";
+        let result = sanitize_string_for_postgres(s);
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "HelloWorld");
+    }
+
+    #[test]
+    fn test_sanitize_string_multiple_null_bytes() {
+        let s = "\0start\0middle\0end\0";
+        let result = sanitize_string_for_postgres(s);
+        assert_eq!(result, "startmiddleend");
+    }
+
+    #[test]
+    fn test_sanitize_string_empty() {
+        let s = "";
+        let result = sanitize_string_for_postgres(s);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_sanitize_string_only_null_bytes() {
+        let s = "\0\0\0";
+        let result = sanitize_string_for_postgres(s);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_sanitize_string_realistic_display_name() {
+        // Simulates the issue: display name with trailing null terminator
+        let s = "charlesmorales\0";
+        let result = sanitize_string_for_postgres(s);
+        assert_eq!(result, "charlesmorales");
     }
 
     #[test]
