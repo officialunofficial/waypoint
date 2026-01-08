@@ -10,7 +10,9 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, oneshot};
 use tracing::{error, info, warn};
 
-use crate::{database::client::Database, hub::client::Hub, redis::client::Redis};
+use crate::{
+    config::ServiceMode, database::client::Database, hub::client::Hub, redis::client::Redis,
+};
 
 #[derive(Clone)]
 pub struct HealthServer {
@@ -21,10 +23,16 @@ pub struct HealthServer {
 
 #[derive(Clone)]
 struct AppState {
-    database: Arc<Database>,
+    /// Database client (optional for producer mode)
+    database: Option<Arc<Database>>,
+    /// Redis client (always required)
     redis: Arc<Redis>,
-    hub: Arc<Mutex<Hub>>,
+    /// Hub client (optional for consumer mode)
+    hub: Option<Arc<Mutex<Hub>>>,
+    /// Stopping flag for graceful shutdown
     stopping: Arc<std::sync::atomic::AtomicBool>,
+    /// Current service mode
+    mode: ServiceMode,
 }
 
 #[derive(Serialize)]
@@ -33,6 +41,7 @@ struct HealthResponse {
     database: bool,
     redis: bool,
     hub: bool,
+    mode: String,
     details: Option<String>,
 }
 
@@ -47,11 +56,12 @@ impl HealthServer {
 
     pub async fn run(
         &mut self,
-        database: Arc<Database>,
+        database: Option<Arc<Database>>,
         redis: Arc<Redis>,
-        hub: Arc<Mutex<Hub>>,
+        hub: Option<Arc<Mutex<Hub>>>,
+        mode: ServiceMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let state = AppState { database, redis, hub, stopping: self.stopping.clone() };
+        let state = AppState { database, redis, hub, stopping: self.stopping.clone(), mode };
 
         let app = Router::new()
             .route("/health", get(health_check))
@@ -102,7 +112,7 @@ async fn health_check(State(state): State<AppState>) -> Response {
     (StatusCode::OK, "healthy").into_response()
 }
 
-// Readiness probe - checks external dependencies
+// Readiness probe - checks external dependencies based on mode
 async fn readiness_check(State(state): State<AppState>) -> Response {
     // If shutting down, always return not ready to prevent new traffic
     if state.stopping.load(std::sync::atomic::Ordering::SeqCst) {
@@ -114,33 +124,15 @@ async fn readiness_check(State(state): State<AppState>) -> Response {
                 database: false,
                 redis: false,
                 hub: false,
+                mode: state.mode.to_string(),
                 details: Some("Service is shutting down".to_string()),
             }),
         )
             .into_response();
     }
 
-    let db_health = state.database.check_connection().await;
+    // Redis is always required
     let redis_health = state.redis.check_connection().await;
-
-    // Check hub connection
-    let hub_health = {
-        let mut hub_guard = state.hub.lock().await;
-        hub_guard.check_connection().await
-    };
-
-    let (database_ok, db_error) = match db_health {
-        Ok(true) => (true, None),
-        Ok(false) => {
-            warn!("Database connection check returned false");
-            (false, Some("Database connection check failed".to_string()))
-        },
-        Err(e) => {
-            warn!("Database health check error: {:?}", e);
-            (false, Some(format!("Database error: {}", e)))
-        },
-    };
-
     let (redis_ok, redis_error) = match redis_health {
         Ok(true) => (true, None),
         Ok(false) => {
@@ -153,46 +145,74 @@ async fn readiness_check(State(state): State<AppState>) -> Response {
         },
     };
 
-    let (hub_ok, hub_error) = match hub_health {
-        Ok(true) => (true, None),
-        Ok(false) => {
-            warn!("Hub connection check returned false");
-            (false, Some("Hub connection check failed".to_string()))
-        },
-        Err(e) => {
-            warn!("Hub health check error: {:?}", e);
-            (false, Some(format!("Hub error: {}", e)))
-        },
+    // Check database only if present (consumer/both modes)
+    let (database_ok, db_error) = if let Some(ref database) = state.database {
+        match database.check_connection().await {
+            Ok(true) => (true, None),
+            Ok(false) => {
+                warn!("Database connection check returned false");
+                (false, Some("Database connection check failed".to_string()))
+            },
+            Err(e) => {
+                warn!("Database health check error: {:?}", e);
+                (false, Some(format!("Database error: {}", e)))
+            },
+        }
+    } else {
+        // Database not configured (producer mode) - report as healthy/N/A
+        (true, None)
     };
 
-    let details = if !database_ok {
-        db_error
-    } else if !redis_ok {
+    // Check hub only if present (producer/both modes)
+    let (hub_ok, hub_error) = if let Some(ref hub) = state.hub {
+        let hub_health = {
+            let mut hub_guard = hub.lock().await;
+            hub_guard.check_connection().await
+        };
+        match hub_health {
+            Ok(true) => (true, None),
+            Ok(false) => {
+                warn!("Hub connection check returned false");
+                (false, Some("Hub connection check failed".to_string()))
+            },
+            Err(e) => {
+                warn!("Hub health check error: {:?}", e);
+                (false, Some(format!("Hub error: {}", e)))
+            },
+        }
+    } else {
+        // Hub not configured (consumer mode) - report as healthy/N/A
+        (true, None)
+    };
+
+    // Determine first error for details
+    let details = if !redis_ok {
         redis_error
+    } else if !database_ok {
+        db_error
     } else if !hub_ok {
         hub_error
     } else {
         None
     };
 
+    // Determine overall health status based on mode
+    let all_required_ok = match state.mode {
+        ServiceMode::Producer => redis_ok && hub_ok,
+        ServiceMode::Consumer => redis_ok && database_ok,
+        ServiceMode::Both => redis_ok && hub_ok && database_ok,
+    };
+
     let response = HealthResponse {
-        status: if database_ok && redis_ok && hub_ok {
-            "healthy".to_string()
-        } else {
-            "degraded".to_string()
-        },
+        status: if all_required_ok { "healthy".to_string() } else { "degraded".to_string() },
         database: database_ok,
         redis: redis_ok,
         hub: hub_ok,
+        mode: state.mode.to_string(),
         details,
     };
 
-    let status = if database_ok || redis_ok || hub_ok {
-        // Service can run in degraded state if at least one dependency is available
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
+    let status = if all_required_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
 
     (status, Json(response)).into_response()
 }

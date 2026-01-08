@@ -1131,12 +1131,26 @@ impl Service for StreamingService {
         use crate::core::MessageType;
         use crate::processor::{AppResources, database::DatabaseProcessor, print::PrintProcessor};
 
+        // StreamingService requires both hub and database (used for "both" mode)
+        let hub = context.state.hub.as_ref().ok_or_else(|| {
+            AppError::Service(ServiceError::Initialization(
+                "Hub client not available. StreamingService requires hub configuration."
+                    .to_string(),
+            ))
+        })?;
+        let database = context.state.database.as_ref().ok_or_else(|| {
+            AppError::Service(ServiceError::Initialization(
+                "Database client not available. StreamingService requires database configuration."
+                    .to_string(),
+            ))
+        })?;
+
         // Create a single set of app resources with config - this will be wrapped in Arc only once
         // when needed by processor implementations
         let app_resources = AppResources::with_config(
-            Arc::clone(&context.state.hub),
+            Arc::clone(hub),
             Arc::clone(&context.state.redis),
-            Arc::clone(&context.state.database),
+            Arc::clone(database),
             context.config.clone(),
         );
 
@@ -1242,8 +1256,8 @@ impl Service for StreamingService {
 
         // Set up subscriber - minimize cloning by reusing resources
         let hub_host = {
-            let hub = context.state.hub.lock().await;
-            hub.host().to_string()
+            let hub_guard = hub.lock().await;
+            hub_guard.host().to_string()
         };
 
         // Create a single Redis stream instance to share
@@ -1254,7 +1268,7 @@ impl Service for StreamingService {
 
         // First, get hub info to understand available shards
         let hub_info = {
-            let mut hub_guard = context.state.hub.lock().await;
+            let mut hub_guard = hub.lock().await;
             hub_guard.get_hub_info().await.map_err(|e| {
                 AppError::Service(ServiceError::Initialization(format!(
                     "Failed to get hub info: {}",
@@ -1359,7 +1373,7 @@ impl Service for StreamingService {
             let shard_key = format!("shard_{}", shard_index);
 
             let subscriber = {
-                let mut hub_guard = context.state.hub.lock().await;
+                let mut hub_guard = hub.lock().await;
                 let client = hub_guard.client().ok_or_else(|| {
                     ServiceError::Initialization("No hub client available".to_string())
                 })?;

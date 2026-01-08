@@ -118,6 +118,9 @@ impl DatabaseProcessor {
     /// Traverses parent chain via Hub gRPC API to find the true root cast.
     /// Uses iterative approach with max depth to prevent infinite loops.
     /// Returns None for all fields if the root cannot be definitively determined.
+    ///
+    /// Note: In consumer-only mode (no hub), this method will return None for all fields
+    /// since we cannot traverse the parent chain without hub access.
     async fn resolve_root_from_hub(
         &self,
         start_fid: i64,
@@ -126,6 +129,12 @@ impl DatabaseProcessor {
         (Option<i64>, Option<Vec<u8>>, Option<String>),
         Box<dyn std::error::Error + Send + Sync>,
     > {
+        // In consumer-only mode, hub is not available
+        let Some(hub_arc) = &self.resources.hub else {
+            trace!("Hub not available (consumer-only mode), cannot resolve root parent chain");
+            return Ok((None, None, None));
+        };
+
         const MAX_DEPTH: usize = 100; // Prevent runaway traversal
 
         let mut current_fid = start_fid as u64;
@@ -133,7 +142,7 @@ impl DatabaseProcessor {
 
         for depth in 0..MAX_DEPTH {
             // Fetch the cast from Hub via gRPC
-            let mut hub = self.resources.hub.lock().await;
+            let mut hub = hub_arc.lock().await;
 
             // Ensure connected
             if !hub.check_connection().await.unwrap_or(false) {
@@ -1441,7 +1450,7 @@ impl DatabaseProcessor {
                     std::sync::atomic::AtomicUsize::new(0);
                 let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                if count % 1000 == 0 && events_count > 0 {
+                if count.is_multiple_of(1000) && events_count > 0 {
                     debug!(
                         "Processed batch #{}: {} events with type distribution: {:?}",
                         count, events_count, event_types

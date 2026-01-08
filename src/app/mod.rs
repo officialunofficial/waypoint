@@ -8,7 +8,11 @@ pub use processor::{EventProcessor, ProcessorError, ProcessorRegistry, Result as
 pub use service::{Service, ServiceBuilder, ServiceContext, ServiceError, ServiceHandle};
 pub use state::{AppState, StateProvider};
 
-use crate::{config::Config, core::data_context::DataAccessError, health::HealthServer};
+use crate::{
+    config::{Config, ServiceMode},
+    core::data_context::DataAccessError,
+    health::HealthServer,
+};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{error, info};
@@ -51,13 +55,26 @@ pub struct App {
 
 impl App {
     /// Create a new application instance with the given configuration
+    ///
+    /// This is a backward-compatible method that initializes all components
+    /// (equivalent to calling `new_with_mode` with `ServiceMode::Both`).
     pub async fn new(config: Config) -> Result<Self> {
-        // Validate configuration
-        config.validate().map_err(AppError::from)?;
+        Self::new_with_mode(config, ServiceMode::Both).await
+    }
 
-        // Initialize state provider (database, redis, hub)
+    /// Create a new application instance with mode-specific initialization
+    ///
+    /// Only initializes the components required for the given mode:
+    /// - Producer: Hub + Redis
+    /// - Consumer: Redis + Database
+    /// - Both: All components
+    pub async fn new_with_mode(config: Config, mode: ServiceMode) -> Result<Self> {
+        // Validate configuration for the specific mode
+        config.validate_for_mode(mode).map_err(AppError::from)?;
+
+        // Initialize state provider with mode-specific components
         let state_provider = StateProvider::new(&config).await?;
-        let state = state_provider.provide().await?;
+        let state = state_provider.provide_for_mode(mode).await?;
 
         Ok(Self { state, services: Vec::new(), health_server: None, config })
     }
@@ -86,10 +103,11 @@ impl App {
             let hub = self.state.hub.clone();
             let redis = self.state.redis.clone();
             let database = self.state.database.clone();
+            let mode = self.state.mode;
 
             let health_server_clone = health_server.clone();
             let handle = tokio::spawn(async move {
-                if let Err(e) = health_server.run(database, redis, hub).await {
+                if let Err(e) = health_server.run(database, redis, hub, mode).await {
                     error!("Health server error: {}", e);
                 }
             });
