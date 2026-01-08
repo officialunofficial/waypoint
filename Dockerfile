@@ -1,7 +1,7 @@
 ARG REGISTRY=docker.io
 ARG TARGETARCH
 # Builder stage - use bookworm (Debian 12) for GLIBC compatibility
-FROM rust:1.90-bookworm AS builder
+FROM rust:1.92-bookworm AS builder
 WORKDIR /usr/src/waypoint
 RUN apt-get update && apt-get install -y \
     protobuf-compiler \
