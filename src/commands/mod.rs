@@ -3,20 +3,33 @@ pub mod mcp;
 
 use clap::Command;
 use color_eyre::eyre::Result;
-use waypoint::config::Config;
+use waypoint::config::{Config, ServiceMode};
 
 /// Register all application commands
 pub fn register_commands(app: Command) -> Command {
     // Register service and backfill commands
-    app.subcommand(Command::new("start").about("Start the service"))
-        .subcommand(backfill::register_commands(Command::new("backfill")))
-        .subcommand(mcp::register_commands(Command::new("mcp")))
+    app.subcommand(
+        Command::new("start")
+            .about("Start the service")
+            .subcommand(Command::new("producer").about("Run producer only (Hub → Redis)"))
+            .subcommand(Command::new("consumer").about("Run consumer only (Redis → PostgreSQL)")),
+    )
+    .subcommand(backfill::register_commands(Command::new("backfill")))
+    .subcommand(mcp::register_commands(Command::new("mcp")))
 }
 
 /// Handle all application commands
 pub async fn handle_commands(matches: clap::ArgMatches, config: &Config) -> Result<()> {
     match matches.subcommand() {
-        Some(("start", _)) => crate::service::run_service(config).await,
+        Some(("start", start_matches)) => {
+            // Determine mode from subcommand
+            let mode = match start_matches.subcommand() {
+                Some(("producer", _)) => ServiceMode::Producer,
+                Some(("consumer", _)) => ServiceMode::Consumer,
+                _ => ServiceMode::Both, // Default: run both producer and consumer
+            };
+            crate::service::run_service(config, mode).await
+        },
         Some(("backfill", backfill_matches)) => {
             backfill::handle_command(backfill_matches, config).await
         },

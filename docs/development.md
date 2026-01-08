@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 1.85+
+- Rust 1.92+
 - Docker & Docker Compose
 - PostgreSQL 17+ with pgvector (or use Docker)
 

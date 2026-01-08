@@ -16,6 +16,15 @@ docker compose up
 make env-setup    # creates .env from example
 make build
 make run
+
+# Producer/Consumer separation (for HPA scaling)
+waypoint start              # Both (default)
+waypoint start producer     # Hub → Redis only
+waypoint start consumer     # Redis → PostgreSQL only
+
+# Docker producer/consumer profiles
+docker compose --profile producer up                           # Producer only
+docker compose --profile consumer up --scale waypoint-consumer=4  # Consumer with scaling
 ```
 
 ## Backfill

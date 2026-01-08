@@ -1060,21 +1060,21 @@ impl MessageReconciler {
     }
 
     fn get_message_type(&self, message: &Message) -> String {
-        if let Some(data) = &message.data {
-            if let Some(body) = &data.body {
-                use proto::message_data::Body;
-                return match body {
-                    Body::CastAddBody(_) => "CastAdd".to_string(),
-                    Body::CastRemoveBody(_) => "CastRemove".to_string(),
-                    Body::ReactionBody(_) => "Reaction".to_string(),
-                    Body::VerificationAddAddressBody(_) => "VerificationAddAddress".to_string(),
-                    Body::VerificationRemoveBody(_) => "VerificationRemove".to_string(),
-                    Body::UserDataBody(_) => "UserData".to_string(),
-                    Body::LinkBody(_) => "Link".to_string(),
-                    Body::UsernameProofBody(_) => "UsernameProof".to_string(),
-                    _ => "Unknown".to_string(),
-                };
-            }
+        if let Some(data) = &message.data
+            && let Some(body) = &data.body
+        {
+            use proto::message_data::Body;
+            return match body {
+                Body::CastAddBody(_) => "CastAdd".to_string(),
+                Body::CastRemoveBody(_) => "CastRemove".to_string(),
+                Body::ReactionBody(_) => "Reaction".to_string(),
+                Body::VerificationAddAddressBody(_) => "VerificationAddAddress".to_string(),
+                Body::VerificationRemoveBody(_) => "VerificationRemove".to_string(),
+                Body::UserDataBody(_) => "UserData".to_string(),
+                Body::LinkBody(_) => "Link".to_string(),
+                Body::UsernameProofBody(_) => "UsernameProof".to_string(),
+                _ => "Unknown".to_string(),
+            };
         }
         "Unknown".to_string()
     }

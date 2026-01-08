@@ -25,6 +25,48 @@ pub enum ConfigError {
     EnvError(String),
 }
 
+/// Service operation mode for HPA scaling
+///
+/// Allows running Waypoint in producer-only or consumer-only mode
+/// for independent horizontal scaling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceMode {
+    /// Run only the producer (Hub → Redis)
+    Producer,
+    /// Run only the consumer (Redis → PostgreSQL)
+    Consumer,
+    /// Run both producer and consumer (default)
+    #[default]
+    Both,
+}
+
+impl std::fmt::Display for ServiceMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServiceMode::Producer => write!(f, "producer"),
+            ServiceMode::Consumer => write!(f, "consumer"),
+            ServiceMode::Both => write!(f, "both"),
+        }
+    }
+}
+
+impl std::str::FromStr for ServiceMode {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "producer" => Ok(ServiceMode::Producer),
+            "consumer" => Ok(ServiceMode::Consumer),
+            "both" => Ok(ServiceMode::Both),
+            _ => Err(ConfigError::InvalidValue(format!(
+                "Invalid service mode '{}'. Must be one of: producer, consumer, both",
+                s
+            ))),
+        }
+    }
+}
+
 /// Database configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
@@ -688,12 +730,12 @@ impl Config {
         // Note: We use std::env::var_os here directly because this is the bootstrapping
         // part of our config system; we have to use env vars to find the config file
         // This is exempt from the clippy lint for std::env::var since it's part of config loading
-        if let Some(config_path) = std::env::var_os("WAYPOINT_CONFIG") {
-            if let Some(path_str) = config_path.to_str() {
-                let path = Path::new(path_str);
-                if path.exists() {
-                    figment = figment.merge(Toml::file(path));
-                }
+        if let Some(config_path) = std::env::var_os("WAYPOINT_CONFIG")
+            && let Some(path_str) = config_path.to_str()
+        {
+            let path = Path::new(path_str);
+            if path.exists() {
+                figment = figment.merge(Toml::file(path));
             }
         }
 
@@ -715,6 +757,48 @@ impl Config {
         // Validate Hub config
         if self.hub.url.is_empty() {
             return Err(ConfigError::MissingConfig("Hub URL is required".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Validate configuration based on service mode
+    ///
+    /// Different modes require different components:
+    /// - Producer: Hub + Redis (no database needed)
+    /// - Consumer: Redis + Database (no hub needed)
+    /// - Both: All three required
+    pub fn validate_for_mode(&self, mode: ServiceMode) -> Result<(), ConfigError> {
+        // Redis is always required - it's the message bus between producer and consumer
+        if self.redis.url.is_empty() {
+            return Err(ConfigError::MissingConfig(
+                "Redis URL is required for all modes".to_string(),
+            ));
+        }
+
+        match mode {
+            ServiceMode::Producer => {
+                // Producer needs Hub to subscribe to events
+                if self.hub.url.is_empty() {
+                    return Err(ConfigError::MissingConfig(
+                        "Hub URL is required for producer mode".to_string(),
+                    ));
+                }
+                // Database is not required for producer mode
+            },
+            ServiceMode::Consumer => {
+                // Consumer needs Database to store events
+                if self.database.url.is_empty() {
+                    return Err(ConfigError::MissingConfig(
+                        "Database URL is required for consumer mode".to_string(),
+                    ));
+                }
+                // Hub is not required for consumer mode
+            },
+            ServiceMode::Both => {
+                // Both mode requires all components
+                self.validate()?;
+            },
         }
 
         Ok(())

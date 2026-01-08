@@ -5,18 +5,13 @@ pub struct PendingItem {
     pub delivery_count: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum DeadLetterPolicy {
     /// Discard the message after max retries
+    #[default]
     Discard,
     /// Move to dead letter queue after max retries
     MoveToDeadLetter { queue_name: String },
-}
-
-impl Default for DeadLetterPolicy {
-    fn default() -> Self {
-        Self::Discard
-    }
 }
 
 /// Reason a message was sent to the dead letter queue

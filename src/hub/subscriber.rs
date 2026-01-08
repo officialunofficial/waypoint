@@ -370,11 +370,8 @@ impl HubSubscriber {
 
                                     // Fetch the latest checkpoint before reconnecting
                                     last_id = self.get_last_event_id().await.unwrap_or(last_id);
-                                    if last_id.is_some() {
-                                        info!(
-                                            "Reconnecting from checkpoint event ID: {}",
-                                            last_id.unwrap()
-                                        );
+                                    if let Some(ref id) = last_id {
+                                        info!("Reconnecting from checkpoint event ID: {}", id);
                                     }
 
                                     // Try to reconnect - with specific error handling for connection errors
@@ -474,11 +471,8 @@ impl HubSubscriber {
 
                     // Fetch the latest checkpoint before reconnecting
                     last_id = self.get_last_event_id().await.unwrap_or(last_id);
-                    if last_id.is_some() {
-                        info!(
-                            "Reconnecting after stream closure from checkpoint event ID: {}",
-                            last_id.unwrap()
-                        );
+                    if let Some(ref id) = last_id {
+                        info!("Reconnecting after stream closure from checkpoint event ID: {}", id);
                     }
 
                     match self.connect_stream(last_id).await {
@@ -532,11 +526,8 @@ impl HubSubscriber {
 
                 // Fetch the latest checkpoint before reconnecting
                 last_id = self.get_last_event_id().await.unwrap_or(last_id);
-                if last_id.is_some() {
-                    info!(
-                        "Reconnecting after timeout from checkpoint event ID: {}",
-                        last_id.unwrap()
-                    );
+                if let Some(ref id) = last_id {
+                    info!("Reconnecting after timeout from checkpoint event ID: {}", id);
                 }
 
                 match self.connect_stream(last_id).await {
@@ -1020,17 +1011,17 @@ impl HubSubscriber {
         }
 
         // Update the last processed event ID
-        if let Some(&last_idx) = keep_indices.last() {
-            if let Some((last_event, _)) = batch.events.get(last_idx) {
-                match self.redis.set_last_processed_event(&self.redis_key, last_event.id).await {
-                    Ok(_) => {
-                        trace!("Updated last processed event ID to {}", last_event.id);
-                    },
-                    Err(e) => {
-                        error!("Failed to update last processed event ID: {}", e);
-                        return Err(Error::InternalRedisError(e));
-                    },
-                }
+        if let Some(&last_idx) = keep_indices.last()
+            && let Some((last_event, _)) = batch.events.get(last_idx)
+        {
+            match self.redis.set_last_processed_event(&self.redis_key, last_event.id).await {
+                Ok(_) => {
+                    trace!("Updated last processed event ID to {}", last_event.id);
+                },
+                Err(e) => {
+                    error!("Failed to update last processed event ID: {}", e);
+                    return Err(Error::InternalRedisError(e));
+                },
             }
         }
 

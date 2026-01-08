@@ -29,22 +29,22 @@ use tracing::{debug, error, trace, warn};
 
 /// Extracts parent info from a proto::Message (the Hub gRPC response type)
 fn extract_parent_from_proto(msg: &Message) -> (Option<u64>, Option<Vec<u8>>, Option<String>) {
-    if let Some(data) = &msg.data {
-        if let Some(CastAddBody(cast_body)) = &data.body {
-            let parent_fid = match &cast_body.parent {
-                Some(Parent::ParentCastId(id)) => Some(id.fid),
-                _ => None,
-            };
-            let parent_hash = match &cast_body.parent {
-                Some(Parent::ParentCastId(id)) => Some(id.hash.clone()),
-                _ => None,
-            };
-            let parent_url = match &cast_body.parent {
-                Some(Parent::ParentUrl(url)) => Some(url.clone()),
-                _ => None,
-            };
-            return (parent_fid, parent_hash, parent_url);
-        }
+    if let Some(data) = &msg.data
+        && let Some(CastAddBody(cast_body)) = &data.body
+    {
+        let parent_fid = match &cast_body.parent {
+            Some(Parent::ParentCastId(id)) => Some(id.fid),
+            _ => None,
+        };
+        let parent_hash = match &cast_body.parent {
+            Some(Parent::ParentCastId(id)) => Some(id.hash.clone()),
+            _ => None,
+        };
+        let parent_url = match &cast_body.parent {
+            Some(Parent::ParentUrl(url)) => Some(url.clone()),
+            _ => None,
+        };
+        return (parent_fid, parent_hash, parent_url);
     }
     (None, None, None)
 }
@@ -118,6 +118,9 @@ impl DatabaseProcessor {
     /// Traverses parent chain via Hub gRPC API to find the true root cast.
     /// Uses iterative approach with max depth to prevent infinite loops.
     /// Returns None for all fields if the root cannot be definitively determined.
+    ///
+    /// Note: In consumer-only mode (no hub), this method will return None for all fields
+    /// since we cannot traverse the parent chain without hub access.
     async fn resolve_root_from_hub(
         &self,
         start_fid: i64,
@@ -126,6 +129,12 @@ impl DatabaseProcessor {
         (Option<i64>, Option<Vec<u8>>, Option<String>),
         Box<dyn std::error::Error + Send + Sync>,
     > {
+        // In consumer-only mode, hub is not available
+        let Some(hub_arc) = &self.resources.hub else {
+            trace!("Hub not available (consumer-only mode), cannot resolve root parent chain");
+            return Ok((None, None, None));
+        };
+
         const MAX_DEPTH: usize = 100; // Prevent runaway traversal
 
         let mut current_fid = start_fid as u64;
@@ -133,7 +142,7 @@ impl DatabaseProcessor {
 
         for depth in 0..MAX_DEPTH {
             // Fetch the cast from Hub via gRPC
-            let mut hub = self.resources.hub.lock().await;
+            let mut hub = hub_arc.lock().await;
 
             // Ensure connected
             if !hub.check_connection().await.unwrap_or(false) {
@@ -208,38 +217,39 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(CastAddBody(cast_body)) = &data.body {
-                metrics::increment_casts_processed();
-                let parent_url = match &cast_body.parent {
-                    Some(Parent::ParentUrl(url)) => Some(url.as_str()),
-                    _ => None,
-                };
+        if let Some(data) = &msg.data
+            && let Some(CastAddBody(cast_body)) = &data.body
+        {
+            metrics::increment_casts_processed();
+            let parent_url = match &cast_body.parent {
+                Some(Parent::ParentUrl(url)) => Some(url.as_str()),
+                _ => None,
+            };
 
-                let parent_hash: Option<&[u8]> = match &cast_body.parent {
-                    Some(Parent::ParentCastId(cast_id)) => Some(&cast_id.hash),
-                    _ => None,
-                };
+            let parent_hash: Option<&[u8]> = match &cast_body.parent {
+                Some(Parent::ParentCastId(cast_id)) => Some(&cast_id.hash),
+                _ => None,
+            };
 
-                let parent_fid = match &cast_body.parent {
-                    Some(Parent::ParentCastId(cast_id)) => Some(cast_id.fid as i64),
-                    _ => None,
-                };
+            let parent_fid = match &cast_body.parent {
+                Some(Parent::ParentCastId(cast_id)) => Some(cast_id.fid as i64),
+                _ => None,
+            };
 
-                let ts = Self::convert_timestamp(data.timestamp);
+            let ts = Self::convert_timestamp(data.timestamp);
 
-                // Resolve root parent by traversing the parent chain
-                let (root_parent_fid, root_parent_hash, root_parent_url) =
-                    self.resolve_root_parent(pool, parent_fid, parent_hash, parent_url).await?;
+            // Resolve root parent by traversing the parent chain
+            let (root_parent_fid, root_parent_hash, root_parent_url) =
+                self.resolve_root_parent(pool, parent_fid, parent_hash, parent_url).await?;
 
-                // Sanitize text fields - PostgreSQL text columns reject \x00
-                let sanitized_text = sanitize_string_for_postgres(&cast_body.text);
-                let sanitized_parent_url = parent_url.map(sanitize_string_for_postgres);
-                let sanitized_root_parent_url =
-                    root_parent_url.as_deref().map(sanitize_string_for_postgres);
+            // Sanitize text fields - PostgreSQL text columns reject \x00
+            let sanitized_text = sanitize_string_for_postgres(&cast_body.text);
+            let sanitized_parent_url = parent_url.map(sanitize_string_for_postgres);
+            let sanitized_root_parent_url =
+                root_parent_url.as_deref().map(sanitize_string_for_postgres);
 
-                sqlx::query!(
-                    r#"
+            sqlx::query!(
+                r#"
                 INSERT INTO casts (
                     fid, hash, text, parent_fid, parent_hash, parent_url,
                     root_parent_fid, root_parent_hash, root_parent_url,
@@ -259,29 +269,28 @@ impl DatabaseProcessor {
                     mentions = EXCLUDED.mentions,
                     mentions_positions = EXCLUDED.mentions_positions
                 "#,
-                    data.fid as i64,
-                    &msg.hash,
-                    sanitized_text.as_ref(),
-                    parent_fid,
-                    parent_hash,
-                    sanitized_parent_url.as_deref(),
-                    root_parent_fid,
-                    root_parent_hash.as_deref(),
-                    sanitized_root_parent_url.as_deref(),
-                    ts,
-                    serde_json::to_value(
-                        cast_body
-                            .embeds
-                            .iter()
-                            .map(NormalizedEmbed::from_protobuf_embed)
-                            .collect::<Vec<_>>()
-                    )?,
-                    serde_json::to_value(&cast_body.mentions)?,
-                    serde_json::to_value(&cast_body.mentions_positions)?,
-                )
-                .execute(pool)
-                .await?;
-            }
+                data.fid as i64,
+                &msg.hash,
+                sanitized_text.as_ref(),
+                parent_fid,
+                parent_hash,
+                sanitized_parent_url.as_deref(),
+                root_parent_fid,
+                root_parent_hash.as_deref(),
+                sanitized_root_parent_url.as_deref(),
+                ts,
+                serde_json::to_value(
+                    cast_body
+                        .embeds
+                        .iter()
+                        .map(NormalizedEmbed::from_protobuf_embed)
+                        .collect::<Vec<_>>()
+                )?,
+                serde_json::to_value(&cast_body.mentions)?,
+                serde_json::to_value(&cast_body.mentions_positions)?,
+            )
+            .execute(pool)
+            .await?;
         }
         Ok(())
     }
@@ -291,15 +300,16 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(CastRemoveBody(remove_body)) = &data.body {
-                let ts = Self::convert_timestamp(data.timestamp);
+        if let Some(data) = &msg.data
+            && let Some(CastRemoveBody(remove_body)) = &data.body
+        {
+            let ts = Self::convert_timestamp(data.timestamp);
 
-                // Process cast removal with CRDT semantics
-                // - Using timestamp-based conflict resolution: higher timestamp wins
-                // - For equal timestamps, remove operation wins (remove-wins semantics)
-                // - Handles out-of-order messages where removals arrive before additions
-                sqlx::query!(
+            // Process cast removal with CRDT semantics
+            // - Using timestamp-based conflict resolution: higher timestamp wins
+            // - For equal timestamps, remove operation wins (remove-wins semantics)
+            // - Handles out-of-order messages where removals arrive before additions
+            sqlx::query!(
                     r#"
                 INSERT INTO casts (fid, hash, deleted_at, timestamp, text, embeds, mentions, mentions_positions, parent_fid)
                 VALUES ($1, $2, $3, $4, '', '[]'::json, '[]'::json, '[]'::json, NULL)
@@ -317,7 +327,6 @@ impl DatabaseProcessor {
                 )
                     .execute(pool)
                     .await?;
-            }
         }
         Ok(())
     }
@@ -327,21 +336,22 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(ReactionBody(reaction)) = &data.body {
-                metrics::increment_reactions_processed();
-                let (target_cast_hash, target_url) = match &reaction.target {
-                    Some(ReactionTarget::TargetCastId(cast_id)) => (Some(&cast_id.hash), None),
-                    Some(ReactionTarget::TargetUrl(url)) => (None, Some(url.as_str())),
-                    None => (None, None),
-                };
+        if let Some(data) = &msg.data
+            && let Some(ReactionBody(reaction)) = &data.body
+        {
+            metrics::increment_reactions_processed();
+            let (target_cast_hash, target_url) = match &reaction.target {
+                Some(ReactionTarget::TargetCastId(cast_id)) => (Some(&cast_id.hash), None),
+                Some(ReactionTarget::TargetUrl(url)) => (None, Some(url.as_str())),
+                None => (None, None),
+            };
 
-                let ts = Self::convert_timestamp(data.timestamp);
-                // Sanitize target_url - PostgreSQL text columns reject \x00
-                let sanitized_target_url = target_url.map(sanitize_string_for_postgres);
+            let ts = Self::convert_timestamp(data.timestamp);
+            // Sanitize target_url - PostgreSQL text columns reject \x00
+            let sanitized_target_url = target_url.map(sanitize_string_for_postgres);
 
-                // First insert/update the reaction
-                sqlx::query!(
+            // First insert/update the reaction
+            sqlx::query!(
                 r#"
                 INSERT INTO reactions (fid, hash, target_cast_hash, target_url, type, timestamp, deleted_at)
                 VALUES ($1, $2, $3, $4, $5, $6, NULL)
@@ -362,8 +372,7 @@ impl DatabaseProcessor {
                     .execute(pool)
                     .await?;
 
-                // Process reaction add
-            }
+            // Process reaction add
         }
         Ok(())
     }
@@ -373,20 +382,21 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(ReactionBody(reaction)) = &data.body {
-                let ts = Self::convert_timestamp(data.timestamp);
+        if let Some(data) = &msg.data
+            && let Some(ReactionBody(reaction)) = &data.body
+        {
+            let ts = Self::convert_timestamp(data.timestamp);
 
-                match &reaction.target {
-                    Some(ReactionTarget::TargetCastId(cast_id)) => {
-                        // Process reaction removal
+            match &reaction.target {
+                Some(ReactionTarget::TargetCastId(cast_id)) => {
+                    // Process reaction removal
 
-                        // Then upsert reaction with deletion
-                        // CRDT conflict resolution for reactions:
-                        // - If timestamps are distinct, the message with the higher timestamp wins
-                        // - If timestamps are identical, the removal operation wins (delete-wins)
-                        // - Handles out-of-order messages with proper conflict resolution
-                        sqlx::query!(
+                    // Then upsert reaction with deletion
+                    // CRDT conflict resolution for reactions:
+                    // - If timestamps are distinct, the message with the higher timestamp wins
+                    // - If timestamps are identical, the removal operation wins (delete-wins)
+                    // - Handles out-of-order messages with proper conflict resolution
+                    sqlx::query!(
                         r#"
                         INSERT INTO reactions (fid, type, target_cast_hash, hash, timestamp, deleted_at)
                         VALUES ($1, $2, $3, $4, $5, $6)
@@ -405,13 +415,13 @@ impl DatabaseProcessor {
                         ts
                     ).execute(pool).await?;
 
-                        // Follow CRDT semantics - no cross-entity updates
-                    },
-                    Some(ReactionTarget::TargetUrl(url)) => {
-                        // Process URL-targeted reaction removal
-                        // Sanitize target_url - PostgreSQL text columns reject \x00
-                        let sanitized_url = sanitize_string_for_postgres(url.as_str());
-                        sqlx::query!(
+                    // Follow CRDT semantics - no cross-entity updates
+                },
+                Some(ReactionTarget::TargetUrl(url)) => {
+                    // Process URL-targeted reaction removal
+                    // Sanitize target_url - PostgreSQL text columns reject \x00
+                    let sanitized_url = sanitize_string_for_postgres(url.as_str());
+                    sqlx::query!(
                         r#"
                         INSERT INTO reactions (fid, type, target_url, hash, timestamp, deleted_at)
                         VALUES ($1, $2, $3, $4, $5, $6)
@@ -431,9 +441,8 @@ impl DatabaseProcessor {
                     )
                             .execute(pool)
                             .await?;
-                    },
-                    None => {},
-                }
+                },
+                None => {},
             }
         }
         Ok(())
@@ -444,20 +453,21 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(LinkBody(link)) = &data.body {
-                metrics::increment_follows_processed();
-                let target_fid = match link.target {
-                    Some(LinkTarget::TargetFid(fid)) => fid,
-                    _ => return Ok(()),
-                };
+        if let Some(data) = &msg.data
+            && let Some(LinkBody(link)) = &data.body
+        {
+            metrics::increment_follows_processed();
+            let target_fid = match link.target {
+                Some(LinkTarget::TargetFid(fid)) => fid,
+                _ => return Ok(()),
+            };
 
-                let ts = Self::convert_timestamp(data.timestamp);
-                let display_ts = link.display_timestamp.map(Self::convert_timestamp);
-                // Sanitize link type - PostgreSQL text columns reject \x00
-                let sanitized_link_type = sanitize_string_for_postgres(&link.r#type);
+            let ts = Self::convert_timestamp(data.timestamp);
+            let display_ts = link.display_timestamp.map(Self::convert_timestamp);
+            // Sanitize link type - PostgreSQL text columns reject \x00
+            let sanitized_link_type = sanitize_string_for_postgres(&link.r#type);
 
-                sqlx::query!(
+            sqlx::query!(
                 r#"
                 INSERT INTO links (
                     fid,
@@ -483,7 +493,6 @@ impl DatabaseProcessor {
             )
                     .execute(pool)
                     .await?;
-            }
         }
         Ok(())
     }
@@ -493,25 +502,26 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(LinkBody(link)) = &data.body {
-                let target_fid = match link.target {
-                    Some(LinkTarget::TargetFid(fid)) => fid,
-                    _ => return Ok(()),
-                };
+        if let Some(data) = &msg.data
+            && let Some(LinkBody(link)) = &data.body
+        {
+            let target_fid = match link.target {
+                Some(LinkTarget::TargetFid(fid)) => fid,
+                _ => return Ok(()),
+            };
 
-                let ts = Self::convert_timestamp(data.timestamp);
-                let display_ts = link.display_timestamp.map(Self::convert_timestamp);
-                // Sanitize link type - PostgreSQL text columns reject \x00
-                let sanitized_link_type = sanitize_string_for_postgres(&link.r#type);
+            let ts = Self::convert_timestamp(data.timestamp);
+            let display_ts = link.display_timestamp.map(Self::convert_timestamp);
+            // Sanitize link type - PostgreSQL text columns reject \x00
+            let sanitized_link_type = sanitize_string_for_postgres(&link.r#type);
 
-                // Process link removal
+            // Process link removal
 
-                // CRDT-compliant link removal:
-                // - If timestamps are distinct, message with higher timestamp wins
-                // - If timestamps match, removal operations win
-                // - LEAST is used for timestamps to preserve earliest timestamp
-                sqlx::query!(
+            // CRDT-compliant link removal:
+            // - If timestamps are distinct, message with higher timestamp wins
+            // - If timestamps match, removal operations win
+            // - LEAST is used for timestamps to preserve earliest timestamp
+            sqlx::query!(
                 r#"
                 INSERT INTO links (
                     fid,
@@ -541,7 +551,6 @@ impl DatabaseProcessor {
             )
                     .execute(pool)
                     .await?;
-            }
         }
         Ok(())
     }
@@ -550,14 +559,15 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(UserDataBody(user_data)) = &data.body {
-                metrics::increment_user_data_processed();
-                let ts = Self::convert_timestamp(data.timestamp);
-                // Sanitize null bytes - PostgreSQL text columns reject \x00
-                let sanitized_value = sanitize_string_for_postgres(&user_data.value);
+        if let Some(data) = &msg.data
+            && let Some(UserDataBody(user_data)) = &data.body
+        {
+            metrics::increment_user_data_processed();
+            let ts = Self::convert_timestamp(data.timestamp);
+            // Sanitize null bytes - PostgreSQL text columns reject \x00
+            let sanitized_value = sanitize_string_for_postgres(&user_data.value);
 
-                sqlx::query!(
+            sqlx::query!(
                     r#"
                 INSERT INTO user_data (fid, type, hash, value, timestamp)
                 VALUES ($1, $2, $3, $4, $5)
@@ -574,7 +584,6 @@ impl DatabaseProcessor {
                 )
                 .execute(pool)
                 .await?;
-            }
         }
         Ok(())
     }
@@ -584,16 +593,17 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(UsernameProofBody(proof_body)) = &data.body {
-                let ts = Self::convert_timestamp(data.timestamp);
+        if let Some(data) = &msg.data
+            && let Some(UsernameProofBody(proof_body)) = &data.body
+        {
+            let ts = Self::convert_timestamp(data.timestamp);
 
-                // Extract the proof fields and sanitize null bytes for PostgreSQL
-                let name = String::from_utf8(proof_body.name.clone()).unwrap_or_default();
-                let sanitized_name = sanitize_string_for_postgres(&name);
+            // Extract the proof fields and sanitize null bytes for PostgreSQL
+            let name = String::from_utf8(proof_body.name.clone()).unwrap_or_default();
+            let sanitized_name = sanitize_string_for_postgres(&name);
 
-                sqlx::query!(
-                    r#"
+            sqlx::query!(
+                r#"
                 INSERT INTO username_proofs (
                     fid,
                     username,
@@ -606,16 +616,15 @@ impl DatabaseProcessor {
                 ON CONFLICT (username, fid)
                 DO NOTHING
                 "#,
-                    data.fid as i64,
-                    sanitized_name.as_ref(),
-                    ts,
-                    proof_body.r#type as i16,
-                    &proof_body.signature,
-                    &proof_body.owner
-                )
-                .execute(pool)
-                .await?;
-            }
+                data.fid as i64,
+                sanitized_name.as_ref(),
+                ts,
+                proof_body.r#type as i16,
+                &proof_body.signature,
+                &proof_body.owner
+            )
+            .execute(pool)
+            .await?;
         }
         Ok(())
     }
@@ -946,12 +955,13 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(VerificationAddAddressBody(verification)) = &data.body {
-                let ts = Self::convert_timestamp(data.timestamp);
+        if let Some(data) = &msg.data
+            && let Some(VerificationAddAddressBody(verification)) = &data.body
+        {
+            let ts = Self::convert_timestamp(data.timestamp);
 
-                sqlx::query!(
-                    r#"
+            sqlx::query!(
+                r#"
                 INSERT INTO verifications (
                     fid,
                     hash,
@@ -968,17 +978,16 @@ impl DatabaseProcessor {
                     signature = EXCLUDED.signature,
                     timestamp = EXCLUDED.timestamp
                 "#,
-                    data.fid as i64,
-                    &msg.hash,
-                    &verification.address,
-                    &verification.block_hash,
-                    &verification.claim_signature,
-                    verification.protocol as i16,
-                    ts
-                )
-                .execute(pool)
-                .await?;
-            }
+                data.fid as i64,
+                &msg.hash,
+                &verification.address,
+                &verification.block_hash,
+                &verification.claim_signature,
+                verification.protocol as i16,
+                ts
+            )
+            .execute(pool)
+            .await?;
         }
         Ok(())
     }
@@ -988,16 +997,17 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(VerificationRemoveBody(verification)) = &data.body {
-                let ts = Self::convert_timestamp(data.timestamp);
+        if let Some(data) = &msg.data
+            && let Some(VerificationRemoveBody(verification)) = &data.body
+        {
+            let ts = Self::convert_timestamp(data.timestamp);
 
-                // Process verification removal with CRDT semantics:
-                // - Conflict resolution based on timestamp ordering
-                // - For equal timestamps, removal wins
-                // - Default values for required fields when creating placeholder records
-                sqlx::query!(
-                    r#"
+            // Process verification removal with CRDT semantics:
+            // - Conflict resolution based on timestamp ordering
+            // - For equal timestamps, removal wins
+            // - Default values for required fields when creating placeholder records
+            sqlx::query!(
+                r#"
                 INSERT INTO verifications (
                     fid,
                     signer_address,
@@ -1016,19 +1026,18 @@ impl DatabaseProcessor {
                     END,
                     timestamp = GREATEST(verifications.timestamp, EXCLUDED.timestamp)
                 "#,
-                    data.fid as i64,
-                    &verification.address,
-                    &msg.hash,
-                    // Default values for required columns
-                    &verification.address, // Using address as block_hash placeholder
-                    &verification.address, // Using address as signature placeholder
-                    0 as i16,              // Default protocol value
-                    ts,
-                    ts
-                )
-                .execute(pool)
-                .await?;
-            }
+                data.fid as i64,
+                &verification.address,
+                &msg.hash,
+                // Default values for required columns
+                &verification.address, // Using address as block_hash placeholder
+                &verification.address, // Using address as signature placeholder
+                0 as i16,              // Default protocol value
+                ts,
+                ts
+            )
+            .execute(pool)
+            .await?;
         }
         Ok(())
     }
@@ -1038,12 +1047,13 @@ impl DatabaseProcessor {
         pool: &PgPool,
         msg: &Message,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(data) = &msg.data {
-            if let Some(LendStorageBody(lend_storage)) = &data.body {
-                let ts = Self::convert_timestamp(data.timestamp);
+        if let Some(data) = &msg.data
+            && let Some(LendStorageBody(lend_storage)) = &data.body
+        {
+            let ts = Self::convert_timestamp(data.timestamp);
 
-                sqlx::query!(
-                    r#"
+            sqlx::query!(
+                r#"
                 INSERT INTO lend_storage (
                     fid,
                     to_fid,
@@ -1058,16 +1068,15 @@ impl DatabaseProcessor {
                     deleted_at = NULL,
                     timestamp = LEAST(EXCLUDED.timestamp, lend_storage.timestamp)
                 "#,
-                    data.fid as i64,
-                    lend_storage.to_fid as i64,
-                    lend_storage.num_units as i64,
-                    lend_storage.unit_type as i16,
-                    &msg.hash,
-                    ts
-                )
-                .execute(pool)
-                .await?;
-            }
+                data.fid as i64,
+                lend_storage.to_fid as i64,
+                lend_storage.num_units as i64,
+                lend_storage.unit_type as i16,
+                &msg.hash,
+                ts
+            )
+            .execute(pool)
+            .await?;
         }
         Ok(())
     }
@@ -1285,38 +1294,38 @@ impl DatabaseProcessor {
                         },
                         2 => {
                             // PRUNE_MESSAGE
-                            if let Some(Body::PruneMessageBody(body)) = event_body {
-                                if let Some(msg) = body.message {
-                                    let proc = processor.clone();
-                                    let semaphore_clone = Arc::clone(&semaphore);
-                                    let task = tokio::spawn(async move {
-                                        // Acquire a permit from the semaphore before accessing the database
-                                        let _permit = semaphore_clone.acquire().await.unwrap();
+                            if let Some(Body::PruneMessageBody(body)) = event_body
+                                && let Some(msg) = body.message
+                            {
+                                let proc = processor.clone();
+                                let semaphore_clone = Arc::clone(&semaphore);
+                                let task = tokio::spawn(async move {
+                                    // Acquire a permit from the semaphore before accessing the database
+                                    let _permit = semaphore_clone.acquire().await.unwrap();
 
-                                        if let Err(e) = proc.process_message(&msg, "prune").await {
-                                            error!("Error processing message: {}", e);
-                                        }
-                                    });
-                                    processing_tasks.push(task);
-                                }
+                                    if let Err(e) = proc.process_message(&msg, "prune").await {
+                                        error!("Error processing message: {}", e);
+                                    }
+                                });
+                                processing_tasks.push(task);
                             }
                         },
                         3 => {
                             // REVOKE_MESSAGE
-                            if let Some(Body::RevokeMessageBody(body)) = event_body {
-                                if let Some(msg) = body.message {
-                                    let proc = processor.clone();
-                                    let semaphore_clone = Arc::clone(&semaphore);
-                                    let task = tokio::spawn(async move {
-                                        // Acquire a permit from the semaphore before accessing the database
-                                        let _permit = semaphore_clone.acquire().await.unwrap();
+                            if let Some(Body::RevokeMessageBody(body)) = event_body
+                                && let Some(msg) = body.message
+                            {
+                                let proc = processor.clone();
+                                let semaphore_clone = Arc::clone(&semaphore);
+                                let task = tokio::spawn(async move {
+                                    // Acquire a permit from the semaphore before accessing the database
+                                    let _permit = semaphore_clone.acquire().await.unwrap();
 
-                                        if let Err(e) = proc.process_message(&msg, "revoke").await {
-                                            error!("Error processing message: {}", e);
-                                        }
-                                    });
-                                    processing_tasks.push(task);
-                                }
+                                    if let Err(e) = proc.process_message(&msg, "revoke").await {
+                                        error!("Error processing message: {}", e);
+                                    }
+                                });
+                                processing_tasks.push(task);
                             }
                         },
                         6 => {
@@ -1394,20 +1403,20 @@ impl DatabaseProcessor {
                         },
                         9 => {
                             // MERGE_ON_CHAIN_EVENT
-                            if let Some(Body::MergeOnChainEventBody(body)) = event_body {
-                                if let Some(event) = body.on_chain_event {
-                                    let proc = processor.clone();
-                                    let semaphore_clone = Arc::clone(&semaphore);
-                                    let task = tokio::spawn(async move {
-                                        // Acquire a permit from the semaphore before accessing the database
-                                        let _permit = semaphore_clone.acquire().await.unwrap();
+                            if let Some(Body::MergeOnChainEventBody(body)) = event_body
+                                && let Some(event) = body.on_chain_event
+                            {
+                                let proc = processor.clone();
+                                let semaphore_clone = Arc::clone(&semaphore);
+                                let task = tokio::spawn(async move {
+                                    // Acquire a permit from the semaphore before accessing the database
+                                    let _permit = semaphore_clone.acquire().await.unwrap();
 
-                                        if let Err(e) = proc.process_onchain_event(&event).await {
-                                            error!("Error processing onchain event: {}", e);
-                                        }
-                                    });
-                                    processing_tasks.push(task);
-                                }
+                                    if let Err(e) = proc.process_onchain_event(&event).await {
+                                        error!("Error processing onchain event: {}", e);
+                                    }
+                                });
+                                processing_tasks.push(task);
                             }
                         },
                         _ => {},
@@ -1441,7 +1450,7 @@ impl DatabaseProcessor {
                     std::sync::atomic::AtomicUsize::new(0);
                 let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                if count % 1000 == 0 && events_count > 0 {
+                if count.is_multiple_of(1000) && events_count > 0 {
                     debug!(
                         "Processed batch #{}: {} events with type distribution: {:?}",
                         count, events_count, event_types
