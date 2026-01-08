@@ -33,31 +33,21 @@ pub struct BackfillJob {
     pub started_at: Option<chrono::DateTime<chrono::Utc>>, // Track when job processing started
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum JobPriority {
     High,
+    #[default]
     Normal,
     Low,
 }
 
-impl Default for JobPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub enum JobState {
+    #[default]
     Pending,
     InProgress,
     Completed,
     Failed,
-}
-
-impl Default for JobState {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 pub struct BackfillQueue {
@@ -252,13 +242,13 @@ impl BackfillQueue {
         if let Ok(job_list) = jobs {
             // Find and remove the job with matching ID
             for job_data in job_list {
-                if let Ok(job) = serde_json::from_str::<BackfillJob>(&job_data) {
-                    if job.id == job_id {
-                        // Remove this specific job from the in-progress queue
-                        let _ = self.redis.lrem(&self.in_progress_queue_key, 0, &job_data).await;
-                        debug!("Removed job {} from in-progress queue", job_id);
-                        break;
-                    }
+                if let Ok(job) = serde_json::from_str::<BackfillJob>(&job_data)
+                    && job.id == job_id
+                {
+                    // Remove this specific job from the in-progress queue
+                    let _ = self.redis.lrem(&self.in_progress_queue_key, 0, &job_data).await;
+                    debug!("Removed job {} from in-progress queue", job_id);
+                    break;
                 }
             }
         }
@@ -784,13 +774,12 @@ impl Worker {
                                 error!("Failed to send job completion update: {}", e);
                             }
 
-                            if highest_fid_in_job > 0 {
-                                if let Err(e) = tx_for_highest
+                            if highest_fid_in_job > 0
+                                && let Err(e) = tx_for_highest
                                     .send(StatsUpdate::HighestFidUpdate(highest_fid_in_job))
                                     .await
-                                {
-                                    error!("Failed to send highest FID update: {}", e);
-                                }
+                            {
+                                error!("Failed to send highest FID update: {}", e);
                             }
 
                             Ok(())

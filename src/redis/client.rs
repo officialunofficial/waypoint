@@ -589,53 +589,50 @@ impl Redis {
         // Parse the response - it's an array of streams, each with messages
         if let fred::types::RedisValue::Array(streams) = response {
             for stream in streams {
-                if let fred::types::RedisValue::Array(stream_data) = stream {
-                    if stream_data.len() >= 2 {
-                        // stream_data[0] is the stream key, stream_data[1] is the messages array
-                        if let fred::types::RedisValue::Array(messages) = &stream_data[1] {
-                            for msg in messages {
-                                if let fred::types::RedisValue::Array(msg_data) = msg {
-                                    if msg_data.len() >= 2 {
-                                        // msg_data[0] is the ID, msg_data[1] is the fields
-                                        let id =
-                                            msg_data[0].as_string().unwrap_or_default().to_string();
+                if let fred::types::RedisValue::Array(stream_data) = stream
+                    && stream_data.len() >= 2
+                {
+                    // stream_data[0] is the stream key, stream_data[1] is the messages array
+                    if let fred::types::RedisValue::Array(messages) = &stream_data[1] {
+                        for msg in messages {
+                            if let fred::types::RedisValue::Array(msg_data) = msg
+                                && msg_data.len() >= 2
+                            {
+                                // msg_data[0] is the ID, msg_data[1] is the fields
+                                let id = msg_data[0].as_string().unwrap_or_default().to_string();
 
-                                        // Extract the "d" field from the fields array
-                                        if let fred::types::RedisValue::Array(fields) = &msg_data[1]
+                                // Extract the "d" field from the fields array
+                                if let fred::types::RedisValue::Array(fields) = &msg_data[1] {
+                                    // Fields are key-value pairs
+                                    for i in (0..fields.len()).step_by(2) {
+                                        if i + 1 < fields.len()
+                                            && fields[i]
+                                                .as_string()
+                                                .map(|s| s == "d")
+                                                .unwrap_or(false)
                                         {
-                                            // Fields are key-value pairs
-                                            for i in (0..fields.len()).step_by(2) {
-                                                if i + 1 < fields.len()
-                                                    && fields[i]
-                                                        .as_string()
-                                                        .map(|s| s == "d")
-                                                        .unwrap_or(false)
-                                                {
-                                                    // Handle both Bytes and String data types
-                                                    match &fields[i + 1] {
-                                                        fred::types::RedisValue::Bytes(data) => {
-                                                            results
-                                                                .push((id.clone(), data.to_vec()));
-                                                        },
-                                                        fred::types::RedisValue::String(data) => {
-                                                            results.push((
-                                                                id.clone(),
-                                                                data.as_bytes().to_vec(),
-                                                            ));
-                                                        },
-                                                        _ => {
-                                                            // Try to convert other types to bytes
-                                                            if let Some(data_string) =
-                                                                fields[i + 1].as_string()
-                                                            {
-                                                                results.push((
-                                                                    id.clone(),
-                                                                    data_string.as_bytes().to_vec(),
-                                                                ));
-                                                            }
-                                                        },
+                                            // Handle both Bytes and String data types
+                                            match &fields[i + 1] {
+                                                fred::types::RedisValue::Bytes(data) => {
+                                                    results.push((id.clone(), data.to_vec()));
+                                                },
+                                                fred::types::RedisValue::String(data) => {
+                                                    results.push((
+                                                        id.clone(),
+                                                        data.as_bytes().to_vec(),
+                                                    ));
+                                                },
+                                                _ => {
+                                                    // Try to convert other types to bytes
+                                                    if let Some(data_string) =
+                                                        fields[i + 1].as_string()
+                                                    {
+                                                        results.push((
+                                                            id.clone(),
+                                                            data_string.as_bytes().to_vec(),
+                                                        ));
                                                     }
-                                                }
+                                                },
                                             }
                                         }
                                     }
@@ -802,39 +799,39 @@ impl Redis {
         // Parse the response - it's an array of claimed messages
         if let fred::types::RedisValue::Array(messages) = claimed {
             for msg in messages {
-                if let fred::types::RedisValue::Array(msg_data) = msg {
-                    if msg_data.len() >= 2 {
-                        // msg_data[0] is the ID, msg_data[1] is the fields
-                        let id = msg_data[0].as_string().unwrap_or_default().to_string();
+                if let fred::types::RedisValue::Array(msg_data) = msg
+                    && msg_data.len() >= 2
+                {
+                    // msg_data[0] is the ID, msg_data[1] is the fields
+                    let id = msg_data[0].as_string().unwrap_or_default().to_string();
 
-                        // Extract the "d" field from the fields array
-                        if let fred::types::RedisValue::Array(fields) = &msg_data[1] {
-                            // Fields are key-value pairs
-                            for i in (0..fields.len()).step_by(2) {
-                                if i + 1 < fields.len()
-                                    && fields[i].as_string().map(|s| s == "d").unwrap_or(false)
-                                {
-                                    // Handle both Bytes and String data types
-                                    match &fields[i + 1] {
-                                        fred::types::RedisValue::Bytes(data) => {
-                                            results.push((id.clone(), data.to_vec()));
+                    // Extract the "d" field from the fields array
+                    if let fred::types::RedisValue::Array(fields) = &msg_data[1] {
+                        // Fields are key-value pairs
+                        for i in (0..fields.len()).step_by(2) {
+                            if i + 1 < fields.len()
+                                && fields[i].as_string().map(|s| s == "d").unwrap_or(false)
+                            {
+                                // Handle both Bytes and String data types
+                                match &fields[i + 1] {
+                                    fred::types::RedisValue::Bytes(data) => {
+                                        results.push((id.clone(), data.to_vec()));
+                                        break;
+                                    },
+                                    fred::types::RedisValue::String(data) => {
+                                        results.push((id.clone(), data.as_bytes().to_vec()));
+                                        break;
+                                    },
+                                    _ => {
+                                        // Try to convert other types to bytes
+                                        if let Some(data_string) = fields[i + 1].as_string() {
+                                            results.push((
+                                                id.clone(),
+                                                data_string.as_bytes().to_vec(),
+                                            ));
                                             break;
-                                        },
-                                        fred::types::RedisValue::String(data) => {
-                                            results.push((id.clone(), data.as_bytes().to_vec()));
-                                            break;
-                                        },
-                                        _ => {
-                                            // Try to convert other types to bytes
-                                            if let Some(data_string) = fields[i + 1].as_string() {
-                                                results.push((
-                                                    id.clone(),
-                                                    data_string.as_bytes().to_vec(),
-                                                ));
-                                                break;
-                                            }
-                                        },
-                                    }
+                                        }
+                                    },
                                 }
                             }
                         }

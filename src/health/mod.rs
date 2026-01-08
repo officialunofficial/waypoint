@@ -89,10 +89,10 @@ impl HealthServer {
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
         // Send shutdown signal to HTTP server
-        if let Some(tx) = self.shutdown_tx.lock().take() {
-            if tx.send(()).is_err() {
-                error!("Failed to send shutdown signal to health server");
-            }
+        if let Some(tx) = self.shutdown_tx.lock().take()
+            && tx.send(()).is_err()
+        {
+            error!("Failed to send shutdown signal to health server");
         }
 
         // Let the server finish its shutdown

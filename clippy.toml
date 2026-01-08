@@ -1,5 +1,8 @@
 # Clippy configuration for Waypoint
 
+# Enforce Rust 2024 edition and MSRV 1.92
+msrv = "1.92.0"
+
 # Set more restrictive lints for cleaner code
 disallowed-methods = [
     { path = "std::env::var", reason = "Use config system instead of direct env vars" },

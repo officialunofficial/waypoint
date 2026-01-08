@@ -871,46 +871,46 @@ impl<'a> BatchInserter<'a> {
         }
 
         // Execute bulk inserts for each type
-        if !cast_inserts.is_empty() {
-            if let Err(e) = self.bulk_insert_casts(cast_inserts).await {
-                error!("Error in bulk insert of casts: {}", e);
-                return Err(e);
-            }
+        if !cast_inserts.is_empty()
+            && let Err(e) = self.bulk_insert_casts(cast_inserts).await
+        {
+            error!("Error in bulk insert of casts: {}", e);
+            return Err(e);
         }
 
-        if !reaction_inserts.is_empty() {
-            if let Err(e) = self.bulk_insert_reactions(reaction_inserts).await {
-                error!("Error in bulk insert of reactions: {}", e);
-                return Err(e);
-            }
+        if !reaction_inserts.is_empty()
+            && let Err(e) = self.bulk_insert_reactions(reaction_inserts).await
+        {
+            error!("Error in bulk insert of reactions: {}", e);
+            return Err(e);
         }
 
-        if !link_inserts.is_empty() {
-            if let Err(e) = self.bulk_insert_links(link_inserts).await {
-                error!("Error in bulk insert of links: {}", e);
-                return Err(e);
-            }
+        if !link_inserts.is_empty()
+            && let Err(e) = self.bulk_insert_links(link_inserts).await
+        {
+            error!("Error in bulk insert of links: {}", e);
+            return Err(e);
         }
 
-        if !user_data_inserts.is_empty() {
-            if let Err(e) = self.bulk_insert_user_data(user_data_inserts).await {
-                error!("Error in bulk insert of user data: {}", e);
-                return Err(e);
-            }
+        if !user_data_inserts.is_empty()
+            && let Err(e) = self.bulk_insert_user_data(user_data_inserts).await
+        {
+            error!("Error in bulk insert of user data: {}", e);
+            return Err(e);
         }
 
-        if !verification_inserts.is_empty() {
-            if let Err(e) = self.bulk_insert_verifications(verification_inserts).await {
-                error!("Error in bulk insert of verifications: {}", e);
-                return Err(e);
-            }
+        if !verification_inserts.is_empty()
+            && let Err(e) = self.bulk_insert_verifications(verification_inserts).await
+        {
+            error!("Error in bulk insert of verifications: {}", e);
+            return Err(e);
         }
 
-        if !username_proof_inserts.is_empty() {
-            if let Err(e) = self.bulk_insert_username_proofs(username_proof_inserts).await {
-                error!("Error in bulk insert of username proofs: {}", e);
-                return Err(e);
-            }
+        if !username_proof_inserts.is_empty()
+            && let Err(e) = self.bulk_insert_username_proofs(username_proof_inserts).await
+        {
+            error!("Error in bulk insert of username proofs: {}", e);
+            return Err(e);
         }
 
         // All bulk inserts have been completed

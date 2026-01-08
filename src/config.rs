@@ -730,12 +730,12 @@ impl Config {
         // Note: We use std::env::var_os here directly because this is the bootstrapping
         // part of our config system; we have to use env vars to find the config file
         // This is exempt from the clippy lint for std::env::var since it's part of config loading
-        if let Some(config_path) = std::env::var_os("WAYPOINT_CONFIG") {
-            if let Some(path_str) = config_path.to_str() {
-                let path = Path::new(path_str);
-                if path.exists() {
-                    figment = figment.merge(Toml::file(path));
-                }
+        if let Some(config_path) = std::env::var_os("WAYPOINT_CONFIG")
+            && let Some(path_str) = config_path.to_str()
+        {
+            let path = Path::new(path_str);
+            if path.exists() {
+                figment = figment.merge(Toml::file(path));
             }
         }
 

@@ -209,13 +209,13 @@ pub fn process_link_message(
     }
 
     // Add display timestamp if present
-    if let Some(display_timestamp) = link_body.display_timestamp {
-        if display_timestamp > 0 {
-            link_obj.insert(
-                "display_timestamp".to_string(),
-                serde_json::Value::Number(serde_json::Number::from(display_timestamp)),
-            );
-        }
+    if let Some(display_timestamp) = link_body.display_timestamp
+        && display_timestamp > 0
+    {
+        link_obj.insert(
+            "display_timestamp".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(display_timestamp)),
+        );
     }
 
     Some(link_obj)

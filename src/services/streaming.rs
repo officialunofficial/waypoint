@@ -297,10 +297,10 @@ impl Consumer {
         match self.stream.redis.xinfo_groups(stream_key).await {
             Ok(groups) => {
                 for group in groups {
-                    if let Some(name) = group.get("name") {
-                        if name == group_name {
-                            return true;
-                        }
+                    if let Some(name) = group.get("name")
+                        && name == group_name
+                    {
+                        return true;
                     }
                 }
                 false
