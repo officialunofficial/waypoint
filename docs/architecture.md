@@ -5,6 +5,18 @@ Three main components:
 2. **Backfill** - Historical data via queue/worker pattern
 3. **MCP** - AI assistant data access
 
+## Service Modes
+
+Waypoint supports three service modes for horizontal scaling:
+
+```bash
+waypoint start              # Both producer and consumer (default)
+waypoint start producer     # Producer only: Hub → Redis
+waypoint start consumer     # Consumer only: Redis → PostgreSQL
+```
+
+This enables independent scaling of producers and consumers via HPA or similar.
+
 ## Streaming
 
 ```mermaid

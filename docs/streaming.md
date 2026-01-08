@@ -2,6 +2,19 @@
 
 Real-time Snapchain event processing via gRPC → Redis → PostgreSQL.
 
+## Service Modes
+
+For horizontal scaling, streaming can be split into producer and consumer:
+
+```bash
+waypoint start              # Both (default, backward compatible)
+waypoint start producer     # Producer only: Hub → Redis
+waypoint start consumer     # Consumer only: Redis → PostgreSQL
+```
+
+**Producer mode** requires: `hub.url`, `redis.url`
+**Consumer mode** requires: `redis.url`, `database.url`
+
 ## Configuration
 
 ```toml

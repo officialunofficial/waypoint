@@ -136,6 +136,72 @@ services:
     networks:
       - waypoint-network
 
+  # Producer-only mode (for HPA scaling)
+  # Start with: docker compose --profile producer up
+  waypoint-producer:
+    image: officialunofficial/waypoint:latest
+    pull_policy: always
+    init: true
+    restart: on-failure
+    command: ./waypoint start producer
+    environment:
+      # Redis (required for producer)
+      WAYPOINT_REDIS__URL: redis://redis:6379
+      WAYPOINT_REDIS__POOL_SIZE: ${WAYPOINT_REDIS__POOL_SIZE:-100}
+
+      # Farcaster Hub (required for producer)
+      WAYPOINT_HUB__URL: ${WAYPOINT_HUB__URL:-snapchain.farcaster.xyz:3383}
+      WAYPOINT_HUB__SHARD_INDICES: ${WAYPOINT_HUB__SHARD_INDICES}
+      WAYPOINT_HUB__SUBSCRIBE_TO_ALL_SHARDS: ${WAYPOINT_HUB__SUBSCRIBE_TO_ALL_SHARDS}
+      WAYPOINT_HUB__HEADERS__X_API_KEY: ${WAYPOINT_HUB__HEADERS__X_API_KEY}
+
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+      WAYPOINT_LOG_FORMAT: ${WAYPOINT_LOG_FORMAT:-json}
+
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - waypoint-network
+    profiles:
+      - producer
+
+  # Consumer-only mode (for HPA scaling)
+  # Start with: docker compose --profile consumer up --scale waypoint-consumer=4
+  waypoint-consumer:
+    image: officialunofficial/waypoint:latest
+    pull_policy: always
+    init: true
+    restart: on-failure
+    command: ./waypoint start consumer
+    deploy:
+      replicas: ${CONSUMER_REPLICAS:-1}
+    environment:
+      # Database (required for consumer)
+      WAYPOINT_DATABASE__URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-waypoint}
+      WAYPOINT_DATABASE__MAX_CONNECTIONS: ${WAYPOINT_DATABASE__MAX_CONNECTIONS:-60}
+      WAYPOINT_DATABASE__TIMEOUT_SECONDS: ${WAYPOINT_DATABASE__TIMEOUT_SECONDS:-30}
+      WAYPOINT_DATABASE__STORE_MESSAGES: ${WAYPOINT_DATABASE__STORE_MESSAGES:-false}
+
+      # Redis (required for consumer)
+      WAYPOINT_REDIS__URL: redis://redis:6379
+      WAYPOINT_REDIS__POOL_SIZE: ${WAYPOINT_REDIS__POOL_SIZE:-100}
+
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+      WAYPOINT_LOG_FORMAT: ${WAYPOINT_LOG_FORMAT:-json}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - waypoint-network
+    profiles:
+      - consumer
+
   backfill-queue:
     image: officialunofficial/waypoint:latest
     pull_policy: always
