@@ -1,5 +1,8 @@
 use crate::{
-    core::{normalize::NormalizedEmbed, util::sanitize_json_for_postgres},
+    core::{
+        normalize::NormalizedEmbed,
+        util::{sanitize_json_for_postgres, sanitize_string_for_postgres},
+    },
     database::models::Fid,
     proto::{
         Message,
@@ -475,20 +478,34 @@ impl<'a> BatchInserter<'a> {
                 ],
             );
 
+            // Pre-sanitize all text fields - PostgreSQL text columns reject \x00
+            let sanitized: Vec<_> = chunk
+                .iter()
+                .map(|c| {
+                    (
+                        sanitize_string_for_postgres(c.text),
+                        c.parent_url.map(|u| sanitize_string_for_postgres(u).into_owned()),
+                        c.root_parent_url
+                            .as_deref()
+                            .map(|u| sanitize_string_for_postgres(u).into_owned()),
+                    )
+                })
+                .collect();
+
             let mut query = sqlx::query(&sql);
 
             // Bind all parameters for each cast
-            for cast in chunk {
+            for (cast, (text, parent_url, root_parent_url)) in chunk.iter().zip(sanitized.iter()) {
                 query = query
                     .bind(cast.fid as i64)
                     .bind(cast.hash)
-                    .bind(cast.text)
+                    .bind(text.as_ref())
                     .bind(cast.parent_fid)
                     .bind(cast.parent_hash)
-                    .bind(cast.parent_url)
+                    .bind(parent_url.as_deref())
                     .bind(cast.root_parent_fid)
                     .bind(cast.root_parent_hash.as_deref())
-                    .bind(cast.root_parent_url.as_deref())
+                    .bind(root_parent_url.as_deref())
                     .bind(cast.timestamp)
                     .bind(&cast.embeds)
                     .bind(&cast.mentions)
@@ -536,17 +553,23 @@ impl<'a> BatchInserter<'a> {
                 ],
             );
 
+            // Pre-sanitize target_url - PostgreSQL text columns reject \x00
+            let sanitized_urls: Vec<_> = chunk
+                .iter()
+                .map(|r| r.target_url.map(|u| sanitize_string_for_postgres(u).into_owned()))
+                .collect();
+
             let mut query = sqlx::query(&sql);
 
             // Bind all parameters for each reaction
-            for reaction in chunk {
+            for (reaction, sanitized_url) in chunk.iter().zip(sanitized_urls.iter()) {
                 query = query
                     .bind(reaction.fid as i64)
                     .bind(reaction.target_fid as i64)
                     .bind(reaction.hash)
                     .bind(reaction.reaction_type)
                     .bind(reaction.target_hash)
-                    .bind(reaction.target_url)
+                    .bind(sanitized_url.as_deref())
                     .bind(reaction.timestamp);
             }
 
@@ -581,15 +604,19 @@ impl<'a> BatchInserter<'a> {
                 ],
             );
 
+            // Pre-sanitize link_type - PostgreSQL text columns reject \x00
+            let sanitized_types: Vec<_> =
+                chunk.iter().map(|l| sanitize_string_for_postgres(l.link_type)).collect();
+
             let mut query = sqlx::query(&sql);
 
             // Bind all parameters for each link
-            for link in chunk {
+            for (link, sanitized_type) in chunk.iter().zip(sanitized_types.iter()) {
                 query = query
                     .bind(link.fid as i64)
                     .bind(link.target_fid as i64)
                     .bind(link.hash)
-                    .bind(link.link_type)
+                    .bind(sanitized_type.as_ref())
                     .bind(link.timestamp)
                     .bind(link.display_timestamp);
             }
@@ -625,15 +652,19 @@ impl<'a> BatchInserter<'a> {
                 ],
             );
 
+            // Pre-sanitize all values - PostgreSQL text columns reject \x00
+            let sanitized_values: Vec<_> =
+                chunk.iter().map(|d| sanitize_string_for_postgres(d.value)).collect();
+
             let mut query = sqlx::query(&sql);
 
             // Bind all parameters for each user data entry
-            for data in chunk {
+            for (data, sanitized_value) in chunk.iter().zip(sanitized_values.iter()) {
                 query = query
                     .bind(data.fid as i64)
                     .bind(data.hash)
                     .bind(data.user_data_type)
-                    .bind(data.value)
+                    .bind(sanitized_value.as_ref())
                     .bind(data.timestamp);
             }
 
@@ -726,14 +757,23 @@ impl<'a> BatchInserter<'a> {
                 ],
             );
 
+            // Pre-sanitize all usernames - PostgreSQL text columns reject \x00
+            let sanitized_usernames: Vec<_> = chunk
+                .iter()
+                .map(|p| {
+                    let username_str = String::from_utf8_lossy(p.username);
+                    sanitize_string_for_postgres(&username_str).into_owned()
+                })
+                .collect();
+
             let mut query = sqlx::query(&sql);
 
             // Bind all parameters for each username proof
-            for proof in chunk {
+            for (proof, sanitized_username) in chunk.iter().zip(sanitized_usernames.iter()) {
                 query = query
                     .bind(proof.fid as i64)
                     .bind(proof.hash)
-                    .bind(proof.username)
+                    .bind(sanitized_username.as_str())
                     .bind(proof.timestamp)
                     .bind(proof.signature);
             }

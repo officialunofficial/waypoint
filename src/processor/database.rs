@@ -1,7 +1,7 @@
 use crate::{
     core::{
         normalize::NormalizedEmbed,
-        util::{from_farcaster_time, sanitize_json_for_postgres},
+        util::{from_farcaster_time, sanitize_json_for_postgres, sanitize_string_for_postgres},
     },
     database::batch::BatchInserter,
     hub::subscriber::{PostProcessHandler, PreProcessHandler},
@@ -232,6 +232,12 @@ impl DatabaseProcessor {
                 let (root_parent_fid, root_parent_hash, root_parent_url) =
                     self.resolve_root_parent(pool, parent_fid, parent_hash, parent_url).await?;
 
+                // Sanitize text fields - PostgreSQL text columns reject \x00
+                let sanitized_text = sanitize_string_for_postgres(&cast_body.text);
+                let sanitized_parent_url = parent_url.map(sanitize_string_for_postgres);
+                let sanitized_root_parent_url =
+                    root_parent_url.as_deref().map(sanitize_string_for_postgres);
+
                 sqlx::query!(
                     r#"
                 INSERT INTO casts (
@@ -255,13 +261,13 @@ impl DatabaseProcessor {
                 "#,
                     data.fid as i64,
                     &msg.hash,
-                    &cast_body.text,
+                    sanitized_text.as_ref(),
                     parent_fid,
                     parent_hash,
-                    parent_url,
+                    sanitized_parent_url.as_deref(),
                     root_parent_fid,
                     root_parent_hash.as_deref(),
-                    root_parent_url.as_deref(),
+                    sanitized_root_parent_url.as_deref(),
                     ts,
                     serde_json::to_value(
                         cast_body
@@ -331,6 +337,8 @@ impl DatabaseProcessor {
                 };
 
                 let ts = Self::convert_timestamp(data.timestamp);
+                // Sanitize target_url - PostgreSQL text columns reject \x00
+                let sanitized_target_url = target_url.map(sanitize_string_for_postgres);
 
                 // First insert/update the reaction
                 sqlx::query!(
@@ -347,7 +355,7 @@ impl DatabaseProcessor {
                 data.fid as i64,
                 &msg.hash,
                 target_cast_hash,
-                target_url,
+                sanitized_target_url.as_deref(),
                 reaction.r#type as i16,
                 ts
             )
@@ -401,6 +409,8 @@ impl DatabaseProcessor {
                     },
                     Some(ReactionTarget::TargetUrl(url)) => {
                         // Process URL-targeted reaction removal
+                        // Sanitize target_url - PostgreSQL text columns reject \x00
+                        let sanitized_url = sanitize_string_for_postgres(url.as_str());
                         sqlx::query!(
                         r#"
                         INSERT INTO reactions (fid, type, target_url, hash, timestamp, deleted_at)
@@ -414,7 +424,7 @@ impl DatabaseProcessor {
                         "#,
                         data.fid as i64,
                         reaction.r#type as i16,
-                        url.as_str(),
+                        sanitized_url.as_ref(),
                         &msg.hash,
                         ts,
                         ts
@@ -444,6 +454,8 @@ impl DatabaseProcessor {
 
                 let ts = Self::convert_timestamp(data.timestamp);
                 let display_ts = link.display_timestamp.map(Self::convert_timestamp);
+                // Sanitize link type - PostgreSQL text columns reject \x00
+                let sanitized_link_type = sanitize_string_for_postgres(&link.r#type);
 
                 sqlx::query!(
                 r#"
@@ -464,7 +476,7 @@ impl DatabaseProcessor {
                 "#,
                 data.fid as i64,
                 target_fid as i64,
-                &link.r#type,
+                sanitized_link_type.as_ref(),
                 &msg.hash,
                 ts,
                 display_ts
@@ -490,6 +502,8 @@ impl DatabaseProcessor {
 
                 let ts = Self::convert_timestamp(data.timestamp);
                 let display_ts = link.display_timestamp.map(Self::convert_timestamp);
+                // Sanitize link type - PostgreSQL text columns reject \x00
+                let sanitized_link_type = sanitize_string_for_postgres(&link.r#type);
 
                 // Process link removal
 
@@ -519,7 +533,7 @@ impl DatabaseProcessor {
                 "#,
                 data.fid as i64,
                 target_fid as i64,
-                &link.r#type,
+                sanitized_link_type.as_ref(),
                 &msg.hash,
                 ts,
                 ts,
@@ -540,6 +554,8 @@ impl DatabaseProcessor {
             if let Some(UserDataBody(user_data)) = &data.body {
                 metrics::increment_user_data_processed();
                 let ts = Self::convert_timestamp(data.timestamp);
+                // Sanitize null bytes - PostgreSQL text columns reject \x00
+                let sanitized_value = sanitize_string_for_postgres(&user_data.value);
 
                 sqlx::query!(
                     r#"
@@ -553,7 +569,7 @@ impl DatabaseProcessor {
                     data.fid as i64,
                     user_data.r#type as i16,
                     &msg.hash,
-                    &user_data.value,
+                    sanitized_value.as_ref(),
                     ts
                 )
                 .execute(pool)
@@ -572,25 +588,26 @@ impl DatabaseProcessor {
             if let Some(UsernameProofBody(proof_body)) = &data.body {
                 let ts = Self::convert_timestamp(data.timestamp);
 
-                // Extract the proof fields
+                // Extract the proof fields and sanitize null bytes for PostgreSQL
                 let name = String::from_utf8(proof_body.name.clone()).unwrap_or_default();
+                let sanitized_name = sanitize_string_for_postgres(&name);
 
                 sqlx::query!(
                     r#"
                 INSERT INTO username_proofs (
                     fid,
-                    username, 
-                    timestamp, 
+                    username,
+                    timestamp,
                     type,
                     signature,
                     owner
                 )
                 VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (username, fid) 
+                ON CONFLICT (username, fid)
                 DO NOTHING
                 "#,
                     data.fid as i64,
-                    name,
+                    sanitized_name.as_ref(),
                     ts,
                     proof_body.r#type as i16,
                     &proof_body.signature,
@@ -608,8 +625,9 @@ impl DatabaseProcessor {
         proof: &UserNameProof,
         is_deleted: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Convert username from bytes to string
+        // Convert username from bytes to string and sanitize null bytes for PostgreSQL
         let username = String::from_utf8(proof.name.clone()).unwrap_or_default();
+        let sanitized_username = sanitize_string_for_postgres(&username);
         let ts = Self::convert_timestamp(proof.timestamp as u32);
 
         // Use a single UPSERT pattern with conditional handling of deleted_at
@@ -627,13 +645,13 @@ impl DatabaseProcessor {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (username, fid) DO UPDATE SET
-                deleted_at = CASE 
+                deleted_at = CASE
                     WHEN $7 IS NOT NULL THEN $7
                     ELSE username_proofs.deleted_at
                 END
             "#,
             proof.fid as i64,
-            username,
+            sanitized_username.as_ref(),
             ts,
             proof.r#type as i16,
             &proof.signature,
