@@ -11,15 +11,19 @@
 git clone https://github.com/officialunofficial/waypoint.git
 cd waypoint
 make env-setup
-cargo build
-cargo test
+# If running local Postgres and Redis instances
+docker compose --profile services up
+# Run database migrations (requires psql)
+scripts/run-migrations.sh
+make build
+make test
 ```
 
 ## Workflow
 
 1. Fork and create a branch
 2. Make changes
-3. Run `cargo test` and `make fmt`
+3. Run `make test` and `make fmt`
 4. Submit PR with conventional commit messages (`feat:`, `fix:`, etc.)
 
 ## Code Style

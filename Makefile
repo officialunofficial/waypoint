@@ -72,7 +72,7 @@ migrate: env-setup
 	@echo "Running database migrations..."
 	@echo "Note: Migrations will be automatically applied when the application starts"
 	@echo "To run migrations manually, execute the SQL files in migrations/ directory"
-	@echo "Latest migration: migrations/004_add_lend_storage_table.sql"
+	@echo "Latest migration: $$(find migrations -name '*.sql' | sort -V | tail -1)"
 
 # Onchain events backfill commands
 backfill-onchain-all: proto build env-setup

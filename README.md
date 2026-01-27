@@ -14,6 +14,10 @@ docker compose up
 
 # Local development
 make env-setup    # creates .env from example
+# If running local Postgres and Redis instances
+docker compose --profile services up
+# Run database migrations (requires psql)
+scripts/run-migrations.sh
 make build
 make run
 
