@@ -13,7 +13,7 @@ Rust-based Snapchain sync engine. Streams real-time events and backfills histori
 docker compose up
 
 # Local development
-make env-setup                        # creates .env from example
+make env-setup    # creates .env from example
 # If running local Postgres and Redis instances
 docker compose --profile services up
 # Run database migrations (requires psql)
