@@ -4,7 +4,7 @@ use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
@@ -371,12 +371,50 @@ pub struct HubConfig {
     // Shard configuration
     // List of shard indices to subscribe to (e.g., [0, 1, 2])
     // If empty, must set subscribe_to_all_shards=true
-    #[serde(default)]
+    #[serde(default, deserialize_with = "comma_separated")]
     pub shard_indices: Vec<u32>,
 
     // Optional: subscribe to all shards (temporary migration flag)
     #[serde(default = "default_subscribe_to_all_shards")]
     pub subscribe_to_all_shards: bool,
+}
+
+fn comma_separated<'a, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'a>,
+    T: Deserialize<'a> + std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Value<T> {
+        Vec(Vec<T>),
+        String(String),
+        Single(T),
+    }
+
+    let parse = |value: &str| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        trimmed
+            .split(',')
+            .map(|part| part.trim())
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                part.parse::<T>()
+                    .map_err(|err| D::Error::custom(format!("Invalid value '{}': {}", part, err)))
+            })
+            .collect()
+    };
+
+    match Value::<T>::deserialize(deserializer)? {
+        Value::Vec(values) => Ok(values),
+        Value::String(value) => parse(&value),
+        Value::Single(value) => Ok(vec![value]),
+    }
 }
 
 fn default_subscribe_to_all_shards() -> bool {
@@ -867,5 +905,27 @@ mod tests {
         assert_eq!(config.consumers_per_stream, 3);
         assert_eq!(config.max_retry_attempts, 3);
         assert_eq!(config.group_name, "default");
+    }
+
+    #[test]
+    fn test_comma_separated_deserialize() {
+        #[derive(Deserialize)]
+        struct TestConfig {
+            #[serde(default, deserialize_with = "comma_separated")]
+            v: Vec<u32>,
+        }
+
+        let config: TestConfig = serde_json::from_str(r#"{}"#).expect("Should deserialize");
+        assert!(config.v.is_empty());
+
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":"1, 2,3"}"#).expect("Should deserialize");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        let config: TestConfig = serde_json::from_str(r#"{"v":1}"#).expect("Should deserialize");
+        assert_eq!(config.v, vec![1]);
+
+        let config: TestConfig = serde_json::from_str(r#"{"v":""}"#).expect("Should deserialize");
+        assert!(config.v.is_empty());
     }
 }
