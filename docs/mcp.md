@@ -8,7 +8,7 @@ The Model Context Protocol (MCP) is a specification that allows AI assistants to
 
 ## Implementation
 
-Waypoint uses [rmcp](https://github.com/modelcontextprotocol/rust-sdk) version **0.10.0**, the official Rust SDK for the Model Context Protocol. The implementation leverages the latest macro-based API patterns and the new **Streamable HTTP** transport (MCP spec version 2025-03-26):
+Waypoint uses [rmcp](https://github.com/modelcontextprotocol/rust-sdk) version **0.12.0**, the official Rust SDK for the Model Context Protocol. The implementation leverages the latest macro-based API patterns and the new **Streamable HTTP** transport (MCP spec version 2025-03-26):
 
 - **`#[tool_router]`**: Generates tool routing logic for service implementations
 - **`#[prompt_router]`**: Generates prompt routing logic for service implementations
@@ -84,6 +84,30 @@ The Data Context pattern is detailed in the [Architecture Documentation](archite
 The Waypoint MCP integration provides the following tools to AI assistants:
 
 > **Note**: This implementation provides access to Farcaster user data, casts, reactions, links, and verifications via a comprehensive interface. It allows accessing users by FID or username and supports exploring the social graph through follow relationships.
+
+## Resources
+
+Waypoint also exposes MCP resources that mirror tool outputs. These are read-only, JSON resources that can be fetched via `resources/read` with a `waypoint://` URI.
+
+### Resource Templates
+
+- `waypoint://user/{fid}`: User profile by FID
+- `waypoint://username/{username}`: User profile by username
+- `waypoint://casts/{fid}/{hash}`: Specific cast by author FID + hash
+- `waypoint://casts/by-fid/{fid}`: Recent casts by FID
+- `waypoint://casts/mentions/{fid}`: Casts mentioning a FID
+- `waypoint://casts/parent/{fid}/{hash}`: Replies to a parent cast
+- `waypoint://casts/parent-url/{encoded_url}`: Replies to a parent URL (percent-encoded)
+- `waypoint://reactions/by-fid/{fid}`: Reactions by FID
+- `waypoint://reactions/target/cast/{fid}/{hash}`: Reactions to a target cast
+- `waypoint://reactions/target/url/{encoded_url}`: Reactions to a target URL (percent-encoded)
+- `waypoint://links/by-fid/{fid}`: Links by FID (defaults to `follow`)
+- `waypoint://links/by-target/{fid}`: Links to a target FID (defaults to `follow`)
+- `waypoint://link-compact-state/{fid}`: Link compact state by FID
+
+Percent-encode full URLs when using `{encoded_url}` (for example, `https%3A%2F%2Fexample.com%2Fpost%2F123`).
+
+List-style resources use the same default limit as tools (10), unless the tool supports explicit limits.
 
 ### User Tools
 
@@ -778,10 +802,16 @@ AI assistants can connect to Waypoint's MCP service in several ways:
 
 ### HTTP Mode Connection
 
-Connect to the MCP service using the SSE endpoint:
+Connect to the MCP service using the Streamable HTTP endpoint:
 
 ```
-http://waypoint-host:8000/sse
+http://waypoint-host:8000/mcp
+```
+
+For raw HTTP clients, initialize a session first and include an Accept header that supports both JSON and event streams:
+
+```
+Accept: application/json, text/event-stream
 ```
 
 Example connection using the MCP client library:
@@ -789,7 +819,7 @@ Example connection using the MCP client library:
 import { createClient } from "@modelcontextprotocol/client";
 
 const client = createClient({
-  url: "http://waypoint-host:8000/sse"
+  url: "http://waypoint-host:8000/mcp"
 });
 
 // List available tools
@@ -816,7 +846,7 @@ console.log(casts);
 
 When using Docker Compose, the MCP service is already configured and exposed:
 
-- MCP Service: `http://localhost:8000/sse`
+- MCP Service: `http://localhost:8000/mcp`
 
 The service is enabled by default and will automatically start with Waypoint.
 

@@ -52,8 +52,35 @@ impl WaypointMcpTools {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
+    fn _create_resource_template_json(
+        &self,
+        uri_template: &str,
+        name: &str,
+        description: &str,
+    ) -> ResourceTemplate {
+        RawResourceTemplate {
+            uri_template: uri_template.to_string(),
+            name: name.to_string(),
+            title: None,
+            description: Some(description.to_string()),
+            mime_type: Some("application/json".to_string()),
+        }
+        .no_annotation()
+    }
+
+    fn _resource_json_contents(&self, uri: &str, json: String) -> ReadResourceResult {
+        ReadResourceResult {
+            contents: vec![ResourceContents::TextResourceContents {
+                uri: uri.to_string(),
+                mime_type: Some("application/json".to_string()),
+                text: json,
+                meta: None,
+            }],
+        }
+    }
+
     // User data APIs
-    #[tool(description = "Get Farcaster user data by FID")]
+    #[tool(description = "Get Farcaster user data by FID", annotations(read_only_hint = true))]
     async fn get_user_by_fid(
         &self,
         Parameters(common::UserByFidRequest { fid }): Parameters<common::UserByFidRequest>,
@@ -63,7 +90,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get verified addresses for a Farcaster user")]
+    #[tool(
+        description = "Get verified addresses for a Farcaster user",
+        annotations(read_only_hint = true)
+    )]
     async fn get_verifications_by_fid(
         &self,
         Parameters(common::GetVerificationsRequest { fid, limit }): Parameters<
@@ -75,7 +105,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Find a Farcaster user's FID by their username")]
+    #[tool(
+        description = "Find a Farcaster user's FID by their username",
+        annotations(read_only_hint = true)
+    )]
     async fn get_fid_by_username(
         &self,
         Parameters(common::GetFidByUsernameRequest { username }): Parameters<
@@ -86,7 +119,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get a complete Farcaster user profile by username")]
+    #[tool(
+        description = "Get a complete Farcaster user profile by username",
+        annotations(read_only_hint = true)
+    )]
     async fn get_user_by_username(
         &self,
         Parameters(common::GetFidByUsernameRequest { username }): Parameters<
@@ -98,7 +134,7 @@ impl WaypointMcpTools {
     }
 
     // Cast APIs
-    #[tool(description = "Get a specific cast by FID and hash")]
+    #[tool(description = "Get a specific cast by FID and hash", annotations(read_only_hint = true))]
     async fn get_cast(
         &self,
         Parameters(common::GetCastRequest { fid, hash }): Parameters<common::GetCastRequest>,
@@ -108,7 +144,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get casts by a specific Farcaster user")]
+    #[tool(
+        description = "Get casts by a specific Farcaster user",
+        annotations(read_only_hint = true)
+    )]
     async fn get_casts_by_fid(
         &self,
         Parameters(common::GetCastsRequest { fid, limit }): Parameters<common::GetCastsRequest>,
@@ -118,7 +157,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get casts that mention a specific Farcaster user")]
+    #[tool(
+        description = "Get casts that mention a specific Farcaster user",
+        annotations(read_only_hint = true)
+    )]
     async fn get_casts_by_mention(
         &self,
         Parameters(common::GetCastMentionsRequest { fid, limit }): Parameters<
@@ -130,7 +172,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get cast replies to a specific parent cast")]
+    #[tool(
+        description = "Get cast replies to a specific parent cast",
+        annotations(read_only_hint = true)
+    )]
     async fn get_casts_by_parent(
         &self,
         Parameters(common::GetCastRepliesRequest { parent_fid, parent_hash, limit }): Parameters<
@@ -142,7 +187,7 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get cast replies to a specific URL")]
+    #[tool(description = "Get cast replies to a specific URL", annotations(read_only_hint = true))]
     async fn get_casts_by_parent_url(
         &self,
         Parameters(common::GetCastRepliesByUrlRequest { parent_url, limit }): Parameters<
@@ -153,7 +198,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get all casts from a user with optional timestamp filtering")]
+    #[tool(
+        description = "Get all casts from a user with optional timestamp filtering",
+        annotations(read_only_hint = true)
+    )]
     async fn get_all_casts_by_fid(
         &self,
         Parameters(common::GetAllCastsWithTimeRequest { fid, limit, start_time, end_time }): Parameters<common::GetAllCastsWithTimeRequest>,
@@ -163,7 +211,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get conversation details for a cast, including participants and replies")]
+    #[tool(
+        description = "Get conversation details for a cast, including participants and replies",
+        annotations(read_only_hint = true)
+    )]
     async fn get_conversation(
         &self,
         Parameters(common::GetConversationRequest {
@@ -186,7 +237,7 @@ impl WaypointMcpTools {
     }
 
     // Reaction APIs
-    #[tool(description = "Get a specific reaction")]
+    #[tool(description = "Get a specific reaction", annotations(read_only_hint = true))]
     async fn get_reaction(
         &self,
         Parameters(common::ReactionRequest {
@@ -232,7 +283,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get reactions by a specific Farcaster user")]
+    #[tool(
+        description = "Get reactions by a specific Farcaster user",
+        annotations(read_only_hint = true)
+    )]
     async fn get_reactions_by_fid(
         &self,
         Parameters(common::ReactionsByFidRequest { fid, reaction_type, limit }): Parameters<
@@ -244,7 +298,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get reactions for a target (cast or URL)")]
+    #[tool(
+        description = "Get reactions for a target (cast or URL)",
+        annotations(read_only_hint = true)
+    )]
     async fn get_reactions_by_target(
         &self,
         Parameters(common::ReactionsByTargetRequest {
@@ -289,7 +346,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get all reactions from a user with optional timestamp filtering")]
+    #[tool(
+        description = "Get all reactions from a user with optional timestamp filtering",
+        annotations(read_only_hint = true)
+    )]
     async fn get_all_reactions_by_fid(
         &self,
         Parameters(common::FidTimestampRequest { fid, limit, start_time, end_time }): Parameters<
@@ -303,7 +363,7 @@ impl WaypointMcpTools {
     }
 
     // Link APIs
-    #[tool(description = "Get a specific link")]
+    #[tool(description = "Get a specific link", annotations(read_only_hint = true))]
     async fn get_link(
         &self,
         Parameters(common::LinkRequest { fid, link_type, target_fid }): Parameters<
@@ -316,7 +376,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get links by a specific Farcaster user")]
+    #[tool(
+        description = "Get links by a specific Farcaster user",
+        annotations(read_only_hint = true)
+    )]
     async fn get_links_by_fid(
         &self,
         Parameters(common::LinksByFidRequest { fid, link_type, limit }): Parameters<
@@ -334,7 +397,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get links to a target Farcaster user")]
+    #[tool(
+        description = "Get links to a target Farcaster user",
+        annotations(read_only_hint = true)
+    )]
     async fn get_links_by_target(
         &self,
         Parameters(common::LinksByTargetRequest { target_fid, link_type, limit }): Parameters<
@@ -352,7 +418,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get link compact state messages for a Farcaster user")]
+    #[tool(
+        description = "Get link compact state messages for a Farcaster user",
+        annotations(read_only_hint = true)
+    )]
     async fn get_link_compact_state_by_fid(
         &self,
         Parameters(common::FidRequest { fid }): Parameters<common::FidRequest>,
@@ -362,7 +431,10 @@ impl WaypointMcpTools {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Get all links from a user with optional timestamp filtering")]
+    #[tool(
+        description = "Get all links from a user with optional timestamp filtering",
+        annotations(read_only_hint = true)
+    )]
     async fn get_all_links_by_fid(
         &self,
         Parameters(common::FidTimestampRequest { fid, limit, start_time, end_time }): Parameters<
@@ -414,7 +486,7 @@ impl WaypointMcpTools {
 impl ServerHandler for WaypointMcpTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
+            protocol_version: ProtocolVersion::V_2025_03_26,
             capabilities: ServerCapabilities::builder()
                 .enable_prompts()
                 .enable_resources()
@@ -445,6 +517,87 @@ impl ServerHandler for WaypointMcpTools {
         ReadResourceRequestParam { uri }: ReadResourceRequestParam,
         _: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
+        if uri.starts_with("waypoint://") || uri.starts_with("waypoint:///") {
+            let resource = utils::parse_waypoint_resource_uri(&uri).map_err(|message| {
+                McpError::invalid_params(
+                    message,
+                    Some(serde_json::json!({
+                        "uri": uri
+                    })),
+                )
+            })?;
+
+            let limit = common::default_limit();
+
+            let result = match resource {
+                utils::WaypointResource::UserByFid { fid } => {
+                    self.service.do_get_user_by_fid(Fid::from(fid)).await
+                },
+                utils::WaypointResource::UserByUsername { username } => {
+                    self.service.do_get_user_by_username(&username).await
+                },
+                utils::WaypointResource::Cast { fid, hash } => {
+                    self.service.do_get_cast(Fid::from(fid), &hash).await
+                },
+                utils::WaypointResource::CastsByFid { fid } => {
+                    self.service.do_get_casts_by_fid(Fid::from(fid), limit).await
+                },
+                utils::WaypointResource::CastsByMention { fid } => {
+                    self.service.do_get_casts_by_mention(Fid::from(fid), limit).await
+                },
+                utils::WaypointResource::CastsByParent { fid, hash } => {
+                    self.service.do_get_casts_by_parent(Fid::from(fid), &hash, limit).await
+                },
+                utils::WaypointResource::CastsByParentUrl { url } => {
+                    self.service.do_get_casts_by_parent_url(&url, limit).await
+                },
+                utils::WaypointResource::ReactionsByFid { fid } => {
+                    self.service.do_get_reactions_by_fid(Fid::from(fid), None, limit).await
+                },
+                utils::WaypointResource::ReactionsByTargetCast { fid, hash } => {
+                    let target_cast_hash =
+                        hex::decode(hash.trim_start_matches("0x")).map_err(|_| {
+                            McpError::invalid_params(
+                                "Invalid hash format",
+                                Some(serde_json::json!({ "hash": hash })),
+                            )
+                        })?;
+
+                    self.service
+                        .do_get_reactions_by_target(
+                            Some(Fid::from(fid)),
+                            Some(target_cast_hash.as_slice()),
+                            None,
+                            None,
+                            limit,
+                        )
+                        .await
+                },
+                utils::WaypointResource::ReactionsByTargetUrl { url } => {
+                    self.service
+                        .do_get_reactions_by_target(None, None, Some(&url), None, limit)
+                        .await
+                },
+                utils::WaypointResource::LinksByFid { fid } => {
+                    let link_type = common::default_link_type();
+                    self.service
+                        .do_get_links_by_fid(Fid::from(fid), Some(link_type.as_str()), limit)
+                        .await
+                },
+                utils::WaypointResource::LinksByTarget { fid } => {
+                    let link_type = common::default_link_type();
+                    self.service
+                        .do_get_links_by_target(Fid::from(fid), Some(link_type.as_str()), limit)
+                        .await
+                },
+                utils::WaypointResource::LinkCompactStateByFid { fid } => {
+                    self.service.do_get_link_compact_state_by_fid(Fid::from(fid)).await
+                },
+            };
+
+            return Ok(self._resource_json_contents(&uri, result));
+        }
+
         match uri.as_str() {
             "str:///waypoint/docs" => {
                 let docs = "Waypoint is a Farcaster data indexer that streams data from the Farcaster network and allows querying by FID.";
@@ -469,7 +622,73 @@ impl ServerHandler for WaypointMcpTools {
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         Ok(ListResourceTemplatesResult {
-            resource_templates: vec![],
+            resource_templates: vec![
+                self._create_resource_template_json(
+                    "waypoint://user/{fid}",
+                    "user-by-fid",
+                    "Farcaster user profile by FID",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://username/{username}",
+                    "user-by-username",
+                    "Farcaster user profile by username",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://casts/{fid}/{hash}",
+                    "cast-by-fid-hash",
+                    "Specific cast by author FID and cast hash",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://casts/by-fid/{fid}",
+                    "casts-by-fid",
+                    "Recent casts by FID",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://casts/mentions/{fid}",
+                    "casts-by-mention",
+                    "Casts mentioning a FID",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://casts/parent/{fid}/{hash}",
+                    "casts-by-parent",
+                    "Replies to a parent cast",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://casts/parent-url/{encoded_url}",
+                    "casts-by-parent-url",
+                    "Replies to a parent URL (percent-encoded)",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://reactions/by-fid/{fid}",
+                    "reactions-by-fid",
+                    "Reactions by FID",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://reactions/target/cast/{fid}/{hash}",
+                    "reactions-by-target-cast",
+                    "Reactions for a target cast",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://reactions/target/url/{encoded_url}",
+                    "reactions-by-target-url",
+                    "Reactions for a target URL (percent-encoded)",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://links/by-fid/{fid}",
+                    "links-by-fid",
+                    "Links by FID (default follow)",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://links/by-target/{fid}",
+                    "links-by-target",
+                    "Links to a target FID (default follow)",
+                ),
+                self._create_resource_template_json(
+                    "waypoint://link-compact-state/{fid}",
+                    "link-compact-state",
+                    "Link compact state for a FID",
+                ),
+            ],
             next_cursor: None,
             meta: None,
         })

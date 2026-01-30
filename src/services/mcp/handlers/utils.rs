@@ -2,6 +2,7 @@
 
 use crate::core::types::{Fid, Message as FarcasterMessage, MessageType};
 use prost::Message as ProstMessage;
+use url::Url;
 
 /// Process a cast message to extract relevant data
 pub fn process_cast_message(
@@ -346,4 +347,89 @@ pub fn format_links_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
 
     // Convert to JSON string
     serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Error formatting links".to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaypointResource {
+    UserByFid { fid: u64 },
+    UserByUsername { username: String },
+    Cast { fid: u64, hash: String },
+    CastsByFid { fid: u64 },
+    CastsByMention { fid: u64 },
+    CastsByParent { fid: u64, hash: String },
+    CastsByParentUrl { url: String },
+    ReactionsByFid { fid: u64 },
+    ReactionsByTargetCast { fid: u64, hash: String },
+    ReactionsByTargetUrl { url: String },
+    LinksByFid { fid: u64 },
+    LinksByTarget { fid: u64 },
+    LinkCompactStateByFid { fid: u64 },
+}
+
+pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String> {
+    let url = Url::parse(uri).map_err(|err| format!("Invalid resource URI: {err}"))?;
+
+    if url.scheme() != "waypoint" {
+        return Err("Unsupported resource scheme".to_string());
+    }
+
+    let mut segments: Vec<String> = Vec::new();
+
+    if let Some(host) = url.host_str() {
+        if !host.is_empty() {
+            segments.push(host.to_string());
+        }
+    }
+
+    if let Some(path_segments) = url.path_segments() {
+        for segment in path_segments {
+            if !segment.is_empty() {
+                segments.push(segment.to_string());
+            }
+        }
+    }
+
+    if segments.is_empty() {
+        return Err("Missing resource path".to_string());
+    }
+
+    let segment_refs: Vec<&str> = segments.iter().map(|segment| segment.as_str()).collect();
+
+    match segment_refs.as_slice() {
+        ["user", fid] => Ok(WaypointResource::UserByFid { fid: parse_fid(fid)? }),
+        ["username", username] => {
+            Ok(WaypointResource::UserByUsername { username: (*username).to_string() })
+        },
+        ["casts", "by-fid", fid] => Ok(WaypointResource::CastsByFid { fid: parse_fid(fid)? }),
+        ["casts", "mentions", fid] => Ok(WaypointResource::CastsByMention { fid: parse_fid(fid)? }),
+        ["casts", "parent", fid, hash] => {
+            Ok(WaypointResource::CastsByParent { fid: parse_fid(fid)?, hash: (*hash).to_string() })
+        },
+        ["casts", "parent-url", rest @ ..] if !rest.is_empty() => {
+            Ok(WaypointResource::CastsByParentUrl { url: rest.join("/") })
+        },
+        ["casts", fid, hash] => {
+            Ok(WaypointResource::Cast { fid: parse_fid(fid)?, hash: (*hash).to_string() })
+        },
+        ["reactions", "by-fid", fid] => {
+            Ok(WaypointResource::ReactionsByFid { fid: parse_fid(fid)? })
+        },
+        ["reactions", "target", "cast", fid, hash] => Ok(WaypointResource::ReactionsByTargetCast {
+            fid: parse_fid(fid)?,
+            hash: (*hash).to_string(),
+        }),
+        ["reactions", "target", "url", rest @ ..] if !rest.is_empty() => {
+            Ok(WaypointResource::ReactionsByTargetUrl { url: rest.join("/") })
+        },
+        ["links", "by-fid", fid] => Ok(WaypointResource::LinksByFid { fid: parse_fid(fid)? }),
+        ["links", "by-target", fid] => Ok(WaypointResource::LinksByTarget { fid: parse_fid(fid)? }),
+        ["link-compact-state", fid] => {
+            Ok(WaypointResource::LinkCompactStateByFid { fid: parse_fid(fid)? })
+        },
+        _ => Err("Unsupported resource path".to_string()),
+    }
+}
+
+fn parse_fid(segment: &str) -> Result<u64, String> {
+    segment.parse::<u64>().map_err(|_| format!("Invalid FID: {segment}"))
 }
