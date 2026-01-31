@@ -824,7 +824,7 @@ const client = createClient({
 
 // List available tools
 const toolList = await client.listTools();
-console.log(toolList); // Will show get_user_by_fid, get_verifications, get_casts_by_user tools
+console.log(toolList); // Will show get_user_by_fid, get_verifications, get_casts_by_fid tools
 
 // Get user profile data
 const userData = await client.callTool({
@@ -835,7 +835,7 @@ console.log(userData);
 
 // Get recent casts from a user
 const casts = await client.callTool({
-  name: "get_casts_by_user",
+  name: "get_casts_by_fid",
   input: { fid: 12345, limit: 5 }
 });
 console.log(casts);
