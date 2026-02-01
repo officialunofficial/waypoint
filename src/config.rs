@@ -379,21 +379,27 @@ pub struct HubConfig {
     pub subscribe_to_all_shards: bool,
 }
 
-fn comma_separated<'a, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+/// Deserialize a value as either a comma-separated string, a JSON array, or a single value.
+///
+/// This allows environment variables like `WAYPOINT_HUB__SHARD_INDICES=1,2,3` to work
+/// alongside JSON/TOML array syntax `[1, 2, 3]`.
+#[inline]
+fn comma_separated<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
-    D: Deserializer<'a>,
-    T: Deserialize<'a> + std::str::FromStr,
-    T::Err: std::fmt::Display,
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
 {
+    /// Helper enum to accept multiple input formats
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum Value<T> {
-        Vec(Vec<T>),
+    enum StringOrVec<U> {
+        Vec(Vec<U>),
         String(String),
-        Single(T),
+        Single(U),
     }
 
-    let parse = |value: &str| {
+    let parse_csv = |value: &str| -> Result<Vec<T>, D::Error> {
         let trimmed = value.trim();
         if trimmed.is_empty() {
             return Ok(Vec::new());
@@ -401,19 +407,19 @@ where
 
         trimmed
             .split(',')
-            .map(|part| part.trim())
+            .map(str::trim)
             .filter(|part| !part.is_empty())
             .map(|part| {
                 part.parse::<T>()
-                    .map_err(|err| D::Error::custom(format!("Invalid value '{}': {}", part, err)))
+                    .map_err(|err| D::Error::custom(format!("invalid value '{part}': {err}")))
             })
             .collect()
     };
 
-    match Value::<T>::deserialize(deserializer)? {
-        Value::Vec(values) => Ok(values),
-        Value::String(value) => parse(&value),
-        Value::Single(value) => Ok(vec![value]),
+    match StringOrVec::<T>::deserialize(deserializer)? {
+        StringOrVec::Vec(values) => Ok(values),
+        StringOrVec::String(value) => parse_csv(&value),
+        StringOrVec::Single(value) => Ok(vec![value]),
     }
 }
 
@@ -909,23 +915,49 @@ mod tests {
 
     #[test]
     fn test_comma_separated_deserialize() {
-        #[derive(Deserialize)]
+        #[derive(Debug, Deserialize)]
         struct TestConfig {
             #[serde(default, deserialize_with = "comma_separated")]
             v: Vec<u32>,
         }
 
-        let config: TestConfig = serde_json::from_str(r#"{}"#).expect("Should deserialize");
+        // Empty/missing field
+        let config: TestConfig = serde_json::from_str(r#"{}"#).expect("empty object");
         assert!(config.v.is_empty());
 
+        // Comma-separated string with spaces
         let config: TestConfig =
-            serde_json::from_str(r#"{"v":"1, 2,3"}"#).expect("Should deserialize");
+            serde_json::from_str(r#"{"v":"1, 2,3"}"#).expect("comma-separated string");
         assert_eq!(config.v, vec![1, 2, 3]);
 
-        let config: TestConfig = serde_json::from_str(r#"{"v":1}"#).expect("Should deserialize");
+        // Single numeric value
+        let config: TestConfig = serde_json::from_str(r#"{"v":1}"#).expect("single value");
         assert_eq!(config.v, vec![1]);
 
-        let config: TestConfig = serde_json::from_str(r#"{"v":""}"#).expect("Should deserialize");
+        // Empty string
+        let config: TestConfig = serde_json::from_str(r#"{"v":""}"#).expect("empty string");
         assert!(config.v.is_empty());
+
+        // JSON array input
+        let config: TestConfig = serde_json::from_str(r#"{"v":[1,2,3]}"#).expect("json array");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Whitespace-only string
+        let config: TestConfig = serde_json::from_str(r#"{"v":"   "}"#).expect("whitespace only");
+        assert!(config.v.is_empty());
+
+        // Trailing comma (should be handled gracefully)
+        let config: TestConfig = serde_json::from_str(r#"{"v":"1,2,3,"}"#).expect("trailing comma");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Leading comma (should be handled gracefully)
+        let config: TestConfig = serde_json::from_str(r#"{"v":",1,2,3"}"#).expect("leading comma");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Invalid value in comma-separated string should fail with descriptive error
+        let result: Result<TestConfig, _> = serde_json::from_str(r#"{"v":"1,abc,3"}"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid value 'abc'"), "error was: {err}");
     }
 }
