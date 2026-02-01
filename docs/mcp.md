@@ -114,6 +114,9 @@ This design ensures proper URL encoding, avoids ambiguity, and follows web stand
 - `waypoint://casts/by-parent/{fid}/{hash}`: Replies to a parent cast
 - `waypoint://casts/by-parent-url{?url}`: Replies to a parent URL (RFC 6570 query expansion)
 
+#### Conversations
+- `waypoint://conversations/{fid}/{hash}`: Full conversation thread for a cast (includes replies, participants, parent context, quoted casts)
+
 #### Reactions
 - `waypoint://reactions/by-fid/{fid}`: Reactions by FID
 - `waypoint://reactions/by-target-cast/{fid}/{hash}`: Reactions to a target cast

@@ -360,6 +360,7 @@ pub fn format_links_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
 /// - `waypoint://users/{fid}` - User by FID
 /// - `waypoint://users/by-username/{username}` - User by username
 /// - `waypoint://casts/{fid}/{hash}` - Specific cast
+/// - `waypoint://conversations/{fid}/{hash}` - Conversation thread for a cast
 /// - `waypoint://casts/by-parent-url?url={url}` - Casts by parent URL (query param)
 /// - `waypoint://reactions/by-target-url?url={url}` - Reactions by target URL (query param)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,6 +373,8 @@ pub enum WaypointResource {
     VerificationsByFid { fid: u64 },
     /// Specific cast by FID and hash
     Cast { fid: u64, hash: String },
+    /// Conversation thread for a cast (includes replies, participants, context)
+    Conversation { fid: u64, hash: String },
     /// All casts by a user's FID
     CastsByFid { fid: u64 },
     /// Casts mentioning a user by their FID
@@ -415,6 +418,9 @@ pub enum WaypointResource {
 /// - `waypoint://casts/by-mention/{fid}` - Casts mentioning a user
 /// - `waypoint://casts/by-parent/{fid}/{hash}` - Replies to a cast
 /// - `waypoint://casts/by-parent-url?url={url}` - Replies to a URL (RFC 6570 query)
+///
+/// ## Conversations
+/// - `waypoint://conversations/{fid}/{hash}` - Conversation thread for a cast
 ///
 /// ## Reactions
 /// - `waypoint://reactions/by-fid/{fid}` - All reactions by a user
@@ -490,6 +496,11 @@ pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String
         },
         ["casts", fid, hash] => {
             Ok(WaypointResource::Cast { fid: parse_fid(fid)?, hash: hash.to_string() })
+        },
+
+        // Conversations
+        ["conversations", fid, hash] => {
+            Ok(WaypointResource::Conversation { fid: parse_fid(fid)?, hash: hash.to_string() })
         },
 
         // Reactions
@@ -587,6 +598,12 @@ mod tests {
         let result = parse_waypoint_resource_uri("waypoint://casts/by-parent-url");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Missing required 'url' query parameter"));
+    }
+
+    #[test]
+    fn test_parse_conversation() {
+        let result = parse_waypoint_resource_uri("waypoint://conversations/123/0xabc").unwrap();
+        assert_eq!(result, WaypointResource::Conversation { fid: 123, hash: "0xabc".to_string() });
     }
 
     #[test]

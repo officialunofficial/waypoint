@@ -548,6 +548,10 @@ impl ServerHandler for WaypointMcpTools {
                 utils::WaypointResource::Cast { fid, hash } => {
                     self.service.do_get_cast(Fid::from(fid), &hash).await
                 },
+                utils::WaypointResource::Conversation { fid, hash } => {
+                    // Use defaults: recursive=true, max_depth=5, limit=10
+                    self.service.do_get_conversation(Fid::from(fid), &hash, true, 5, limit).await
+                },
                 utils::WaypointResource::CastsByFid { fid } => {
                     self.service.do_get_casts_by_fid(Fid::from(fid), limit).await
                 },
@@ -677,6 +681,12 @@ impl ServerHandler for WaypointMcpTools {
                     "waypoint://casts/by-parent-url{?url}",
                     "casts-by-parent-url",
                     "Replies to a parent URL (RFC 6570 query expansion)",
+                ),
+                // Conversations
+                Self::create_resource_template_json(
+                    "waypoint://conversations/{fid}/{hash}",
+                    "conversation",
+                    "Conversation thread for a cast (includes replies, participants, context)",
                 ),
                 // Reactions
                 Self::create_resource_template_json(
