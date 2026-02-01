@@ -25,6 +25,9 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 
+/// MCP protocol version used by this server
+pub const MCP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_03_26;
+
 // Non-generic wrapper for WaypointMcpService to use with RMCP macros
 #[derive(Clone)]
 pub struct WaypointMcpTools {
@@ -48,12 +51,13 @@ impl WaypointMcpTools {
 // Tool implementations for standard APIs
 #[tool_router]
 impl WaypointMcpTools {
-    fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
+    /// Create a text resource with the given URI and name
+    fn create_resource_text(uri: &str, name: &str) -> Resource {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
-    fn _create_resource_template_json(
-        &self,
+    /// Create a JSON resource template with the given URI template, name, and description
+    fn create_resource_template_json(
         uri_template: &str,
         name: &str,
         description: &str,
@@ -64,11 +68,13 @@ impl WaypointMcpTools {
             title: None,
             description: Some(description.to_string()),
             mime_type: Some("application/json".to_string()),
+            icons: None,
         }
         .no_annotation()
     }
 
-    fn _resource_json_contents(&self, uri: &str, json: String) -> ReadResourceResult {
+    /// Create a ReadResourceResult containing JSON content
+    fn resource_json_contents(uri: &str, json: String) -> ReadResourceResult {
         ReadResourceResult {
             contents: vec![ResourceContents::TextResourceContents {
                 uri: uri.to_string(),
@@ -486,7 +492,7 @@ impl WaypointMcpTools {
 impl ServerHandler for WaypointMcpTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_03_26,
+            protocol_version: MCP_PROTOCOL_VERSION,
             capabilities: ServerCapabilities::builder()
                 .enable_prompts()
                 .enable_resources()
@@ -499,13 +505,13 @@ impl ServerHandler for WaypointMcpTools {
 
     async fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
             resources: vec![
-                self._create_resource_text("str:///waypoint/docs", "waypoint-docs"),
-                self._create_resource_text("memo://farcaster-info", "farcaster-info"),
+                Self::create_resource_text("str:///waypoint/docs", "waypoint-docs"),
+                Self::create_resource_text("memo://farcaster-info", "farcaster-info"),
             ],
             next_cursor: None,
             meta: None,
@@ -514,7 +520,7 @@ impl ServerHandler for WaypointMcpTools {
 
     async fn read_resource(
         &self,
-        ReadResourceRequestParam { uri }: ReadResourceRequestParam,
+        ReadResourceRequestParams { uri, .. }: ReadResourceRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         if uri.starts_with("waypoint://") || uri.starts_with("waypoint:///") {
@@ -535,6 +541,9 @@ impl ServerHandler for WaypointMcpTools {
                 },
                 utils::WaypointResource::UserByUsername { username } => {
                     self.service.do_get_user_by_username(&username).await
+                },
+                utils::WaypointResource::VerificationsByFid { fid } => {
+                    self.service.do_get_verifications_by_fid(Fid::from(fid), limit).await
                 },
                 utils::WaypointResource::Cast { fid, hash } => {
                     self.service.do_get_cast(Fid::from(fid), &hash).await
@@ -595,7 +604,7 @@ impl ServerHandler for WaypointMcpTools {
                 },
             };
 
-            return Ok(self._resource_json_contents(&uri, result));
+            return Ok(Self::resource_json_contents(&uri, result));
         }
 
         match uri.as_str() {
@@ -618,73 +627,86 @@ impl ServerHandler for WaypointMcpTools {
 
     async fn list_resource_templates(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
+        // URI templates follow RFC 6570 (URI Template)
+        // - Level 1: Simple string expansion {var}
+        // - Level 3: Query string expansion {?var} for complex values like URLs
         Ok(ListResourceTemplatesResult {
             resource_templates: vec![
-                self._create_resource_template_json(
-                    "waypoint://user/{fid}",
+                // Users
+                Self::create_resource_template_json(
+                    "waypoint://users/{fid}",
                     "user-by-fid",
                     "Farcaster user profile by FID",
                 ),
-                self._create_resource_template_json(
-                    "waypoint://username/{username}",
+                Self::create_resource_template_json(
+                    "waypoint://users/by-username/{username}",
                     "user-by-username",
                     "Farcaster user profile by username",
                 ),
-                self._create_resource_template_json(
+                // Verifications
+                Self::create_resource_template_json(
+                    "waypoint://verifications/{fid}",
+                    "verifications-by-fid",
+                    "Verified addresses for a FID",
+                ),
+                // Casts
+                Self::create_resource_template_json(
                     "waypoint://casts/{fid}/{hash}",
                     "cast-by-fid-hash",
                     "Specific cast by author FID and cast hash",
                 ),
-                self._create_resource_template_json(
+                Self::create_resource_template_json(
                     "waypoint://casts/by-fid/{fid}",
                     "casts-by-fid",
                     "Recent casts by FID",
                 ),
-                self._create_resource_template_json(
-                    "waypoint://casts/mentions/{fid}",
+                Self::create_resource_template_json(
+                    "waypoint://casts/by-mention/{fid}",
                     "casts-by-mention",
                     "Casts mentioning a FID",
                 ),
-                self._create_resource_template_json(
-                    "waypoint://casts/parent/{fid}/{hash}",
+                Self::create_resource_template_json(
+                    "waypoint://casts/by-parent/{fid}/{hash}",
                     "casts-by-parent",
                     "Replies to a parent cast",
                 ),
-                self._create_resource_template_json(
-                    "waypoint://casts/parent-url/{encoded_url}",
+                Self::create_resource_template_json(
+                    "waypoint://casts/by-parent-url{?url}",
                     "casts-by-parent-url",
-                    "Replies to a parent URL (percent-encoded)",
+                    "Replies to a parent URL (RFC 6570 query expansion)",
                 ),
-                self._create_resource_template_json(
+                // Reactions
+                Self::create_resource_template_json(
                     "waypoint://reactions/by-fid/{fid}",
                     "reactions-by-fid",
                     "Reactions by FID",
                 ),
-                self._create_resource_template_json(
-                    "waypoint://reactions/target/cast/{fid}/{hash}",
+                Self::create_resource_template_json(
+                    "waypoint://reactions/by-target-cast/{fid}/{hash}",
                     "reactions-by-target-cast",
                     "Reactions for a target cast",
                 ),
-                self._create_resource_template_json(
-                    "waypoint://reactions/target/url/{encoded_url}",
+                Self::create_resource_template_json(
+                    "waypoint://reactions/by-target-url{?url}",
                     "reactions-by-target-url",
-                    "Reactions for a target URL (percent-encoded)",
+                    "Reactions for a target URL (RFC 6570 query expansion)",
                 ),
-                self._create_resource_template_json(
+                // Links
+                Self::create_resource_template_json(
                     "waypoint://links/by-fid/{fid}",
                     "links-by-fid",
                     "Links by FID (default follow)",
                 ),
-                self._create_resource_template_json(
+                Self::create_resource_template_json(
                     "waypoint://links/by-target/{fid}",
                     "links-by-target",
                     "Links to a target FID (default follow)",
                 ),
-                self._create_resource_template_json(
-                    "waypoint://link-compact-state/{fid}",
+                Self::create_resource_template_json(
+                    "waypoint://links/compact-state/{fid}",
                     "link-compact-state",
                     "Link compact state for a FID",
                 ),

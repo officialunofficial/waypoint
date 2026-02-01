@@ -1,6 +1,7 @@
 //! Utility functions for MCP handlers
 
 use crate::core::types::{Fid, Message as FarcasterMessage, MessageType};
+use percent_encoding::percent_decode_str;
 use prost::Message as ProstMessage;
 use url::Url;
 
@@ -349,23 +350,81 @@ pub fn format_links_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
     serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Error formatting links".to_string())
 }
 
+/// Represents a parsed waypoint:// resource URI
+///
+/// URI structure follows RFC 3986 and RFC 6570 (URI Templates):
+/// - Path segments identify resource type and primary identifiers (fid, hash)
+/// - Query parameters are used for complex values like URLs (`?url=...`)
+///
+/// # Examples
+/// - `waypoint://users/{fid}` - User by FID
+/// - `waypoint://users/by-username/{username}` - User by username
+/// - `waypoint://casts/{fid}/{hash}` - Specific cast
+/// - `waypoint://casts/by-parent-url?url={url}` - Casts by parent URL (query param)
+/// - `waypoint://reactions/by-target-url?url={url}` - Reactions by target URL (query param)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WaypointResource {
+    /// User profile by Farcaster ID
     UserByFid { fid: u64 },
+    /// User profile by username
     UserByUsername { username: String },
+    /// Verifications for a user by FID
+    VerificationsByFid { fid: u64 },
+    /// Specific cast by FID and hash
     Cast { fid: u64, hash: String },
+    /// All casts by a user's FID
     CastsByFid { fid: u64 },
+    /// Casts mentioning a user by their FID
     CastsByMention { fid: u64 },
+    /// Casts that are replies to a specific cast
     CastsByParent { fid: u64, hash: String },
+    /// Casts that are replies to a URL (e.g., channel URL)
     CastsByParentUrl { url: String },
+    /// All reactions by a user's FID
     ReactionsByFid { fid: u64 },
+    /// Reactions targeting a specific cast
     ReactionsByTargetCast { fid: u64, hash: String },
+    /// Reactions targeting a URL
     ReactionsByTargetUrl { url: String },
+    /// Links created by a user (follows, etc.)
     LinksByFid { fid: u64 },
+    /// Links targeting a specific user
     LinksByTarget { fid: u64 },
+    /// Compact link state for a user
     LinkCompactStateByFid { fid: u64 },
 }
 
+/// Parse a waypoint:// resource URI into a WaypointResource
+///
+/// URI structure follows RFC 3986 (URI syntax) and RFC 6570 (URI Templates):
+/// - Path segments identify resource type and simple identifiers (fid, hash)
+/// - Query parameters (`?url=...`) are used for complex values like URLs
+///
+/// # Supported URI patterns
+///
+/// ## Users
+/// - `waypoint://users/{fid}` - User by FID
+/// - `waypoint://users/by-username/{username}` - User by username
+///
+/// ## Verifications
+/// - `waypoint://verifications/{fid}` - Verifications for a user
+///
+/// ## Casts
+/// - `waypoint://casts/{fid}/{hash}` - Specific cast
+/// - `waypoint://casts/by-fid/{fid}` - All casts by a user
+/// - `waypoint://casts/by-mention/{fid}` - Casts mentioning a user
+/// - `waypoint://casts/by-parent/{fid}/{hash}` - Replies to a cast
+/// - `waypoint://casts/by-parent-url?url={url}` - Replies to a URL (RFC 6570 query)
+///
+/// ## Reactions
+/// - `waypoint://reactions/by-fid/{fid}` - All reactions by a user
+/// - `waypoint://reactions/by-target-cast/{fid}/{hash}` - Reactions to a cast
+/// - `waypoint://reactions/by-target-url?url={url}` - Reactions to a URL (RFC 6570 query)
+///
+/// ## Links
+/// - `waypoint://links/by-fid/{fid}` - Links created by a user
+/// - `waypoint://links/by-target/{fid}` - Links targeting a user
+/// - `waypoint://links/compact-state/{fid}` - Compact link state
 pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String> {
     let url = Url::parse(uri).map_err(|err| format!("Invalid resource URI: {err}"))?;
 
@@ -375,16 +434,21 @@ pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String
 
     let mut segments: Vec<String> = Vec::new();
 
-    if let Some(host) = url.host_str() {
-        if !host.is_empty() {
-            segments.push(host.to_string());
-        }
+    // Handle host as first segment (waypoint://users/123 -> host is "users")
+    if let Some(host) = url.host_str()
+        && !host.is_empty()
+    {
+        segments.push(host.to_string());
     }
 
+    // Collect path segments, percent-decoding each one
     if let Some(path_segments) = url.path_segments() {
         for segment in path_segments {
             if !segment.is_empty() {
-                segments.push(segment.to_string());
+                let decoded = percent_decode_str(segment)
+                    .decode_utf8()
+                    .map_err(|_| format!("Invalid UTF-8 in path segment: {segment}"))?;
+                segments.push(decoded.into_owned());
             }
         }
     }
@@ -393,43 +457,218 @@ pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String
         return Err("Missing resource path".to_string());
     }
 
-    let segment_refs: Vec<&str> = segments.iter().map(|segment| segment.as_str()).collect();
+    // Helper to extract URL query parameter (RFC 6570 Level 1 query expansion)
+    let get_url_param = || -> Result<String, String> {
+        url.query_pairs()
+            .find(|(k, _)| k == "url")
+            .map(|(_, v)| v.into_owned())
+            .ok_or_else(|| "Missing required 'url' query parameter".to_string())
+    };
+
+    let segment_refs: Vec<&str> = segments.iter().map(String::as_str).collect();
 
     match segment_refs.as_slice() {
-        ["user", fid] => Ok(WaypointResource::UserByFid { fid: parse_fid(fid)? }),
-        ["username", username] => {
-            Ok(WaypointResource::UserByUsername { username: (*username).to_string() })
+        // Users
+        ["users", fid] => Ok(WaypointResource::UserByFid { fid: parse_fid(fid)? }),
+        ["users", "by-username", username] => {
+            Ok(WaypointResource::UserByUsername { username: username.to_string() })
         },
+
+        // Verifications
+        ["verifications", fid] => Ok(WaypointResource::VerificationsByFid { fid: parse_fid(fid)? }),
+
+        // Casts
         ["casts", "by-fid", fid] => Ok(WaypointResource::CastsByFid { fid: parse_fid(fid)? }),
-        ["casts", "mentions", fid] => Ok(WaypointResource::CastsByMention { fid: parse_fid(fid)? }),
-        ["casts", "parent", fid, hash] => {
-            Ok(WaypointResource::CastsByParent { fid: parse_fid(fid)?, hash: (*hash).to_string() })
+        ["casts", "by-mention", fid] => {
+            Ok(WaypointResource::CastsByMention { fid: parse_fid(fid)? })
         },
-        ["casts", "parent-url", rest @ ..] if !rest.is_empty() => {
-            Ok(WaypointResource::CastsByParentUrl { url: rest.join("/") })
+        ["casts", "by-parent", fid, hash] => {
+            Ok(WaypointResource::CastsByParent { fid: parse_fid(fid)?, hash: hash.to_string() })
+        },
+        ["casts", "by-parent-url"] => {
+            Ok(WaypointResource::CastsByParentUrl { url: get_url_param()? })
         },
         ["casts", fid, hash] => {
-            Ok(WaypointResource::Cast { fid: parse_fid(fid)?, hash: (*hash).to_string() })
+            Ok(WaypointResource::Cast { fid: parse_fid(fid)?, hash: hash.to_string() })
         },
+
+        // Reactions
         ["reactions", "by-fid", fid] => {
             Ok(WaypointResource::ReactionsByFid { fid: parse_fid(fid)? })
         },
-        ["reactions", "target", "cast", fid, hash] => Ok(WaypointResource::ReactionsByTargetCast {
+        ["reactions", "by-target-cast", fid, hash] => Ok(WaypointResource::ReactionsByTargetCast {
             fid: parse_fid(fid)?,
-            hash: (*hash).to_string(),
+            hash: hash.to_string(),
         }),
-        ["reactions", "target", "url", rest @ ..] if !rest.is_empty() => {
-            Ok(WaypointResource::ReactionsByTargetUrl { url: rest.join("/") })
+        ["reactions", "by-target-url"] => {
+            Ok(WaypointResource::ReactionsByTargetUrl { url: get_url_param()? })
         },
+
+        // Links
         ["links", "by-fid", fid] => Ok(WaypointResource::LinksByFid { fid: parse_fid(fid)? }),
         ["links", "by-target", fid] => Ok(WaypointResource::LinksByTarget { fid: parse_fid(fid)? }),
-        ["link-compact-state", fid] => {
+        ["links", "compact-state", fid] => {
             Ok(WaypointResource::LinkCompactStateByFid { fid: parse_fid(fid)? })
         },
-        _ => Err("Unsupported resource path".to_string()),
+
+        _ => Err(format!("Unsupported resource path: {}", segments.join("/"))),
     }
 }
 
 fn parse_fid(segment: &str) -> Result<u64, String> {
     segment.parse::<u64>().map_err(|_| format!("Invalid FID: {segment}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_user_by_fid() {
+        let result = parse_waypoint_resource_uri("waypoint://users/123").unwrap();
+        assert_eq!(result, WaypointResource::UserByFid { fid: 123 });
+
+        // Also works with triple slash (empty host)
+        let result = parse_waypoint_resource_uri("waypoint:///users/456").unwrap();
+        assert_eq!(result, WaypointResource::UserByFid { fid: 456 });
+    }
+
+    #[test]
+    fn test_parse_user_by_username() {
+        let result = parse_waypoint_resource_uri("waypoint://users/by-username/alice").unwrap();
+        assert_eq!(result, WaypointResource::UserByUsername { username: "alice".to_string() });
+    }
+
+    #[test]
+    fn test_parse_verifications() {
+        let result = parse_waypoint_resource_uri("waypoint://verifications/123").unwrap();
+        assert_eq!(result, WaypointResource::VerificationsByFid { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_cast() {
+        let result = parse_waypoint_resource_uri("waypoint://casts/123/0xabc").unwrap();
+        assert_eq!(result, WaypointResource::Cast { fid: 123, hash: "0xabc".to_string() });
+    }
+
+    #[test]
+    fn test_parse_casts_by_fid() {
+        let result = parse_waypoint_resource_uri("waypoint://casts/by-fid/123").unwrap();
+        assert_eq!(result, WaypointResource::CastsByFid { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_casts_by_mention() {
+        let result = parse_waypoint_resource_uri("waypoint://casts/by-mention/123").unwrap();
+        assert_eq!(result, WaypointResource::CastsByMention { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_casts_by_parent() {
+        let result = parse_waypoint_resource_uri("waypoint://casts/by-parent/123/0xabc").unwrap();
+        assert_eq!(result, WaypointResource::CastsByParent { fid: 123, hash: "0xabc".to_string() });
+    }
+
+    #[test]
+    fn test_parse_casts_by_parent_url_query_param() {
+        // RFC 6570 compliant: URL in query parameter
+        let result = parse_waypoint_resource_uri(
+            "waypoint://casts/by-parent-url?url=https%3A%2F%2Fexample.com%2Fpost%2F123",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            WaypointResource::CastsByParentUrl { url: "https://example.com/post/123".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_parse_casts_by_parent_url_missing_param() {
+        let result = parse_waypoint_resource_uri("waypoint://casts/by-parent-url");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required 'url' query parameter"));
+    }
+
+    #[test]
+    fn test_parse_reactions_by_fid() {
+        let result = parse_waypoint_resource_uri("waypoint://reactions/by-fid/123").unwrap();
+        assert_eq!(result, WaypointResource::ReactionsByFid { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_reactions_by_target_cast() {
+        let result =
+            parse_waypoint_resource_uri("waypoint://reactions/by-target-cast/123/0xdef").unwrap();
+        assert_eq!(
+            result,
+            WaypointResource::ReactionsByTargetCast { fid: 123, hash: "0xdef".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_parse_reactions_by_target_url_query_param() {
+        // RFC 6570 compliant: URL in query parameter
+        let result = parse_waypoint_resource_uri(
+            "waypoint://reactions/by-target-url?url=https%3A%2F%2Fwarpcast.com%2F~%2Fchannel%2Ftest",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            WaypointResource::ReactionsByTargetUrl {
+                url: "https://warpcast.com/~/channel/test".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_reactions_by_target_url_missing_param() {
+        let result = parse_waypoint_resource_uri("waypoint://reactions/by-target-url");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required 'url' query parameter"));
+    }
+
+    #[test]
+    fn test_parse_invalid_scheme() {
+        let result = parse_waypoint_resource_uri("http://users/123");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported resource scheme"));
+    }
+
+    #[test]
+    fn test_parse_invalid_fid() {
+        let result = parse_waypoint_resource_uri("waypoint://users/notanumber");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid FID"));
+    }
+
+    #[test]
+    fn test_parse_missing_path() {
+        let result = parse_waypoint_resource_uri("waypoint://");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_unsupported_path() {
+        let result = parse_waypoint_resource_uri("waypoint://unknown/resource");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported resource path"));
+    }
+
+    #[test]
+    fn test_parse_links_by_fid() {
+        let result = parse_waypoint_resource_uri("waypoint://links/by-fid/123").unwrap();
+        assert_eq!(result, WaypointResource::LinksByFid { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_links_by_target() {
+        let result = parse_waypoint_resource_uri("waypoint://links/by-target/456").unwrap();
+        assert_eq!(result, WaypointResource::LinksByTarget { fid: 456 });
+    }
+
+    #[test]
+    fn test_parse_links_compact_state() {
+        let result = parse_waypoint_resource_uri("waypoint://links/compact-state/123").unwrap();
+        assert_eq!(result, WaypointResource::LinkCompactStateByFid { fid: 123 });
+    }
 }

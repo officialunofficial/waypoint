@@ -101,7 +101,7 @@ impl MooCow {
         }
     }
 
-    fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
+    fn create_resource_text(uri: &str, name: &str) -> Resource {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
@@ -179,7 +179,7 @@ impl MooCow {
 impl ServerHandler for MooCow {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_03_26,
+            protocol_version: super::handlers::MCP_PROTOCOL_VERSION,
             capabilities: ServerCapabilities::builder()
                 .enable_prompts()
                 .enable_resources()
@@ -192,13 +192,13 @@ impl ServerHandler for MooCow {
 
     async fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
             resources: vec![
-                self._create_resource_text("str:///cow/info", "cow-info"),
-                self._create_resource_text("memo://moo-facts", "moo-facts"),
+                Self::create_resource_text("str:///cow/info", "cow-info"),
+                Self::create_resource_text("memo://moo-facts", "moo-facts"),
             ],
             next_cursor: None,
             meta: None,
@@ -207,7 +207,7 @@ impl ServerHandler for MooCow {
 
     async fn read_resource(
         &self,
-        ReadResourceRequestParam { uri }: ReadResourceRequestParam,
+        ReadResourceRequestParams { uri, .. }: ReadResourceRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         match uri.as_str() {
@@ -230,7 +230,7 @@ impl ServerHandler for MooCow {
 
     async fn list_resource_templates(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         Ok(ListResourceTemplatesResult {
@@ -340,6 +340,7 @@ impl Service for McpService {
         // Configure the Streamable HTTP server
         let server_config = StreamableHttpServerConfig {
             sse_keep_alive: Some(std::time::Duration::from_secs(15)),
+            sse_retry: None,
             stateful_mode: true,
             cancellation_token: ct_for_shutdown.clone(),
         };

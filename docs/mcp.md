@@ -8,7 +8,7 @@ The Model Context Protocol (MCP) is a specification that allows AI assistants to
 
 ## Implementation
 
-Waypoint uses [rmcp](https://github.com/modelcontextprotocol/rust-sdk) version **0.12.0**, the official Rust SDK for the Model Context Protocol. The implementation leverages the latest macro-based API patterns and the new **Streamable HTTP** transport (MCP spec version 2025-03-26):
+Waypoint uses [rmcp](https://github.com/modelcontextprotocol/rust-sdk) version **0.14.0**, the official Rust SDK for the Model Context Protocol. The implementation leverages the latest macro-based API patterns and the new **Streamable HTTP** transport (MCP spec version 2025-03-26):
 
 - **`#[tool_router]`**: Generates tool routing logic for service implementations
 - **`#[prompt_router]`**: Generates prompt routing logic for service implementations
@@ -89,23 +89,51 @@ The Waypoint MCP integration provides the following tools to AI assistants:
 
 Waypoint also exposes MCP resources that mirror tool outputs. These are read-only, JSON resources that can be fetched via `resources/read` with a `waypoint://` URI.
 
+### URI Design (RFC 3986 / RFC 6570)
+
+Resource URIs follow [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986) (URI syntax) and [RFC 6570](https://www.rfc-editor.org/rfc/rfc6570) (URI Template) standards:
+
+- **Path segments** identify resource type and simple identifiers (FID, hash)
+- **Query parameters** (`?url=...`) are used for complex values like URLs
+
+This design ensures proper URL encoding, avoids ambiguity, and follows web standards.
+
 ### Resource Templates
 
-- `waypoint://user/{fid}`: User profile by FID
-- `waypoint://username/{username}`: User profile by username
+#### Users
+- `waypoint://users/{fid}`: User profile by FID
+- `waypoint://users/by-username/{username}`: User profile by username
+
+#### Verifications
+- `waypoint://verifications/{fid}`: Verified addresses for a FID
+
+#### Casts
 - `waypoint://casts/{fid}/{hash}`: Specific cast by author FID + hash
 - `waypoint://casts/by-fid/{fid}`: Recent casts by FID
-- `waypoint://casts/mentions/{fid}`: Casts mentioning a FID
-- `waypoint://casts/parent/{fid}/{hash}`: Replies to a parent cast
-- `waypoint://casts/parent-url/{encoded_url}`: Replies to a parent URL (percent-encoded)
+- `waypoint://casts/by-mention/{fid}`: Casts mentioning a FID
+- `waypoint://casts/by-parent/{fid}/{hash}`: Replies to a parent cast
+- `waypoint://casts/by-parent-url{?url}`: Replies to a parent URL (RFC 6570 query expansion)
+
+#### Reactions
 - `waypoint://reactions/by-fid/{fid}`: Reactions by FID
-- `waypoint://reactions/target/cast/{fid}/{hash}`: Reactions to a target cast
-- `waypoint://reactions/target/url/{encoded_url}`: Reactions to a target URL (percent-encoded)
+- `waypoint://reactions/by-target-cast/{fid}/{hash}`: Reactions to a target cast
+- `waypoint://reactions/by-target-url{?url}`: Reactions to a target URL (RFC 6570 query expansion)
+
+#### Links
 - `waypoint://links/by-fid/{fid}`: Links by FID (defaults to `follow`)
 - `waypoint://links/by-target/{fid}`: Links to a target FID (defaults to `follow`)
-- `waypoint://link-compact-state/{fid}`: Link compact state by FID
+- `waypoint://links/compact-state/{fid}`: Link compact state by FID
 
-Percent-encode full URLs when using `{encoded_url}` (for example, `https%3A%2F%2Fexample.com%2Fpost%2F123`).
+### URL Query Parameters
+
+For resources that accept URLs (e.g., `by-parent-url`, `by-target-url`), pass the URL as a query parameter:
+
+```
+waypoint://casts/by-parent-url?url=https%3A%2F%2Fexample.com%2Fpost%2F123
+waypoint://reactions/by-target-url?url=https%3A%2F%2Fwarpcast.com%2F~%2Fchannel%2Ftest
+```
+
+The URL value should be percent-encoded per RFC 3986.
 
 List-style resources use the same default limit as tools (10), unless the tool supports explicit limits.
 
