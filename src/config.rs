@@ -959,5 +959,40 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("invalid value 'abc'"), "error was: {err}");
+
+        // Multiple consecutive commas
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":"1,,2,,3"}"#).expect("multiple commas");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Only commas
+        let config: TestConfig = serde_json::from_str(r#"{"v":",,,"}"#).expect("only commas");
+        assert!(config.v.is_empty());
+
+        // Empty JSON array
+        let config: TestConfig = serde_json::from_str(r#"{"v":[]}"#).expect("empty array");
+        assert!(config.v.is_empty());
+
+        // Single element JSON array
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":[42]}"#).expect("single element array");
+        assert_eq!(config.v, vec![42]);
+
+        // Negative number should fail
+        let result: Result<TestConfig, _> = serde_json::from_str(r#"{"v":"-1"}"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid digit"), "error was: {err}");
+
+        // Overflow should fail
+        let result: Result<TestConfig, _> = serde_json::from_str(r#"{"v":"9999999999999"}"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("number too large"), "error was: {err}");
+
+        // Single value as string
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":"42"}"#).expect("single string value");
+        assert_eq!(config.v, vec![42]);
     }
 }
