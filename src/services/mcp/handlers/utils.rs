@@ -530,6 +530,15 @@ fn parse_fid(segment: &str) -> Result<u64, String> {
     segment.parse::<u64>().map_err(|_| format!("Invalid FID: {segment}"))
 }
 
+pub fn parse_hash_bytes(hash: &str) -> Result<Vec<u8>, String> {
+    let trimmed = hash.trim_start_matches("0x");
+    if trimmed.is_empty() {
+        return Err("Missing hash value".to_string());
+    }
+
+    hex::decode(trimmed).map_err(|_| format!("Invalid hash format: {hash}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,5 +696,29 @@ mod tests {
     fn test_parse_links_compact_state() {
         let result = parse_waypoint_resource_uri("waypoint://links/compact-state/123").unwrap();
         assert_eq!(result, WaypointResource::LinkCompactStateByFid { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_hash_bytes_with_prefix() {
+        let bytes = parse_hash_bytes("0x0abc").unwrap();
+        assert_eq!(bytes, vec![0x0a, 0xbc]);
+    }
+
+    #[test]
+    fn test_parse_hash_bytes_without_prefix() {
+        let bytes = parse_hash_bytes("0abc").unwrap();
+        assert_eq!(bytes, vec![0x0a, 0xbc]);
+    }
+
+    #[test]
+    fn test_parse_hash_bytes_empty() {
+        let result = parse_hash_bytes("0x");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_hash_bytes_invalid() {
+        let result = parse_hash_bytes("not-hex");
+        assert!(result.is_err());
     }
 }

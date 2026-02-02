@@ -259,15 +259,9 @@ impl WaypointMcpTools {
 
         // Convert hex hash to bytes if provided
         let target_cast_hash_bytes = if let Some(hash) = &target_cast_hash {
-            match hex::decode(hash.trim_start_matches("0x")) {
-                Ok(bytes) => Some(bytes),
-                Err(_) => {
-                    return Err(McpError::invalid_params(
-                        "Invalid hash format",
-                        Some(serde_json::json!({ "hash": hash })),
-                    ));
-                },
-            }
+            Some(utils::parse_hash_bytes(hash).map_err(|message| {
+                McpError::invalid_params(message, Some(serde_json::json!({ "hash": hash })))
+            })?)
         } else {
             None
         };
@@ -322,15 +316,9 @@ impl WaypointMcpTools {
 
         // Convert hex hash to bytes if provided
         let target_cast_hash_bytes = if let Some(hash) = &target_cast_hash {
-            match hex::decode(hash.trim_start_matches("0x")) {
-                Ok(bytes) => Some(bytes),
-                Err(_) => {
-                    return Err(McpError::invalid_params(
-                        "Invalid hash format",
-                        Some(serde_json::json!({ "hash": hash })),
-                    ));
-                },
-            }
+            Some(utils::parse_hash_bytes(hash).map_err(|message| {
+                McpError::invalid_params(message, Some(serde_json::json!({ "hash": hash })))
+            })?)
         } else {
             None
         };
@@ -568,13 +556,9 @@ impl ServerHandler for WaypointMcpTools {
                     self.service.do_get_reactions_by_fid(Fid::from(fid), None, limit).await
                 },
                 utils::WaypointResource::ReactionsByTargetCast { fid, hash } => {
-                    let target_cast_hash =
-                        hex::decode(hash.trim_start_matches("0x")).map_err(|_| {
-                            McpError::invalid_params(
-                                "Invalid hash format",
-                                Some(serde_json::json!({ "hash": hash })),
-                            )
-                        })?;
+                    let target_cast_hash = utils::parse_hash_bytes(&hash).map_err(|message| {
+                        McpError::invalid_params(message, Some(serde_json::json!({ "hash": hash })))
+                    })?;
 
                     self.service
                         .do_get_reactions_by_target(
