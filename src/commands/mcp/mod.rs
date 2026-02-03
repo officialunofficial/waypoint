@@ -71,6 +71,7 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
     // Configure the Streamable HTTP server
     let server_config = StreamableHttpServerConfig {
         sse_keep_alive: Some(std::time::Duration::from_secs(15)),
+        sse_retry: None,
         stateful_mode: true,
         cancellation_token: cancellation_token.clone(),
     };

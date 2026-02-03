@@ -100,9 +100,9 @@ where
         tracing::info!("MCP: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
 
         // Convert hex hash to bytes
-        let hash_bytes = match hex::decode(hash_hex.trim_start_matches("0x")) {
+        let hash_bytes = match super::utils::parse_hash_bytes(hash_hex) {
             Ok(bytes) => bytes,
-            Err(_) => return format!("Invalid hash format: {}", hash_hex),
+            Err(message) => return message,
         };
 
         // Use the data context to fetch the cast
@@ -177,9 +177,9 @@ where
         );
 
         // Convert hex hash to bytes
-        let parent_hash_bytes = match hex::decode(parent_hash_hex.trim_start_matches("0x")) {
+        let parent_hash_bytes = match super::utils::parse_hash_bytes(parent_hash_hex) {
             Ok(bytes) => bytes,
-            Err(_) => return format!("Invalid hash format: {}", parent_hash_hex),
+            Err(message) => return message,
         };
 
         // Use the data context to fetch replies
@@ -328,9 +328,9 @@ where
         tracing::info!("MCP: Fetching conversation for cast hash: {}", cast_hash);
 
         // Convert hex hash to bytes
-        let hash_bytes = match hex::decode(cast_hash.trim_start_matches("0x")) {
+        let hash_bytes = match super::utils::parse_hash_bytes(cast_hash) {
             Ok(bytes) => bytes,
-            Err(e) => return format!("Invalid cast hash: {}", e),
+            Err(message) => return format!("Invalid cast hash: {}", message),
         };
 
         // Fetch the root cast
@@ -659,13 +659,13 @@ where
 
         // The hash is stored in the Message's id field
         // This is from the Message.hash property in the protobuf
-        let parent_hash = match hex::decode(_parent_cast.id.value().trim_start_matches("0x")) {
+        let parent_hash = match super::utils::parse_hash_bytes(_parent_cast.id.value()) {
             Ok(hash_bytes) => hash_bytes,
-            Err(e) => {
+            Err(message) => {
                 tracing::error!(
                     "Failed to decode cast hash from ID: {} - {}",
                     _parent_cast.id.value(),
-                    e
+                    message
                 );
                 // If we can't decode the hash, use the raw bytes as fallback
                 // This is a last resort and may not produce correct results
