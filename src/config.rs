@@ -4,7 +4,7 @@ use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
@@ -371,12 +371,56 @@ pub struct HubConfig {
     // Shard configuration
     // List of shard indices to subscribe to (e.g., [0, 1, 2])
     // If empty, must set subscribe_to_all_shards=true
-    #[serde(default)]
+    #[serde(default, deserialize_with = "comma_separated")]
     pub shard_indices: Vec<u32>,
 
     // Optional: subscribe to all shards (temporary migration flag)
     #[serde(default = "default_subscribe_to_all_shards")]
     pub subscribe_to_all_shards: bool,
+}
+
+/// Deserialize a value as either a comma-separated string, a JSON array, or a single value.
+///
+/// This allows environment variables like `WAYPOINT_HUB__SHARD_INDICES=1,2,3` to work
+/// alongside JSON/TOML array syntax `[1, 2, 3]`.
+#[inline]
+fn comma_separated<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+{
+    /// Helper enum to accept multiple input formats
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec<U> {
+        Vec(Vec<U>),
+        String(String),
+        Single(U),
+    }
+
+    let parse_csv = |value: &str| -> Result<Vec<T>, D::Error> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        trimmed
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                part.parse::<T>()
+                    .map_err(|err| D::Error::custom(format!("invalid value '{part}': {err}")))
+            })
+            .collect()
+    };
+
+    match StringOrVec::<T>::deserialize(deserializer)? {
+        StringOrVec::Vec(values) => Ok(values),
+        StringOrVec::String(value) => parse_csv(&value),
+        StringOrVec::Single(value) => Ok(vec![value]),
+    }
 }
 
 fn default_subscribe_to_all_shards() -> bool {
@@ -867,5 +911,88 @@ mod tests {
         assert_eq!(config.consumers_per_stream, 3);
         assert_eq!(config.max_retry_attempts, 3);
         assert_eq!(config.group_name, "default");
+    }
+
+    #[test]
+    fn test_comma_separated_deserialize() {
+        #[derive(Debug, Deserialize)]
+        struct TestConfig {
+            #[serde(default, deserialize_with = "comma_separated")]
+            v: Vec<u32>,
+        }
+
+        // Empty/missing field
+        let config: TestConfig = serde_json::from_str(r#"{}"#).expect("empty object");
+        assert!(config.v.is_empty());
+
+        // Comma-separated string with spaces
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":"1, 2,3"}"#).expect("comma-separated string");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Single numeric value
+        let config: TestConfig = serde_json::from_str(r#"{"v":1}"#).expect("single value");
+        assert_eq!(config.v, vec![1]);
+
+        // Empty string
+        let config: TestConfig = serde_json::from_str(r#"{"v":""}"#).expect("empty string");
+        assert!(config.v.is_empty());
+
+        // JSON array input
+        let config: TestConfig = serde_json::from_str(r#"{"v":[1,2,3]}"#).expect("json array");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Whitespace-only string
+        let config: TestConfig = serde_json::from_str(r#"{"v":"   "}"#).expect("whitespace only");
+        assert!(config.v.is_empty());
+
+        // Trailing comma (should be handled gracefully)
+        let config: TestConfig = serde_json::from_str(r#"{"v":"1,2,3,"}"#).expect("trailing comma");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Leading comma (should be handled gracefully)
+        let config: TestConfig = serde_json::from_str(r#"{"v":",1,2,3"}"#).expect("leading comma");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Invalid value in comma-separated string should fail with descriptive error
+        let result: Result<TestConfig, _> = serde_json::from_str(r#"{"v":"1,abc,3"}"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid value 'abc'"), "error was: {err}");
+
+        // Multiple consecutive commas
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":"1,,2,,3"}"#).expect("multiple commas");
+        assert_eq!(config.v, vec![1, 2, 3]);
+
+        // Only commas
+        let config: TestConfig = serde_json::from_str(r#"{"v":",,,"}"#).expect("only commas");
+        assert!(config.v.is_empty());
+
+        // Empty JSON array
+        let config: TestConfig = serde_json::from_str(r#"{"v":[]}"#).expect("empty array");
+        assert!(config.v.is_empty());
+
+        // Single element JSON array
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":[42]}"#).expect("single element array");
+        assert_eq!(config.v, vec![42]);
+
+        // Negative number should fail
+        let result: Result<TestConfig, _> = serde_json::from_str(r#"{"v":"-1"}"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid digit"), "error was: {err}");
+
+        // Overflow should fail
+        let result: Result<TestConfig, _> = serde_json::from_str(r#"{"v":"9999999999999"}"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("number too large"), "error was: {err}");
+
+        // Single value as string
+        let config: TestConfig =
+            serde_json::from_str(r#"{"v":"42"}"#).expect("single string value");
+        assert_eq!(config.v, vec![42]);
     }
 }
