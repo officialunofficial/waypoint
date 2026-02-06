@@ -294,8 +294,8 @@ impl HubSubscriber {
         info!("Connected to hub");
 
         let mut last_id = self.get_last_event_id().await?;
-        if last_id > Some(0) {
-            info!("Resuming from last hub event ID: {}", last_id.unwrap());
+        if let Some(id) = last_id.filter(|&id| id > 0) {
+            info!("Resuming from last hub event ID: {}", id);
         } else {
             info!("No last hub event ID found, starting from beginning");
         }

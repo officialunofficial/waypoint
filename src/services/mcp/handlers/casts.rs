@@ -575,14 +575,15 @@ where
         current_depth: usize,
         max_depth: usize,
     ) {
-        // Stop recursion if we've reached max depth or there's no parent info
-        if current_depth >= max_depth || parent_info.0.is_none() || parent_info.1.is_none() {
+        // Stop recursion if we've reached max depth
+        if current_depth >= max_depth {
             return;
         }
 
-        // We have both FID and hash, try to fetch the parent cast
-        let parent_fid = parent_info.0.unwrap();
-        let parent_hash = parent_info.1.as_ref().unwrap();
+        // We need both FID and hash to fetch the parent cast
+        let (Some(parent_fid), Some(parent_hash)) = (parent_info.0, parent_info.1.as_ref()) else {
+            return;
+        };
 
         tracing::info!(
             "Fetching specific cast with FID: {} and hash: {}",
@@ -885,14 +886,11 @@ where
 
     // Helper to count total replies in the tree - static method to avoid clippy warning
     fn count_replies_recursive(tree: &serde_json::Value) -> usize {
-        let replies = &tree["replies"];
-        if replies.is_array() {
-            let count = replies.as_array().unwrap().len();
+        if let Some(replies_arr) = tree["replies"].as_array() {
+            let count = replies_arr.len();
 
             // Add counts from nested replies
-            let nested_count: usize = replies
-                .as_array()
-                .unwrap()
+            let nested_count: usize = replies_arr
                 .iter()
                 .filter_map(|reply| {
                     if reply.get("replies").is_some() {
