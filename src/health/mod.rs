@@ -165,10 +165,7 @@ async fn readiness_check(State(state): State<AppState>) -> Response {
 
     // Check hub only if present (producer/both modes)
     let (hub_ok, hub_error) = if let Some(ref hub) = state.hub {
-        let hub_health = {
-            let mut hub_guard = hub.lock().await;
-            hub_guard.check_connection().await
-        };
+        let hub_health = hub.lock().await.check_connection().await;
         match hub_health {
             Ok(true) => (true, None),
             Ok(false) => {

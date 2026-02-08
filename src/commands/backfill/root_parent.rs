@@ -1,7 +1,6 @@
 use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{error, info};
 use waypoint::{
     backfill::root_parent::{RootParentBackfill, RootParentBackfillConfig, backfill_url_parents},
@@ -102,15 +101,13 @@ pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()>
         info!("Backfilling hash-based parents (this may take a while)...");
 
         // Initialize Hub client
-        let hub = Arc::new(Mutex::new(Hub::new(config.hub.clone())?));
+        let mut hub = Hub::new(config.hub.clone())?;
+        hub.connect().await.map_err(|e| color_eyre::eyre::eyre!("{}", e))?;
+        let hub = Arc::new(hub);
 
-        // Connect to Hub
-        {
-            let mut hub_guard = hub.lock().await;
-            if !hub_guard.check_connection().await.unwrap_or(false) {
-                error!("Failed to connect to Hub - required for hash-based backfill");
-                std::process::exit(1);
-            }
+        if !hub.check_connection().await.unwrap_or(false) {
+            error!("Failed to connect to Hub - required for hash-based backfill");
+            std::process::exit(1);
         }
 
         let backfill_config =

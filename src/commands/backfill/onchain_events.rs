@@ -74,15 +74,14 @@ pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()>
     // Initialize individual clients
     let redis = Arc::new(waypoint::redis::client::Redis::new(&config.redis).await?);
     let database = Arc::new(waypoint::database::client::Database::new(&config.database).await?);
-    let hub_client = Arc::new(Mutex::new(Hub::new(config.hub.clone())?));
+    let mut hub = Hub::new(config.hub.clone())?;
+    hub.connect().await.map_err(|e| color_eyre::eyre::eyre!("{}", e))?;
+    let hub_client = Arc::new(hub);
 
-    // Create shared application resources
-    let resources = Arc::new(AppResources::with_config(
-        hub_client.clone(),
-        redis,
-        database.clone(),
-        config.clone(),
-    ));
+    // Create shared application resources (wraps hub in Mutex for DatabaseProcessor compatibility)
+    let hub_mutex = Arc::new(Mutex::new(hub_client.as_ref().clone()));
+    let resources =
+        Arc::new(AppResources::with_config(hub_mutex, redis, database.clone(), config.clone()));
 
     let processor = Arc::new(DatabaseProcessor::new(Arc::clone(&resources)));
     let backfiller = OnChainEventBackfiller::new(hub_client, database, processor);

@@ -7,7 +7,6 @@
 use crate::{hub::client::Hub, proto::CastId};
 use sqlx::PgPool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace, warn};
 
 /// Configuration for the root parent backfill process
@@ -39,12 +38,12 @@ pub struct BackfillStats {
 /// Backfill worker for root_parent columns
 pub struct RootParentBackfill {
     pool: PgPool,
-    hub: Arc<Mutex<Hub>>,
+    hub: Arc<Hub>,
     config: RootParentBackfillConfig,
 }
 
 impl RootParentBackfill {
-    pub fn new(pool: PgPool, hub: Arc<Mutex<Hub>>, config: RootParentBackfillConfig) -> Self {
+    pub fn new(pool: PgPool, hub: Arc<Hub>, config: RootParentBackfillConfig) -> Self {
         Self { pool, hub, config }
     }
 
@@ -191,25 +190,27 @@ impl RootParentBackfill {
         let mut current_hash = start_hash.to_vec();
 
         for depth in 0..self.config.max_depth {
-            let mut hub = self.hub.lock().await;
-
-            if !hub.check_connection().await.unwrap_or(false) {
+            if !self.hub.check_connection().await.unwrap_or(false) {
                 warn!("Hub not connected during backfill");
                 return Ok((None, None, None));
             }
 
             let cast_id = CastId { fid: current_fid, hash: current_hash.clone() };
 
-            let client = match hub.client() {
-                Some(c) => c,
+            // Create a fresh client from the channel for this request
+            let channel = match &self.hub.channel {
+                Some(ch) => ch.clone(),
                 None => {
-                    warn!("Hub client not initialized during backfill");
+                    warn!("Hub channel not initialized during backfill");
                     return Ok((None, None, None));
                 },
             };
+            let mut client = crate::hub::client::Hub::create_authenticated_client(
+                channel,
+                Arc::clone(&self.hub.headers),
+            );
 
             let result = client.get_cast(tonic::Request::new(cast_id)).await;
-            drop(hub);
 
             let proto_msg = match result {
                 Ok(response) => response.into_inner(),

@@ -9,7 +9,6 @@ use crate::{
     },
 };
 use std::{sync::Arc, time::Duration};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace};
 
 /// Statistics from a reconciliation operation
@@ -33,7 +32,7 @@ impl ReconcileStats {
 }
 
 pub struct MessageReconciler {
-    hub: Arc<Mutex<Hub>>,
+    hub: Arc<Hub>,
     _database: Arc<Database>, // Prefixed with underscore to indicate intentionally unused
     _connection_timeout: Duration, // Prefixed with underscore to indicate intentionally unused
     _use_streaming_rpcs: bool, // Prefixed with underscore to indicate intentionally unused
@@ -70,19 +69,30 @@ impl MessageReconciler {
                     let reconciler = MessageReconciler {
                         hub,
                         _database: Arc::new(crate::database::Database::empty()), // Placeholder
-                        _connection_timeout: std::time::Duration::from_secs(30),
+                        _connection_timeout: Duration::from_secs(30),
                         _use_streaming_rpcs: false,
                     };
 
-                    // Fetch all message types for this FID
-                    let casts = reconciler.get_all_cast_messages(fid).await?;
-                    let reactions = reconciler.get_all_reaction_messages(fid).await?;
-                    let links = reconciler.get_all_link_messages(fid).await?;
-                    let verifications = reconciler.get_all_verification_messages(fid).await?;
-                    let user_data = reconciler.get_all_user_data_messages(fid).await?;
-                    let username_proofs = reconciler.get_all_username_proofs(fid).await?;
-                    let lend_storage = reconciler.get_all_lend_storage_messages(fid).await?;
-                    let onchain_events = reconciler.get_all_onchain_events(fid).await?;
+                    // Fetch all message types concurrently
+                    let (
+                        casts,
+                        reactions,
+                        links,
+                        verifications,
+                        user_data,
+                        username_proofs,
+                        lend_storage,
+                        onchain_events,
+                    ) = tokio::try_join!(
+                        reconciler.get_all_cast_messages(fid),
+                        reconciler.get_all_reaction_messages(fid),
+                        reconciler.get_all_link_messages(fid),
+                        reconciler.get_all_verification_messages(fid),
+                        reconciler.get_all_user_data_messages(fid),
+                        reconciler.get_all_username_proofs(fid),
+                        reconciler.get_all_lend_storage_messages(fid),
+                        reconciler.get_all_onchain_events(fid),
+                    )?;
 
                     Ok::<_, Error>((
                         fid,
@@ -136,13 +146,8 @@ impl MessageReconciler {
                         all_messages.extend(username_proofs);
                         all_messages.extend(lend_storage);
 
-                        // Handle onchain events separately (they're not Message type)
-                        for _event in onchain_events {
-                            // Process onchain events individually for now
-                            // TODO: Add batch processing for onchain events
-                        }
-
-                        fid_results.push((fid, true));
+                        // Onchain events are a separate type, processed before messages
+                        fid_results.push((fid, onchain_events));
                     },
                     Ok(Err(e)) => {
                         error!("Error fetching data for FID in batch: {:?}", e);
@@ -155,7 +160,27 @@ impl MessageReconciler {
                 }
             }
 
-            // Process all collected messages in a single batch
+            // Always process onchain events first (independent of message batch)
+            let mut total_onchain = 0usize;
+            for (fid, onchain_events) in &fid_results {
+                for event in onchain_events {
+                    let hub_event = Self::onchain_event_to_hub_event(event.clone());
+                    if let Err(e) = processor.process_event(hub_event).await {
+                        error!("Error processing onchain event for FID {}: {:?}", fid, e);
+                    } else {
+                        total_onchain += 1;
+                    }
+                }
+            }
+            if total_onchain > 0 {
+                info!(
+                    "Processed {} onchain events across {} FIDs",
+                    total_onchain,
+                    fid_results.len()
+                );
+            }
+
+            // Then process messages in batch
             if !all_messages.is_empty() {
                 debug!(
                     "Attempting to batch process {} messages for {} FIDs",
@@ -178,7 +203,7 @@ impl MessageReconciler {
                         },
                         Err(e) => {
                             error!("Error in batch processing messages: {:?}", e);
-                            // Fall back to individual processing
+                            // Fall back to individual processing (onchain events already processed above, idempotent via ON CONFLICT)
                             debug!("Falling back to individual FID processing");
                             for (fid, _) in &fid_results {
                                 match self.reconcile_fid(*fid, processor.clone()).await {
@@ -213,7 +238,7 @@ impl MessageReconciler {
         Ok((total_success, total_errors))
     }
     pub fn new(
-        hub: Arc<Mutex<Hub>>,
+        hub: Arc<Hub>,
         database: Arc<Database>,
         connection_timeout: Duration,
         use_streaming_rpcs: bool,
@@ -234,15 +259,26 @@ impl MessageReconciler {
         trace!("Starting reconciliation for FID {}", fid);
         let start_time = std::time::Instant::now();
 
-        // Fetch message types sequentially to avoid overwhelming the Hub
-        let casts = self.get_all_cast_messages(fid).await?;
-        let reactions = self.get_all_reaction_messages(fid).await?;
-        let links = self.get_all_link_messages(fid).await?;
-        let verifications = self.get_all_verification_messages(fid).await?;
-        let user_data = self.get_all_user_data_messages(fid).await?;
-        let username_proofs = self.get_all_username_proofs(fid).await?;
-        let lend_storage = self.get_all_lend_storage_messages(fid).await?;
-        let onchain_events = self.get_all_onchain_events(fid).await?;
+        // Fetch all message types concurrently — each creates its own gRPC client
+        let (
+            casts,
+            reactions,
+            links,
+            verifications,
+            user_data,
+            username_proofs,
+            lend_storage,
+            onchain_events,
+        ) = tokio::try_join!(
+            self.get_all_cast_messages(fid),
+            self.get_all_reaction_messages(fid),
+            self.get_all_link_messages(fid),
+            self.get_all_verification_messages(fid),
+            self.get_all_user_data_messages(fid),
+            self.get_all_username_proofs(fid),
+            self.get_all_lend_storage_messages(fid),
+            self.get_all_onchain_events(fid),
+        )?;
 
         // Process count for each message type
         let casts_count = casts.len();
@@ -601,10 +637,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_casts_by_fid(request).await?
-            };
+            let response = self.hub.get_casts_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -650,10 +683,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_reactions_by_fid(request).await?
-            };
+            let response = self.hub.get_reactions_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -699,10 +729,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_links_by_fid(request).await?
-            };
+            let response = self.hub.get_links_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -747,10 +774,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_verifications_by_fid(request).await?
-            };
+            let response = self.hub.get_verifications_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -795,10 +819,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_user_data_by_fid(request).await?
-            };
+            let response = self.hub.get_user_data_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -855,17 +876,12 @@ impl MessageReconciler {
                 stop_timestamp: None,
             };
 
-            let get_all_result = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_all_user_data_messages_by_fid(ts_request).await
-            };
-            let response = match get_all_result {
+            let response = match self.hub.get_all_user_data_messages_by_fid(ts_request).await {
                 Ok(resp) => resp,
                 Err(e) => {
                     debug!("Error getting username proof messages: {}", e);
                     // Try regular user data as fallback
-                    let mut hub_guard = self.hub.lock().await;
-                    hub_guard.get_user_data_by_fid(request).await?
+                    self.hub.get_user_data_by_fid(request).await?
                 },
             };
 
@@ -934,10 +950,7 @@ impl MessageReconciler {
                 stop_timestamp: None,
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_all_lend_storage_messages_by_fid(request).await?
-            };
+            let response = self.hub.get_all_lend_storage_messages_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -1030,97 +1043,84 @@ impl MessageReconciler {
         }
     }
 
-    /// Get all onchain events for the given FID
-    async fn get_all_onchain_events(&self, fid: u64) -> Result<Vec<proto::OnChainEvent>, Error> {
+    /// Fetch all paginated onchain events of a single type for a FID
+    async fn fetch_onchain_events_by_type(
+        &self,
+        fid: u64,
+        event_type: OnChainEventType,
+    ) -> Result<Vec<proto::OnChainEvent>, Error> {
         let mut events = Vec::new();
         let page_size = 1000u32;
+        let mut page_token = None;
 
-        trace!("Fetching onchain events for FID {} with page size {}", fid, page_size);
+        loop {
+            let request = OnChainEventRequest {
+                fid,
+                event_type: event_type as i32,
+                page_size: Some(page_size),
+                page_token: page_token.clone(),
+                reverse: Some(false),
+            };
 
-        // Try fetching all types of onchain events
-        for event_type in [
-            OnChainEventType::EventTypeSigner,
-            OnChainEventType::EventTypeSignerMigrated,
-            OnChainEventType::EventTypeIdRegister,
-            OnChainEventType::EventTypeStorageRent,
-            OnChainEventType::EventTypeTierPurchase,
-        ] {
-            let mut local_page_count = 0;
-            let mut local_page_token = None;
+            let response = self.hub.get_on_chain_events(request).await?;
+            events.extend(response.events);
 
-            loop {
-                local_page_count += 1;
-                let request = OnChainEventRequest {
-                    fid,
-                    event_type: event_type as i32,
-                    page_size: Some(page_size),
-                    page_token: local_page_token.clone(),
-                    reverse: Some(false),
-                };
-
-                let on_chain_result = {
-                    let mut hub_guard = self.hub.lock().await;
-                    hub_guard.get_on_chain_events(request).await
-                };
-                let response = match on_chain_result {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        debug!("Error fetching onchain events of type {:?}: {}", event_type, e);
-                        break;
-                    },
-                };
-
-                let page_events_count = response.events.len();
-                events.extend(response.events);
-
-                trace!(
-                    "Received page {} with {} onchain events of type {:?} for FID {}",
-                    local_page_count, page_events_count, event_type, fid
-                );
-
-                if let Some(token) = response.next_page_token {
-                    if token.is_empty() {
-                        break;
-                    }
-                    local_page_token = Some(token);
-                } else {
-                    break;
-                }
+            match response.next_page_token {
+                Some(token) if !token.is_empty() => page_token = Some(token),
+                _ => break,
             }
         }
 
-        trace!("Fetched a total of {} onchain events for FID {}", events.len(), fid);
+        Ok(events)
+    }
+
+    /// Get all onchain events for the given FID, fetching all types concurrently
+    async fn get_all_onchain_events(&self, fid: u64) -> Result<Vec<proto::OnChainEvent>, Error> {
+        trace!("Fetching onchain events for FID {} concurrently", fid);
+
+        let (signer, migrated, id_register, storage_rent, tier_purchase) = tokio::join!(
+            self.fetch_onchain_events_by_type(fid, OnChainEventType::EventTypeSigner),
+            self.fetch_onchain_events_by_type(fid, OnChainEventType::EventTypeSignerMigrated),
+            self.fetch_onchain_events_by_type(fid, OnChainEventType::EventTypeIdRegister),
+            self.fetch_onchain_events_by_type(fid, OnChainEventType::EventTypeStorageRent),
+            self.fetch_onchain_events_by_type(fid, OnChainEventType::EventTypeTierPurchase),
+        );
+
+        let mut events = Vec::new();
+        for (event_type, result) in [
+            ("signer", signer),
+            ("signer_migrated", migrated),
+            ("id_register", id_register),
+            ("storage_rent", storage_rent),
+            ("tier_purchase", tier_purchase),
+        ] {
+            match result {
+                Ok(evts) => events.extend(evts),
+                Err(e) => {
+                    debug!("Error fetching {} onchain events for FID {}: {}", event_type, fid, e)
+                },
+            }
+        }
+
+        trace!("Fetched {} total onchain events for FID {}", events.len(), fid);
         Ok(events)
     }
 
     pub fn message_to_hub_event(&self, message: Message) -> HubEvent {
-        // Log message details
-        let _message_type = self.get_message_type(&message);
-        let _timestamp = message.data.as_ref().map(|d| d.timestamp).unwrap_or(0);
-        let _fid = message.data.as_ref().map(|d| d.fid).unwrap_or(0);
-
-        // info!(
-        //     "Processing message: type={}, fid={}, timestamp={}, hash={}",
-        //     message_type,
-        //     fid,
-        //     timestamp,
-        //     hex::encode(&message.hash)
-        // );
-
-        // Create the HubEvent
-        let merge_message_body =
-            MergeMessageBody { message: Some(message), deleted_messages: Vec::new() };
-
         HubEvent {
-            id: 0, // Will be set by the hub
+            id: 0,
             r#type: HubEventType::MergeMessage as i32,
-            body: Some(proto::hub_event::Body::MergeMessageBody(merge_message_body)),
+            body: Some(proto::hub_event::Body::MergeMessageBody(MergeMessageBody {
+                message: Some(message),
+                deleted_messages: Vec::new(),
+            })),
             block_number: 0,
             shard_index: 0,
-            timestamp: 0, // Add missing timestamp field
+            timestamp: 0,
         }
     }
 
+    #[allow(dead_code)]
     fn get_message_type(&self, message: &Message) -> String {
         if let Some(data) = &message.data
             && let Some(body) = &data.body

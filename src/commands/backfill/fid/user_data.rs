@@ -39,7 +39,9 @@ pub fn register_command() -> Command {
 pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     // Initialize clients
     let redis = Arc::new(waypoint::redis::client::Redis::new(&config.redis).await?);
-    let hub = Arc::new(Mutex::new(waypoint::hub::client::Hub::new(config.hub.clone())?));
+    let mut hub = waypoint::hub::client::Hub::new(config.hub.clone())?;
+    hub.connect().await?;
+    let hub = Arc::new(hub);
     let database = Arc::new(waypoint::database::client::Database::new(&config.database).await?);
 
     // Get parameters
@@ -47,19 +49,9 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     let batch_size = args.get_one::<usize>("batch_size").copied().unwrap_or(50);
     let concurrency = args.get_one::<usize>("concurrency").copied().unwrap_or(25);
 
-    // Initialize hub client
-    {
-        let mut hub_guard = hub.lock().await;
-        hub_guard.connect().await?;
-    }
-
     // Get max FID from hub if not specified
     let hub_max_fid = if max_fid_str.is_none() {
-        let fids_response = {
-            let mut hub_guard = hub.lock().await;
-            hub_guard.get_fids(Some(1), None, Some(true)).await?
-        };
-
+        let fids_response = hub.get_fids(Some(1), None, Some(true)).await?;
         fids_response.fids.first().copied().unwrap_or(1000)
     } else {
         max_fid_str.and_then(|s| s.parse().ok()).unwrap_or(1000)
@@ -67,8 +59,9 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
 
     info!("Starting user_data refresh for FIDs up to {}", hub_max_fid);
 
-    // Create shared application resources
-    let app_resources = Arc::new(AppResources::new(hub.clone(), redis.clone(), database.clone()));
+    // Create shared application resources (wraps hub in Mutex for DatabaseProcessor compatibility)
+    let hub_mutex = Arc::new(Mutex::new(hub.as_ref().clone()));
+    let app_resources = Arc::new(AppResources::new(hub_mutex, redis.clone(), database.clone()));
 
     // Create processor for database
     let db_processor = Arc::new(DatabaseProcessor::new(app_resources.clone()));
@@ -187,9 +180,6 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
         "User_data refresh complete: {} user_data messages, {} FIDs successful, {} FIDs failed, elapsed: {:.2?}",
         total_processed, success_count, error_count, elapsed
     );
-
-    // Disconnect hub client when done
-    hub.lock().await.disconnect().await?;
 
     Ok(())
 }

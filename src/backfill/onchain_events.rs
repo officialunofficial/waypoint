@@ -4,21 +4,16 @@ use crate::hub::client::Hub;
 use crate::processor::database::DatabaseProcessor;
 use crate::proto::{OnChainEventRequest, OnChainEventType};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{error, info, trace, warn};
 
 pub struct OnChainEventBackfiller {
-    pub hub: Arc<Mutex<Hub>>,
+    pub hub: Arc<Hub>,
     pub database: Arc<Database>,
     pub processor: Arc<DatabaseProcessor>,
 }
 
 impl OnChainEventBackfiller {
-    pub fn new(
-        hub: Arc<Mutex<Hub>>,
-        database: Arc<Database>,
-        processor: Arc<DatabaseProcessor>,
-    ) -> Self {
+    pub fn new(hub: Arc<Hub>, database: Arc<Database>, processor: Arc<DatabaseProcessor>) -> Self {
         Self { hub, database, processor }
     }
 
@@ -112,13 +107,11 @@ impl OnChainEventBackfiller {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard
-                    .get_on_chain_events(request)
-                    .await
-                    .map_err(|e| Error::ConnectionError(format!("Hub error: {}", e)))?
-            };
+            let response = self
+                .hub
+                .get_on_chain_events(request)
+                .await
+                .map_err(|e| Error::ConnectionError(format!("Hub error: {}", e)))?;
 
             if response.events.is_empty() {
                 break;
@@ -157,23 +150,21 @@ impl OnChainEventBackfiller {
 
     /// Get all FIDs that need backfilling using hub info (much faster than database query)
     pub async fn get_all_fids(&self) -> Result<Vec<u64>, Error> {
-        let mut hub_guard = self.hub.lock().await;
-
         // Try to get maximum FID directly from hub
-        let max_fid = match hub_guard.get_fids(Some(1), None, Some(true)).await {
+        let max_fid = match self.hub.get_fids(Some(1), None, Some(true)).await {
             Ok(fids_response) => {
                 if let Some(max_fid) = fids_response.fids.first() {
                     info!("Detected maximum FID from hub: {}", max_fid);
                     *max_fid
                 } else {
                     // No FIDs found, use hub info
-                    self.get_max_fid_from_hub_info(&mut hub_guard).await
+                    self.get_max_fid_from_hub_info().await
                 }
             },
             Err(e) => {
                 info!("Failed to get FIDs from hub: {}. Falling back to hub info.", e);
                 // For sharded hubs, GetFids might not work, so use hub info
-                self.get_max_fid_from_hub_info(&mut hub_guard).await
+                self.get_max_fid_from_hub_info().await
             },
         };
 
@@ -182,8 +173,8 @@ impl OnChainEventBackfiller {
     }
 
     /// Get max FID from hub info as fallback
-    async fn get_max_fid_from_hub_info(&self, hub: &mut crate::hub::client::Hub) -> u64 {
-        match hub.get_hub_info().await {
+    async fn get_max_fid_from_hub_info(&self) -> u64 {
+        match self.hub.get_hub_info().await {
             Ok(info) => {
                 // Use the total number of FID registrations as an approximation
                 let total_fids =

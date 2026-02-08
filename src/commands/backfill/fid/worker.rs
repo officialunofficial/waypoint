@@ -39,18 +39,15 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
 
     // Initialize clients
     let redis = Arc::new(waypoint::redis::client::Redis::new(&config.redis).await?);
-    let hub = Arc::new(Mutex::new(waypoint::hub::client::Hub::new(config.hub.clone())?));
+    let mut hub = waypoint::hub::client::Hub::new(config.hub.clone())?;
+    hub.connect().await?;
+    let hub = Arc::new(hub);
     let database = Arc::new(waypoint::database::client::Database::new(&config.database).await?);
     let fid_queue = Arc::new(BackfillQueue::new(redis.clone(), "backfill:fid:queue".to_string()));
 
-    // Ensure hub is connected
-    {
-        let mut hub_guard = hub.lock().await;
-        hub_guard.connect().await?;
-    }
-
-    // Create shared application resources
-    let app_resources = Arc::new(AppResources::new(hub.clone(), redis.clone(), database.clone()));
+    // Create shared application resources (wraps hub in Mutex for DatabaseProcessor compatibility)
+    let hub_mutex = Arc::new(Mutex::new(hub.as_ref().clone()));
+    let app_resources = Arc::new(AppResources::new(hub_mutex, redis.clone(), database.clone()));
 
     // Create processors
     let db_processor = Arc::new(DatabaseProcessor::new(app_resources.clone()));
@@ -93,9 +90,6 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     info!("Starting FID-based backfill worker");
     worker.run().await.map_err(|e| color_eyre::eyre::eyre!("{}", e))?;
 
-    // Disconnect hub client when done
-    let mut hub_guard = hub.lock().await;
-    hub_guard.disconnect().await?;
-
+    // Hub will be dropped when Arc refcount reaches 0
     Ok(())
 }

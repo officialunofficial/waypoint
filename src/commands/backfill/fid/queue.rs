@@ -1,7 +1,6 @@
 use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 use waypoint::{
     backfill::worker::{BackfillJob, BackfillQueue, JobPriority, JobState},
@@ -21,7 +20,7 @@ async fn filter_spam_fids(fids: Vec<u64>, spam_filter: &SpamFilter) -> Vec<u64> 
 }
 
 /// Helper function to get max FID from hub info
-async fn get_max_fid_from_hub_info(hub: &mut Hub) -> u64 {
+async fn get_max_fid_from_hub_info(hub: &Hub) -> u64 {
     match hub.get_hub_info().await {
         Ok(info) => {
             // Use the total number of FID registrations as an approximation
@@ -85,7 +84,9 @@ pub fn register_command() -> Command {
 pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     // Initialize clients
     let redis = Arc::new(waypoint::redis::client::Redis::new(&config.redis).await?);
-    let hub = Arc::new(Mutex::new(waypoint::hub::client::Hub::new(config.hub.clone())?));
+    let mut hub = waypoint::hub::client::Hub::new(config.hub.clone())?;
+    hub.connect().await?;
+    let hub = hub;
     let fid_queue = Arc::new(BackfillQueue::new(redis.clone(), "backfill:fid:queue".to_string()));
 
     // Initialize and load spam filter
@@ -98,24 +99,21 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     let max_fid_str = args.get_one::<String>("max_fid");
     let batch_size = args.get_one::<u64>("batch_size").copied().unwrap_or(50);
 
-    let mut hub_guard = hub.lock().await;
-    hub_guard.connect().await?;
-
     // Get the maximum FID - try GetFids first, fall back to hub info
-    let hub_max_fid = match hub_guard.get_fids(Some(1), None, Some(true)).await {
+    let hub_max_fid = match hub.get_fids(Some(1), None, Some(true)).await {
         Ok(fids_response) => {
             if let Some(max_fid) = fids_response.fids.first() {
                 info!("Detected maximum FID from hub: {}", max_fid);
                 *max_fid
             } else {
                 // No FIDs found, use hub info
-                get_max_fid_from_hub_info(&mut hub_guard).await
+                get_max_fid_from_hub_info(&hub).await
             }
         },
         Err(e) => {
             info!("Failed to get FIDs from hub: {}. Falling back to hub info.", e);
             // For sharded hubs, GetFids might not work, so use hub info
-            get_max_fid_from_hub_info(&mut hub_guard).await
+            get_max_fid_from_hub_info(&hub).await
         },
     };
 
@@ -268,7 +266,6 @@ pub async fn execute(config: &Config, args: &ArgMatches) -> Result<()> {
     }
 
     info!("FID backfill jobs queued successfully");
-    hub_guard.disconnect().await?;
 
     Ok(())
 }
