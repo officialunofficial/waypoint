@@ -2,7 +2,36 @@
 
 All notable changes to Waypoint will be documented in this file.
 
-## [Unreleased]
+## [2026.2.1] - 2026-02-08
+
+### Bug Fixes
+
+- Fix hub headers: centralize header injection via tonic interceptor, fixing missing auth headers on retry paths and in providers/database/root_parent (#86)
+- Route lend_storage to proper stream, add backfill support, handle NOGROUP errors (#87)
+- Fix shard_indices parsing
+- Improve Makefile portability and comma_separated deserializer
+
+### Features
+
+- Add MCP resources with RFC-compliant resource URIs and query parameters (#84)
+- Add Conversation resource type for MCP
+
+### Refactor
+
+- Replace unwrap() patterns with idiomatic let-else, if-let, and is_none_or bindings (#85)
+- Simplify event classification and reduce test duplication in subscriber
+- Add parse_hash_bytes util for MCP handlers
+
+### Documentation
+
+- Fix get_casts_by_fid and get_verifications_by_fid examples
+
+### Miscellaneous Tasks
+
+- Add dev setup improvements (#83)
+- Add extra tests for comma_separated
+- Add latest migration file dynamically
+- Remove ONCHAIN_EVENTS_BACKFILL.md
 
 ## [0.4.1] - 2025-04-26 (Released)
 
