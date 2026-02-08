@@ -176,4 +176,58 @@ mod tests {
         let metadata = request.metadata();
         assert_eq!(metadata.get("x-api-key").unwrap().to_str().unwrap(), "test-key-123");
     }
+
+    #[test]
+    fn test_header_interceptor_empty_headers() {
+        let mut interceptor = HeaderInterceptor::new(Arc::new(HashMap::new()));
+        let request = Request::new(());
+        let request = interceptor.call(request).unwrap();
+
+        assert_eq!(request.metadata().len(), 0);
+    }
+
+    #[test]
+    fn test_header_interceptor_multiple_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("X_API_KEY".to_string(), "key-abc".to_string());
+        headers.insert("AUTHORIZATION".to_string(), "Bearer tok".to_string());
+        headers.insert("X_CUSTOM".to_string(), "val".to_string());
+
+        let mut interceptor = HeaderInterceptor::new(Arc::new(headers));
+        let request = Request::new(());
+        let request = interceptor.call(request).unwrap();
+
+        let md = request.metadata();
+        assert_eq!(md.get("x-api-key").unwrap().to_str().unwrap(), "key-abc");
+        assert_eq!(md.get("authorization").unwrap().to_str().unwrap(), "Bearer tok");
+        assert_eq!(md.get("x-custom").unwrap().to_str().unwrap(), "val");
+    }
+
+    #[test]
+    fn test_header_interceptor_preserves_existing_metadata() {
+        let mut headers = HashMap::new();
+        headers.insert("X_API_KEY".to_string(), "injected".to_string());
+
+        let mut interceptor = HeaderInterceptor::new(Arc::new(headers));
+        let mut request = Request::new(());
+        request.metadata_mut().insert("pre-existing", MetadataValue::from_static("original"));
+
+        let request = interceptor.call(request).unwrap();
+        let md = request.metadata();
+        assert_eq!(md.get("pre-existing").unwrap().to_str().unwrap(), "original");
+        assert_eq!(md.get("x-api-key").unwrap().to_str().unwrap(), "injected");
+    }
+
+    #[test]
+    fn test_header_interceptor_is_clone() {
+        let mut headers = HashMap::new();
+        headers.insert("X_KEY".to_string(), "val".to_string());
+
+        let interceptor = HeaderInterceptor::new(Arc::new(headers));
+        let mut cloned = interceptor.clone();
+
+        // Both should produce identical results
+        let request = cloned.call(Request::new(())).unwrap();
+        assert_eq!(request.metadata().get("x-key").unwrap().to_str().unwrap(), "val");
+    }
 }
