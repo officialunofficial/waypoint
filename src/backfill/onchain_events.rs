@@ -145,9 +145,7 @@ impl OnChainEventBackfiller {
             }
 
             // Check if there are more pages
-            if response.next_page_token.is_none()
-                || response.next_page_token.as_ref().unwrap().is_empty()
-            {
+            if response.next_page_token.as_ref().is_none_or(|t| t.is_empty()) {
                 break;
             }
 
