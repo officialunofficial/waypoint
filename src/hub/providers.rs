@@ -25,7 +25,7 @@ impl std::fmt::Debug for FarcasterHubClient {
 }
 
 impl FarcasterHubClient {
-    /// Create a new Hub client implementation
+    /// Create a new Hub client implementation from Arc<Mutex<Hub>> (for backward compatibility with streaming/subscriber paths)
     pub fn new(hub: Arc<Mutex<Hub>>) -> Self {
         Self { hub }
     }

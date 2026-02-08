@@ -9,7 +9,6 @@ use crate::{
     },
 };
 use std::{sync::Arc, time::Duration};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace};
 
 /// Statistics from a reconciliation operation
@@ -33,7 +32,7 @@ impl ReconcileStats {
 }
 
 pub struct MessageReconciler {
-    hub: Arc<Mutex<Hub>>,
+    hub: Arc<Hub>,
     _database: Arc<Database>, // Prefixed with underscore to indicate intentionally unused
     _connection_timeout: Duration, // Prefixed with underscore to indicate intentionally unused
     _use_streaming_rpcs: bool, // Prefixed with underscore to indicate intentionally unused
@@ -70,19 +69,30 @@ impl MessageReconciler {
                     let reconciler = MessageReconciler {
                         hub,
                         _database: Arc::new(crate::database::Database::empty()), // Placeholder
-                        _connection_timeout: std::time::Duration::from_secs(30),
+                        _connection_timeout: Duration::from_secs(30),
                         _use_streaming_rpcs: false,
                     };
 
-                    // Fetch all message types for this FID
-                    let casts = reconciler.get_all_cast_messages(fid).await?;
-                    let reactions = reconciler.get_all_reaction_messages(fid).await?;
-                    let links = reconciler.get_all_link_messages(fid).await?;
-                    let verifications = reconciler.get_all_verification_messages(fid).await?;
-                    let user_data = reconciler.get_all_user_data_messages(fid).await?;
-                    let username_proofs = reconciler.get_all_username_proofs(fid).await?;
-                    let lend_storage = reconciler.get_all_lend_storage_messages(fid).await?;
-                    let onchain_events = reconciler.get_all_onchain_events(fid).await?;
+                    // Fetch all message types concurrently
+                    let (
+                        casts,
+                        reactions,
+                        links,
+                        verifications,
+                        user_data,
+                        username_proofs,
+                        lend_storage,
+                        onchain_events,
+                    ) = tokio::try_join!(
+                        reconciler.get_all_cast_messages(fid),
+                        reconciler.get_all_reaction_messages(fid),
+                        reconciler.get_all_link_messages(fid),
+                        reconciler.get_all_verification_messages(fid),
+                        reconciler.get_all_user_data_messages(fid),
+                        reconciler.get_all_username_proofs(fid),
+                        reconciler.get_all_lend_storage_messages(fid),
+                        reconciler.get_all_onchain_events(fid),
+                    )?;
 
                     Ok::<_, Error>((
                         fid,
@@ -136,13 +146,8 @@ impl MessageReconciler {
                         all_messages.extend(username_proofs);
                         all_messages.extend(lend_storage);
 
-                        // Handle onchain events separately (they're not Message type)
-                        for _event in onchain_events {
-                            // Process onchain events individually for now
-                            // TODO: Add batch processing for onchain events
-                        }
-
-                        fid_results.push((fid, true));
+                        // Process onchain events (they're OnChainEvent, not Message)
+                        fid_results.push((fid, true, onchain_events));
                     },
                     Ok(Err(e)) => {
                         error!("Error fetching data for FID in batch: {:?}", e);
@@ -175,12 +180,35 @@ impl MessageReconciler {
                                 all_messages.len(),
                                 fid_results.len()
                             );
+
+                            // Process onchain events for each FID
+                            let mut total_onchain = 0usize;
+                            for (fid, _, onchain_events) in &fid_results {
+                                for event in onchain_events {
+                                    let hub_event = Self::onchain_event_to_hub_event(event.clone());
+                                    if let Err(e) = processor.process_event(hub_event).await {
+                                        error!(
+                                            "Error processing onchain event for FID {}: {:?}",
+                                            fid, e
+                                        );
+                                    } else {
+                                        total_onchain += 1;
+                                    }
+                                }
+                            }
+                            if total_onchain > 0 {
+                                info!(
+                                    "Processed {} onchain events across {} FIDs",
+                                    total_onchain,
+                                    fid_results.len()
+                                );
+                            }
                         },
                         Err(e) => {
                             error!("Error in batch processing messages: {:?}", e);
-                            // Fall back to individual processing
+                            // Fall back to individual processing (includes onchain events)
                             debug!("Falling back to individual FID processing");
-                            for (fid, _) in &fid_results {
+                            for (fid, _, _) in &fid_results {
                                 match self.reconcile_fid(*fid, processor.clone()).await {
                                     Ok(_) => total_success += 1,
                                     Err(_) => total_errors += 1,
@@ -191,7 +219,7 @@ impl MessageReconciler {
                 } else {
                     debug!("Processor is not DatabaseProcessor, using individual FID processing");
                     // Fall back to individual FID processing for non-database processors
-                    for (fid, _) in &fid_results {
+                    for (fid, _, _) in &fid_results {
                         match self.reconcile_fid(*fid, processor.clone()).await {
                             Ok(_) => total_success += 1,
                             Err(_) => total_errors += 1,
@@ -213,7 +241,7 @@ impl MessageReconciler {
         Ok((total_success, total_errors))
     }
     pub fn new(
-        hub: Arc<Mutex<Hub>>,
+        hub: Arc<Hub>,
         database: Arc<Database>,
         connection_timeout: Duration,
         use_streaming_rpcs: bool,
@@ -234,15 +262,26 @@ impl MessageReconciler {
         trace!("Starting reconciliation for FID {}", fid);
         let start_time = std::time::Instant::now();
 
-        // Fetch message types sequentially to avoid overwhelming the Hub
-        let casts = self.get_all_cast_messages(fid).await?;
-        let reactions = self.get_all_reaction_messages(fid).await?;
-        let links = self.get_all_link_messages(fid).await?;
-        let verifications = self.get_all_verification_messages(fid).await?;
-        let user_data = self.get_all_user_data_messages(fid).await?;
-        let username_proofs = self.get_all_username_proofs(fid).await?;
-        let lend_storage = self.get_all_lend_storage_messages(fid).await?;
-        let onchain_events = self.get_all_onchain_events(fid).await?;
+        // Fetch all message types concurrently — each creates its own gRPC client
+        let (
+            casts,
+            reactions,
+            links,
+            verifications,
+            user_data,
+            username_proofs,
+            lend_storage,
+            onchain_events,
+        ) = tokio::try_join!(
+            self.get_all_cast_messages(fid),
+            self.get_all_reaction_messages(fid),
+            self.get_all_link_messages(fid),
+            self.get_all_verification_messages(fid),
+            self.get_all_user_data_messages(fid),
+            self.get_all_username_proofs(fid),
+            self.get_all_lend_storage_messages(fid),
+            self.get_all_onchain_events(fid),
+        )?;
 
         // Process count for each message type
         let casts_count = casts.len();
@@ -601,10 +640,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_casts_by_fid(request).await?
-            };
+            let response = self.hub.get_casts_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -650,10 +686,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_reactions_by_fid(request).await?
-            };
+            let response = self.hub.get_reactions_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -699,10 +732,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_links_by_fid(request).await?
-            };
+            let response = self.hub.get_links_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -747,10 +777,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_verifications_by_fid(request).await?
-            };
+            let response = self.hub.get_verifications_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -795,10 +822,7 @@ impl MessageReconciler {
                 reverse: Some(false),
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_user_data_by_fid(request).await?
-            };
+            let response = self.hub.get_user_data_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -855,17 +879,12 @@ impl MessageReconciler {
                 stop_timestamp: None,
             };
 
-            let get_all_result = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_all_user_data_messages_by_fid(ts_request).await
-            };
-            let response = match get_all_result {
+            let response = match self.hub.get_all_user_data_messages_by_fid(ts_request).await {
                 Ok(resp) => resp,
                 Err(e) => {
                     debug!("Error getting username proof messages: {}", e);
                     // Try regular user data as fallback
-                    let mut hub_guard = self.hub.lock().await;
-                    hub_guard.get_user_data_by_fid(request).await?
+                    self.hub.get_user_data_by_fid(request).await?
                 },
             };
 
@@ -934,10 +953,7 @@ impl MessageReconciler {
                 stop_timestamp: None,
             };
 
-            let response = {
-                let mut hub_guard = self.hub.lock().await;
-                hub_guard.get_all_lend_storage_messages_by_fid(request).await?
-            };
+            let response = self.hub.get_all_lend_storage_messages_by_fid(request).await?;
             let page_messages_count = response.messages.len();
             messages.extend(response.messages);
 
@@ -1058,11 +1074,7 @@ impl MessageReconciler {
                     reverse: Some(false),
                 };
 
-                let on_chain_result = {
-                    let mut hub_guard = self.hub.lock().await;
-                    hub_guard.get_on_chain_events(request).await
-                };
-                let response = match on_chain_result {
+                let response = match self.hub.get_on_chain_events(request).await {
                     Ok(resp) => resp,
                     Err(e) => {
                         debug!("Error fetching onchain events of type {:?}: {}", event_type, e);

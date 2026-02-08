@@ -128,13 +128,13 @@ impl HubRetryPolicy {
 #[derive(Clone)]
 pub struct Hub {
     // Use a Channel directly for building services with middleware
-    channel: Option<Channel>,
+    pub(crate) channel: Option<Channel>,
     // Authenticated client with automatic header injection
     client: Option<AuthenticatedHubServiceClient>,
     config: Arc<HubConfig>,
     host: String,
     // Headers wrapped in Arc for cheap cloning in retry closures
-    headers: Arc<HashMap<String, String>>,
+    pub(crate) headers: Arc<HashMap<String, String>>,
     // Track consecutive errors for advanced retry behavior
     error_count: Arc<std::sync::atomic::AtomicU32>,
     last_success: Arc<std::sync::atomic::AtomicU64>,
@@ -161,7 +161,7 @@ impl Hub {
         })
     }
 
-    fn create_authenticated_client(
+    pub(crate) fn create_authenticated_client(
         channel: Channel,
         headers: Arc<HashMap<String, String>>,
     ) -> AuthenticatedHubServiceClient {
@@ -481,16 +481,11 @@ impl Hub {
     }
 
     pub async fn get_shard_chunks(
-        &mut self,
+        &self,
         shard_id: u32,
         start_block: u64,
         end_block: Option<u64>,
     ) -> Result<ShardChunksResponse, Error> {
-        // If not connected, connect first
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         // Clone channel (Arc-based, cheap) - create client inside closure
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
@@ -522,12 +517,7 @@ impl Hub {
         Ok(())
     }
 
-    pub async fn get_hub_info(&mut self) -> Result<GetInfoResponse, Error> {
-        // If not connected, connect first
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
+    pub async fn get_hub_info(&self) -> Result<GetInfoResponse, Error> {
         // Clone channel (Arc-based, cheap) - create client inside closure
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
@@ -551,7 +541,7 @@ impl Hub {
 
     /// Check hub connection by requesting hub info
     /// Uses the enhanced retry logic in get_hub_info
-    pub async fn check_connection(&mut self) -> Result<bool, Error> {
+    pub async fn check_connection(&self) -> Result<bool, Error> {
         // get_hub_info already has the retry logic built in
         match self.get_hub_info().await {
             Ok(_) => Ok(true),
@@ -561,16 +551,11 @@ impl Hub {
 
     /// Get all FIDs from the hub with retry logic
     pub async fn get_fids(
-        &mut self,
+        &self,
         page_size: Option<u32>,
         page_token: Option<Vec<u8>>,
         reverse: Option<bool>,
     ) -> Result<FidsResponse, Error> {
-        // If not connected, connect first
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         // Clone channel (Arc-based, cheap) - create client inside closure
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
@@ -600,13 +585,9 @@ impl Hub {
 
     /// Get casts by FID with retry logic and custom headers
     pub async fn get_casts_by_fid(
-        &mut self,
+        &self,
         request: crate::proto::FidRequest,
     ) -> Result<crate::proto::MessagesResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 
@@ -628,13 +609,9 @@ impl Hub {
 
     /// Get reactions by FID with retry logic and custom headers
     pub async fn get_reactions_by_fid(
-        &mut self,
+        &self,
         request: crate::proto::ReactionsByFidRequest,
     ) -> Result<crate::proto::MessagesResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 
@@ -656,13 +633,9 @@ impl Hub {
 
     /// Get links by FID with retry logic and custom headers
     pub async fn get_links_by_fid(
-        &mut self,
+        &self,
         request: crate::proto::LinksByFidRequest,
     ) -> Result<crate::proto::MessagesResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 
@@ -684,13 +657,9 @@ impl Hub {
 
     /// Get verifications by FID with retry logic and custom headers
     pub async fn get_verifications_by_fid(
-        &mut self,
+        &self,
         request: crate::proto::FidRequest,
     ) -> Result<crate::proto::MessagesResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 
@@ -712,13 +681,9 @@ impl Hub {
 
     /// Get user data by FID with retry logic and custom headers
     pub async fn get_user_data_by_fid(
-        &mut self,
+        &self,
         request: crate::proto::FidRequest,
     ) -> Result<crate::proto::MessagesResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 
@@ -740,13 +705,9 @@ impl Hub {
 
     /// Get all user data messages by FID with retry logic and custom headers
     pub async fn get_all_user_data_messages_by_fid(
-        &mut self,
+        &self,
         request: crate::proto::FidTimestampRequest,
     ) -> Result<crate::proto::MessagesResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 
@@ -768,13 +729,9 @@ impl Hub {
 
     /// Get all lend storage messages by FID with retry logic and custom headers
     pub async fn get_all_lend_storage_messages_by_fid(
-        &mut self,
+        &self,
         request: crate::proto::FidTimestampRequest,
     ) -> Result<crate::proto::MessagesResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 
@@ -798,13 +755,9 @@ impl Hub {
 
     /// Get on-chain events with retry logic and custom headers
     pub async fn get_on_chain_events(
-        &mut self,
+        &self,
         request: crate::proto::OnChainEventRequest,
     ) -> Result<crate::proto::OnChainEventResponse, Error> {
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
         let channel = self.channel.clone();
         let headers = Arc::clone(&self.headers);
 

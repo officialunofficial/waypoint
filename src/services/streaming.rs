@@ -1268,7 +1268,7 @@ impl Service for StreamingService {
 
         // First, get hub info to understand available shards
         let hub_info = {
-            let mut hub_guard = hub.lock().await;
+            let hub_guard = hub.lock().await;
             hub_guard.get_hub_info().await.map_err(|e| {
                 AppError::Service(ServiceError::Initialization(format!(
                     "Failed to get hub info: {}",
