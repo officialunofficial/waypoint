@@ -2,6 +2,16 @@
 
 All notable changes to Waypoint will be documented in this file.
 
+## [2026.2.2] - 2026-02-08
+
+### Performance
+
+- Remove Hub mutex serialization, enabling concurrent per-FID message-type fetching via `try_join!`
+- Add batch root parent resolution via single DB query before bulk cast insert
+- Fetch all 5 onchain event types concurrently via `tokio::join!` instead of serially
+- Process onchain events before batch message processing to avoid discarding on batch failure
+- Fix dropped onchain events in `reconcile_fids_batch`
+
 ## [2026.1.2] - 2026-01-01
 
 ### Bug Fixes

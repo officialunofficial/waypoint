@@ -3806,9 +3806,9 @@ dependencies = [
 
 [[package]]
 name = "rapidhash"
-version = "4.2.2"
+version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71ec30b38a417407efe7676bad0ca6b78f995f810185ece9af3bd5dc561185a9"
+checksum = "84816e4c99c467e92cf984ee6328caa976dfecd33a673544489d79ca2caaefe5"
 dependencies = [
  "rustversion",
 ]
@@ -5766,7 +5766,7 @@ dependencies = [
 
 [[package]]
 name = "waypoint"
-version = "2026.2.1"
+version = "2026.2.2"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
