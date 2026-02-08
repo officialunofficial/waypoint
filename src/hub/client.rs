@@ -776,6 +776,36 @@ impl Hub {
         .await
     }
 
+    /// Get all lend storage messages by FID with retry logic and custom headers
+    pub async fn get_all_lend_storage_messages_by_fid(
+        &mut self,
+        request: crate::proto::FidTimestampRequest,
+    ) -> Result<crate::proto::MessagesResponse, Error> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let channel = self.channel.clone();
+        let headers = Arc::clone(&self.headers);
+
+        self.retry_with_backoff(|| {
+            let channel = channel.clone();
+            let request = request.clone();
+            let headers = Arc::clone(&headers);
+            Box::pin(async move {
+                let channel = channel.ok_or(Error::NotConnected)?;
+                let mut client = HubServiceClient::new(channel);
+                let request_with_headers =
+                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
+                match client.get_all_lend_storage_messages_by_fid(request_with_headers).await {
+                    Ok(response) => Ok(response.into_inner()),
+                    Err(status) => Err(Error::StatusError(status)),
+                }
+            })
+        })
+        .await
+    }
+
     /// Get on-chain events with retry logic and custom headers
     pub async fn get_on_chain_events(
         &mut self,

@@ -5,7 +5,7 @@ use crate::redis::{
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::time::interval;
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 /// Context for dead letter handling
 pub struct DeadLetterContext<'a> {
@@ -186,6 +186,16 @@ impl RedisStream {
                     return Ok(stream_entries);
                 },
                 Err(e) => {
+                    // Handle NOGROUP error by recreating the consumer group
+                    let is_nogroup = matches!(&e, Error::RedisError(redis_err)
+                        if redis_err.to_string().contains("NOGROUP"));
+                    if is_nogroup {
+                        warn!("Consumer group '{}' not found for key='{}', recreating", group, key);
+                        if let Err(create_err) = self.create_group(key, group).await {
+                            error!("Failed to recreate consumer group: {}", create_err);
+                        }
+                    }
+
                     attempts += 1;
                     if attempts >= self.max_retry_attempts {
                         return Err(e);
