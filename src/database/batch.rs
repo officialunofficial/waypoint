@@ -17,9 +17,9 @@ use crate::{
 };
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::time::OffsetDateTime};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 /// Default batch size for database operations
 #[allow(dead_code)]
@@ -785,6 +785,86 @@ impl<'a> BatchInserter<'a> {
         Ok(total_inserted)
     }
 
+    /// Resolve root parent fields for a batch of CastInserts using a single DB query.
+    /// - URL-parented casts: root_parent_url = parent_url (trivial, no lookup)
+    /// - Cast-parented casts: batch query DB for parent's root_parent fields
+    /// - Unresolvable: left as None (RootParentBackfill handles these)
+    async fn resolve_root_parents_batch(&self, casts: &mut [CastInsert<'_>]) {
+        // 1. Handle URL parents (trivial — root is the URL itself)
+        for cast in casts.iter_mut() {
+            if let Some(url) = cast.parent_url {
+                cast.root_parent_url = Some(url.to_string());
+            }
+        }
+
+        // 2. Collect unique parent hashes that need DB lookup
+        let mut seen = HashSet::new();
+        let parent_hashes: Vec<Vec<u8>> = casts
+            .iter()
+            .filter(|c| c.root_parent_url.is_none())
+            .filter_map(|c| c.parent_hash)
+            .map(|h| h.to_vec())
+            .filter(|h| seen.insert(h.clone()))
+            .collect();
+
+        if parent_hashes.is_empty() {
+            return;
+        }
+
+        // 3. Single batch query to resolve root parents from existing casts
+        let rows = match sqlx::query_as::<_, (Vec<u8>, i64, Vec<u8>, Option<String>)>(
+            r#"
+            SELECT
+                hash,
+                COALESCE(root_parent_fid, fid) as root_fid,
+                COALESCE(root_parent_hash, hash) as root_hash,
+                root_parent_url
+            FROM casts
+            WHERE hash = ANY($1) AND deleted_at IS NULL
+            "#,
+        )
+        .bind(&parent_hashes)
+        .fetch_all(self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                debug!("Error resolving root parents in batch: {}, leaving as NULL", e);
+                return;
+            },
+        };
+
+        // 4. Build lookup map from hash → (root_fid, root_hash, root_url)
+        let lookup: HashMap<Vec<u8>, (i64, Vec<u8>, Option<String>)> = rows
+            .into_iter()
+            .map(|(hash, root_fid, root_hash, root_url)| (hash, (root_fid, root_hash, root_url)))
+            .collect();
+
+        let resolved = lookup.len();
+
+        // 5. Apply resolved roots to CastInserts
+        for cast in casts.iter_mut() {
+            if cast.root_parent_url.is_some() {
+                continue; // Already resolved via URL parent
+            }
+            if let Some(parent_hash) = cast.parent_hash
+                && let Some((root_fid, root_hash, root_url)) = lookup.get(parent_hash)
+            {
+                cast.root_parent_fid = Some(*root_fid);
+                cast.root_parent_hash = Some(root_hash.clone());
+                cast.root_parent_url = root_url.clone();
+            }
+        }
+
+        if resolved > 0 {
+            debug!(
+                "Resolved root parents for {}/{} unique parent hashes from DB",
+                resolved,
+                parent_hashes.len()
+            );
+        }
+    }
+
     /// Process a batch of messages, grouping them by type and inserting in bulk
     pub async fn process_message_batch(
         &self,
@@ -797,13 +877,10 @@ impl<'a> BatchInserter<'a> {
         // Group messages by type to batch insert similar message types
         let grouped = Self::group_messages_by_type(messages);
 
-        // Insert messages table records if configured
-        // We'll process this separately since all messages go into the messages table
-        if !messages.is_empty() {
-            match self.bulk_insert_messages(messages).await {
-                Ok(count) => trace!("Bulk inserted {} messages", count),
-                Err(e) => error!("Error bulk inserting messages: {}", e),
-            }
+        // Insert into the messages table (all types go here regardless of specific type tables)
+        match self.bulk_insert_messages(messages).await {
+            Ok(count) => trace!("Bulk inserted {} messages", count),
+            Err(e) => error!("Error bulk inserting messages: {}", e),
         }
 
         // Process each message type in parallel
@@ -868,6 +945,11 @@ impl<'a> BatchInserter<'a> {
                 // Add other message type handlers as needed
                 _ => {}, // Skip unsupported message types
             }
+        }
+
+        // Resolve root parents for casts before bulk insert
+        if !cast_inserts.is_empty() {
+            self.resolve_root_parents_batch(&mut cast_inserts).await;
         }
 
         // Execute bulk inserts for each type
