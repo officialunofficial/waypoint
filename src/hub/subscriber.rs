@@ -25,9 +25,7 @@ pub type PreProcessHandler = Arc<
 pub type PostProcessHandler =
     Arc<dyn Fn(&[HubEvent], &[Vec<u8>]) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
 
-/// Classify a HubEvent into its stream key suffix and whether it's a message event.
-///
-/// Returns (stream_key_suffix, is_message_event).
+/// Classify a message type integer into its stream key suffix.
 fn classify_message_type(message_type: Option<i32>) -> &'static str {
     match message_type {
         Some(1) | Some(2) => "casts",
@@ -43,6 +41,7 @@ fn classify_message_type(message_type: Option<i32>) -> &'static str {
     }
 }
 
+/// Classify an on-chain event type integer into its stream key suffix.
 fn classify_onchain_event_type(onchain_type: Option<i32>) -> &'static str {
     match onchain_type {
         Some(1) => "onchain:signer",
@@ -54,44 +53,29 @@ fn classify_onchain_event_type(onchain_type: Option<i32>) -> &'static str {
     }
 }
 
+/// Classify a HubEvent into its stream key suffix and whether it is a message event.
 fn classify_hub_event(event: &HubEvent) -> (&'static str, bool) {
     match event.r#type {
-        1 => {
-            // MERGE_MESSAGE
-            let msg_type = if let Some(hub_event::Body::MergeMessageBody(body)) = &event.body {
-                body.message.as_ref().and_then(|m| m.data.as_ref().map(|data| data.r#type))
-            } else {
-                None
+        // MERGE_MESSAGE | PRUNE_MESSAGE | REVOKE_MESSAGE
+        1..=3 => {
+            let message = match &event.body {
+                Some(hub_event::Body::MergeMessageBody(b)) => b.message.as_ref(),
+                Some(hub_event::Body::PruneMessageBody(b)) => b.message.as_ref(),
+                Some(hub_event::Body::RevokeMessageBody(b)) => b.message.as_ref(),
+                _ => None,
             };
-            (classify_message_type(msg_type), true)
-        },
-        2 => {
-            // PRUNE_MESSAGE
-            let msg_type = if let Some(hub_event::Body::PruneMessageBody(body)) = &event.body {
-                body.message.as_ref().and_then(|m| m.data.as_ref().map(|data| data.r#type))
-            } else {
-                None
-            };
-            (classify_message_type(msg_type), true)
-        },
-        3 => {
-            // REVOKE_MESSAGE
-            let msg_type = if let Some(hub_event::Body::RevokeMessageBody(body)) = &event.body {
-                body.message.as_ref().and_then(|m| m.data.as_ref().map(|data| data.r#type))
-            } else {
-                None
-            };
+            let msg_type = message.and_then(|m| m.data.as_ref().map(|data| data.r#type));
             (classify_message_type(msg_type), true)
         },
         6 => ("username_proofs", false), // MERGE_USERNAME_PROOF
         9 => {
             // MERGE_ON_CHAIN_EVENT
-            let onchain_type =
-                if let Some(hub_event::Body::MergeOnChainEventBody(body)) = &event.body {
-                    body.on_chain_event.as_ref().map(|e| e.r#type)
-                } else {
-                    None
-                };
+            let onchain_type = match &event.body {
+                Some(hub_event::Body::MergeOnChainEventBody(b)) => {
+                    b.on_chain_event.as_ref().map(|e| e.r#type)
+                },
+                _ => None,
+            };
             (classify_onchain_event_type(onchain_type), false)
         },
         10 => ("merge_failures", false), // MERGE_FAILURE
@@ -1053,97 +1037,62 @@ mod tests {
     };
     use std::collections::HashMap;
 
-    /// Helper to build a HubEvent with a MERGE_MESSAGE containing the given message type
+    /// Build a minimal test Message with the given message type.
+    fn test_message(message_type: i32) -> Message {
+        Message {
+            data: Some(MessageData {
+                r#type: message_type,
+                fid: 1,
+                timestamp: 0,
+                network: 0,
+                body: None,
+            }),
+            hash: vec![],
+            hash_scheme: 0,
+            signature: vec![],
+            signature_scheme: 0,
+            signer: vec![],
+            data_bytes: None,
+        }
+    }
+
+    /// Build a HubEvent with the given event type and body.
+    fn hub_event(event_type: i32, body: Option<hub_event::Body>) -> HubEvent {
+        HubEvent { r#type: event_type, id: 0, body, block_number: 0, shard_index: 0, timestamp: 0 }
+    }
+
     fn merge_message_event(message_type: i32) -> HubEvent {
-        HubEvent {
-            r#type: 1, // MERGE_MESSAGE
-            id: 0,
-            body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
-                message: Some(Message {
-                    data: Some(MessageData {
-                        r#type: message_type,
-                        fid: 1,
-                        timestamp: 0,
-                        network: 0,
-                        body: None,
-                    }),
-                    hash: vec![],
-                    hash_scheme: 0,
-                    signature: vec![],
-                    signature_scheme: 0,
-                    signer: vec![],
-                    data_bytes: None,
-                }),
+        hub_event(
+            1,
+            Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
+                message: Some(test_message(message_type)),
                 deleted_messages: vec![],
             })),
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        }
+        )
     }
 
-    /// Helper to build a PRUNE_MESSAGE event
     fn prune_message_event(message_type: i32) -> HubEvent {
-        HubEvent {
-            r#type: 2,
-            id: 0,
-            body: Some(hub_event::Body::PruneMessageBody(PruneMessageBody {
-                message: Some(Message {
-                    data: Some(MessageData {
-                        r#type: message_type,
-                        fid: 1,
-                        timestamp: 0,
-                        network: 0,
-                        body: None,
-                    }),
-                    hash: vec![],
-                    hash_scheme: 0,
-                    signature: vec![],
-                    signature_scheme: 0,
-                    signer: vec![],
-                    data_bytes: None,
-                }),
+        hub_event(
+            2,
+            Some(hub_event::Body::PruneMessageBody(PruneMessageBody {
+                message: Some(test_message(message_type)),
             })),
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        }
+        )
     }
 
-    /// Helper to build a REVOKE_MESSAGE event
     fn revoke_message_event(message_type: i32) -> HubEvent {
-        HubEvent {
-            r#type: 3,
-            id: 0,
-            body: Some(hub_event::Body::RevokeMessageBody(RevokeMessageBody {
-                message: Some(Message {
-                    data: Some(MessageData {
-                        r#type: message_type,
-                        fid: 1,
-                        timestamp: 0,
-                        network: 0,
-                        body: None,
-                    }),
-                    hash: vec![],
-                    hash_scheme: 0,
-                    signature: vec![],
-                    signature_scheme: 0,
-                    signer: vec![],
-                    data_bytes: None,
-                }),
+        hub_event(
+            3,
+            Some(hub_event::Body::RevokeMessageBody(RevokeMessageBody {
+                message: Some(test_message(message_type)),
             })),
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        }
+        )
     }
 
-    /// Helper to build a MERGE_ON_CHAIN_EVENT
     fn onchain_event(onchain_type: i32) -> HubEvent {
-        HubEvent {
-            r#type: 9,
-            id: 0,
-            body: Some(hub_event::Body::MergeOnChainEventBody(MergeOnChainEventBody {
+        hub_event(
+            9,
+            Some(hub_event::Body::MergeOnChainEventBody(MergeOnChainEventBody {
                 on_chain_event: Some(OnChainEvent {
                     r#type: onchain_type,
                     chain_id: 0,
@@ -1158,10 +1107,7 @@ mod tests {
                     version: 0,
                 }),
             })),
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        }
+        )
     }
 
     #[test]
@@ -1267,45 +1213,21 @@ mod tests {
 
     #[test]
     fn test_classify_hub_event_username_proof() {
-        let event = HubEvent {
-            r#type: 6, // MERGE_USERNAME_PROOF
-            id: 0,
-            body: None,
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        };
-        let (key, is_msg) = classify_hub_event(&event);
+        let (key, is_msg) = classify_hub_event(&hub_event(6, None));
         assert_eq!(key, "username_proofs");
         assert!(!is_msg);
     }
 
     #[test]
     fn test_classify_hub_event_merge_failure() {
-        let event = HubEvent {
-            r#type: 10,
-            id: 0,
-            body: None,
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        };
-        let (key, is_msg) = classify_hub_event(&event);
+        let (key, is_msg) = classify_hub_event(&hub_event(10, None));
         assert_eq!(key, "merge_failures");
         assert!(!is_msg);
     }
 
     #[test]
     fn test_classify_hub_event_unknown_event_type() {
-        let event = HubEvent {
-            r#type: 99,
-            id: 0,
-            body: None,
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        };
-        let (key, is_msg) = classify_hub_event(&event);
+        let (key, is_msg) = classify_hub_event(&hub_event(99, None));
         assert_eq!(key, "unknown");
         assert!(!is_msg);
     }
@@ -1313,15 +1235,7 @@ mod tests {
     #[test]
     fn test_classify_hub_event_missing_body() {
         // MERGE_MESSAGE with no body
-        let event = HubEvent {
-            r#type: 1,
-            id: 0,
-            body: None,
-            block_number: 0,
-            shard_index: 0,
-            timestamp: 0,
-        };
-        let (key, is_msg) = classify_hub_event(&event);
+        let (key, is_msg) = classify_hub_event(&hub_event(1, None));
         assert_eq!(key, "unknown");
         assert!(is_msg, "MERGE_MESSAGE is still a message event even with missing body");
     }
