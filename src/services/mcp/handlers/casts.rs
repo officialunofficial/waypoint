@@ -916,3 +916,300 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::core::data_context::DataAccessError;
+    use crate::core::types::{Fid, Message, MessageId, MessageType};
+    use crate::services::mcp::base::WaypointMcpService;
+    use async_trait::async_trait;
+
+    // Minimal mock types to access associated functions on WaypointMcpService<DB, HC>
+    #[derive(Clone, Debug)]
+    struct MockDb;
+
+    #[async_trait]
+    impl crate::core::data_context::Database for MockDb {
+        async fn get_message(
+            &self,
+            _id: &MessageId,
+            _message_type: MessageType,
+        ) -> crate::core::data_context::Result<Message> {
+            Err(DataAccessError::Other("mock".into()))
+        }
+        async fn get_messages_by_fid(
+            &self,
+            _fid: Fid,
+            _message_type: MessageType,
+            _limit: usize,
+            _cursor: Option<MessageId>,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn store_message(&self, _message: Message) -> crate::core::data_context::Result<()> {
+            Ok(())
+        }
+        async fn delete_message(
+            &self,
+            _id: &MessageId,
+            _message_type: MessageType,
+        ) -> crate::core::data_context::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct MockHub;
+
+    #[async_trait]
+    impl crate::core::data_context::HubClient for MockHub {
+        async fn get_user_data_by_fid(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_user_data(
+            &self,
+            _fid: Fid,
+            _data_type: &str,
+        ) -> crate::core::data_context::Result<Option<Message>> {
+            Ok(None)
+        }
+        async fn get_username_proofs_by_fid(
+            &self,
+            _fid: Fid,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_username_proof_by_name(
+            &self,
+            _name: &str,
+        ) -> crate::core::data_context::Result<Option<crate::proto::UserNameProof>> {
+            Ok(None)
+        }
+        async fn get_verifications_by_fid(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_casts_by_fid(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_cast(
+            &self,
+            _fid: Fid,
+            _hash: &[u8],
+        ) -> crate::core::data_context::Result<Option<Message>> {
+            Ok(None)
+        }
+        async fn get_casts_by_mention(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_casts_by_parent(
+            &self,
+            _parent_fid: Fid,
+            _parent_hash: &[u8],
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_casts_by_parent_url(
+            &self,
+            _parent_url: &str,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_all_casts_by_fid(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+            _start_time: Option<u64>,
+            _end_time: Option<u64>,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_reaction(
+            &self,
+            _fid: Fid,
+            _reaction_type: u8,
+            _target_cast_fid: Option<Fid>,
+            _target_cast_hash: Option<&[u8]>,
+            _target_url: Option<&str>,
+        ) -> crate::core::data_context::Result<Option<Message>> {
+            Ok(None)
+        }
+        async fn get_reactions_by_fid(
+            &self,
+            _fid: Fid,
+            _reaction_type: Option<u8>,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_reactions_by_target(
+            &self,
+            _target_cast_fid: Option<Fid>,
+            _target_cast_hash: Option<&[u8]>,
+            _target_url: Option<&str>,
+            _reaction_type: Option<u8>,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_all_reactions_by_fid(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+            _start_time: Option<u64>,
+            _end_time: Option<u64>,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_link(
+            &self,
+            _fid: Fid,
+            _link_type: &str,
+            _target_fid: Fid,
+        ) -> crate::core::data_context::Result<Option<Message>> {
+            Ok(None)
+        }
+        async fn get_links_by_fid(
+            &self,
+            _fid: Fid,
+            _link_type: Option<&str>,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_links_by_target(
+            &self,
+            _target_fid: Fid,
+            _link_type: Option<&str>,
+            _limit: usize,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_link_compact_state_by_fid(
+            &self,
+            _fid: Fid,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_all_links_by_fid(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+            _start_time: Option<u64>,
+            _end_time: Option<u64>,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+    }
+
+    type TestService = WaypointMcpService<MockDb, MockHub>;
+
+    #[test]
+    fn test_count_replies_recursive_no_replies() {
+        let tree = serde_json::json!({"text": "hello"});
+        assert_eq!(TestService::count_replies_recursive(&tree), 0);
+    }
+
+    #[test]
+    fn test_count_replies_recursive_empty_replies() {
+        let tree = serde_json::json!({"text": "hello", "replies": []});
+        assert_eq!(TestService::count_replies_recursive(&tree), 0);
+    }
+
+    #[test]
+    fn test_count_replies_recursive_flat_replies() {
+        let tree = serde_json::json!({
+            "text": "root",
+            "replies": [
+                {"text": "reply 1"},
+                {"text": "reply 2"},
+                {"text": "reply 3"}
+            ]
+        });
+        assert_eq!(TestService::count_replies_recursive(&tree), 3);
+    }
+
+    #[test]
+    fn test_count_replies_recursive_nested_replies() {
+        let tree = serde_json::json!({
+            "text": "root",
+            "replies": [
+                {
+                    "text": "reply 1",
+                    "replies": [
+                        {"text": "nested 1"},
+                        {"text": "nested 2"}
+                    ]
+                },
+                {"text": "reply 2"}
+            ]
+        });
+        // 2 top-level + 2 nested = 4
+        assert_eq!(TestService::count_replies_recursive(&tree), 4);
+    }
+
+    #[test]
+    fn test_count_replies_recursive_deeply_nested() {
+        let tree = serde_json::json!({
+            "text": "root",
+            "replies": [
+                {
+                    "text": "level 1",
+                    "replies": [
+                        {
+                            "text": "level 2",
+                            "replies": [
+                                {"text": "level 3"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+        // 1 at each level = 3
+        assert_eq!(TestService::count_replies_recursive(&tree), 3);
+    }
+
+    #[test]
+    fn test_count_replies_recursive_replies_not_array() {
+        let tree = serde_json::json!({"replies": "not an array"});
+        assert_eq!(TestService::count_replies_recursive(&tree), 0);
+    }
+
+    #[test]
+    fn test_truncate_text_short() {
+        assert_eq!(TestService::truncate_text("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_text_exact_length() {
+        assert_eq!(TestService::truncate_text("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_text_long() {
+        assert_eq!(TestService::truncate_text("hello world", 5), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_text_empty() {
+        assert_eq!(TestService::truncate_text("", 5), "");
+    }
+}
