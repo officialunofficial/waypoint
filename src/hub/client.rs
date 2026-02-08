@@ -1,7 +1,7 @@
 use crate::proto::{FidsRequest, FidsResponse};
 use crate::{
     config::HubConfig,
-    hub::stream::EventStream,
+    hub::{HeaderInterceptor, stream::EventStream},
     proto::{
         BlocksRequest, GetInfoRequest, GetInfoResponse, ShardChunksRequest, ShardChunksResponse,
         hub_service_client::HubServiceClient,
@@ -15,8 +15,13 @@ use std::{
 };
 use tokio_stream::Stream;
 use tonic::Status;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::{error, info, warn};
+
+/// Hub gRPC client configured with automatic custom header injection.
+pub type AuthenticatedHubServiceClient =
+    HubServiceClient<InterceptedService<Channel, HeaderInterceptor>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -124,8 +129,8 @@ impl HubRetryPolicy {
 pub struct Hub {
     // Use a Channel directly for building services with middleware
     channel: Option<Channel>,
-    // Raw client without middleware
-    client: Option<HubServiceClient<Channel>>,
+    // Authenticated client with automatic header injection
+    client: Option<AuthenticatedHubServiceClient>,
     config: Arc<HubConfig>,
     host: String,
     // Headers wrapped in Arc for cheap cloning in retry closures
@@ -156,9 +161,11 @@ impl Hub {
         })
     }
 
-    /// Add custom headers to request
-    fn add_custom_headers<T>(&self, request: tonic::Request<T>) -> tonic::Request<T> {
-        crate::hub::add_custom_headers(request, &self.headers)
+    fn create_authenticated_client(
+        channel: Channel,
+        headers: Arc<HashMap<String, String>>,
+    ) -> AuthenticatedHubServiceClient {
+        HubServiceClient::with_interceptor(channel, HeaderInterceptor::new(headers))
     }
 
     /// Create an empty hub instance for testing or mock purposes
@@ -259,13 +266,13 @@ impl Hub {
         // Store the channel for future use
         self.channel = Some(channel.clone());
 
-        // Create base client without middleware for operations that don't need retries
-        let client = HubServiceClient::new(channel.clone());
+        // Create base client with automatic custom header injection
+        let client = Self::create_authenticated_client(channel.clone(), Arc::clone(&self.headers));
         self.client = Some(client);
 
         // Test connection with info request
         // Get hub info without middleware first time to avoid double retry
-        let info_request = self.add_custom_headers(tonic::Request::new(GetInfoRequest {}));
+        let info_request = tonic::Request::new(GetInfoRequest {});
         match self.client.as_mut().unwrap().get_info(info_request).await {
             Ok(response) => {
                 let hub_info = response.into_inner();
@@ -385,7 +392,7 @@ impl Hub {
         }
     }
 
-    pub fn client(&mut self) -> Option<&mut HubServiceClient<Channel>> {
+    pub fn client(&mut self) -> Option<&mut AuthenticatedHubServiceClient> {
         self.client.as_mut()
     }
 
@@ -419,13 +426,11 @@ impl Hub {
                 start_block_number: start_block,
                 stop_block_number: end_block,
             });
-            let request_with_headers = self.add_custom_headers(request);
-
             // Get a mutable reference to the client
             let client = self.client.as_mut().ok_or(Error::NotConnected)?;
 
             // Try to execute the request
-            match client.get_blocks(request_with_headers).await {
+            match client.get_blocks(request).await {
                 Ok(response) => {
                     // Reset error count and update success timestamp
                     self.error_count.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -496,14 +501,13 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
                 let request = tonic::Request::new(ShardChunksRequest {
                     shard_id,
                     start_block_number: start_block,
                     stop_block_number: end_block,
                 });
-                let request_with_headers = crate::hub::add_custom_headers(request, &headers);
-                match client.get_shard_chunks(request_with_headers).await {
+                match client.get_shard_chunks(request).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -534,10 +538,9 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
                 let request = tonic::Request::new(GetInfoRequest {});
-                let request_with_headers = crate::hub::add_custom_headers(request, &headers);
-                match client.get_info(request_with_headers).await {
+                match client.get_info(request).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -579,15 +582,14 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
                 let request = tonic::Request::new(FidsRequest {
                     page_size,
                     page_token: page_token_clone,
                     reverse,
                     shard_id: 0,
                 });
-                let request_with_headers = crate::hub::add_custom_headers(request, &headers);
-                match client.get_fids(request_with_headers).await {
+                match client.get_fids(request).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -614,10 +616,8 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
-                let request_with_headers =
-                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
-                match client.get_casts_by_fid(request_with_headers).await {
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
+                match client.get_casts_by_fid(tonic::Request::new(request)).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -644,10 +644,8 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
-                let request_with_headers =
-                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
-                match client.get_reactions_by_fid(request_with_headers).await {
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
+                match client.get_reactions_by_fid(tonic::Request::new(request)).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -674,10 +672,8 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
-                let request_with_headers =
-                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
-                match client.get_links_by_fid(request_with_headers).await {
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
+                match client.get_links_by_fid(tonic::Request::new(request)).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -704,10 +700,8 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
-                let request_with_headers =
-                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
-                match client.get_verifications_by_fid(request_with_headers).await {
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
+                match client.get_verifications_by_fid(tonic::Request::new(request)).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -734,10 +728,8 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
-                let request_with_headers =
-                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
-                match client.get_user_data_by_fid(request_with_headers).await {
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
+                match client.get_user_data_by_fid(tonic::Request::new(request)).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -764,10 +756,8 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
-                let request_with_headers =
-                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
-                match client.get_all_user_data_messages_by_fid(request_with_headers).await {
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
+                match client.get_all_user_data_messages_by_fid(tonic::Request::new(request)).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -824,10 +814,8 @@ impl Hub {
             let headers = Arc::clone(&headers);
             Box::pin(async move {
                 let channel = channel.ok_or(Error::NotConnected)?;
-                let mut client = HubServiceClient::new(channel);
-                let request_with_headers =
-                    crate::hub::add_custom_headers(tonic::Request::new(request), &headers);
-                match client.get_on_chain_events(request_with_headers).await {
+                let mut client = Self::create_authenticated_client(channel, Arc::clone(&headers));
+                match client.get_on_chain_events(tonic::Request::new(request)).await {
                     Ok(response) => Ok(response.into_inner()),
                     Err(status) => Err(Error::StatusError(status)),
                 }
@@ -970,7 +958,7 @@ mod tests {
 
         // Test that custom headers are properly added to requests
         let request = tonic::Request::new(GetInfoRequest {});
-        let request_with_headers = hub.add_custom_headers(request);
+        let request_with_headers = crate::hub::add_custom_headers(request, &hub.headers);
 
         let metadata = request_with_headers.metadata();
         assert_eq!(metadata.get("x-api-key").unwrap().to_str().unwrap(), "test-key");

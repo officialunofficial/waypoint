@@ -1,12 +1,11 @@
-use crate::proto::hub_service_client::HubServiceClient;
-use tonic::transport::Channel;
+use crate::hub::client::AuthenticatedHubServiceClient;
 
 pub struct EventStream {
-    _client: HubServiceClient<Channel>,
+    _client: AuthenticatedHubServiceClient,
 }
 
 impl EventStream {
-    pub fn new(client: &mut HubServiceClient<Channel>) -> Self {
+    pub fn new(client: &mut AuthenticatedHubServiceClient) -> Self {
         Self { _client: client.clone() }
     }
 }
