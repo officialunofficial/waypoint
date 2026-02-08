@@ -25,6 +25,80 @@ pub type PreProcessHandler = Arc<
 pub type PostProcessHandler =
     Arc<dyn Fn(&[HubEvent], &[Vec<u8>]) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
 
+/// Classify a HubEvent into its stream key suffix and whether it's a message event.
+///
+/// Returns (stream_key_suffix, is_message_event).
+fn classify_message_type(message_type: Option<i32>) -> &'static str {
+    match message_type {
+        Some(1) | Some(2) => "casts",
+        Some(3) | Some(4) => "reactions",
+        Some(5) | Some(6) => "links",
+        Some(7) | Some(8) => "verifications",
+        Some(11) => "user_data",
+        Some(12) => "username_proofs",
+        Some(13) => "frame_actions",
+        Some(14) => "link_compact_states",
+        Some(15) => "lend_storage",
+        _ => "unknown",
+    }
+}
+
+fn classify_onchain_event_type(onchain_type: Option<i32>) -> &'static str {
+    match onchain_type {
+        Some(1) => "onchain:signer",
+        Some(2) => "onchain:signer_migrated",
+        Some(3) => "onchain:id_register",
+        Some(4) => "onchain:storage_rent",
+        Some(5) => "onchain:tier_purchase",
+        _ => "onchain:unknown",
+    }
+}
+
+fn classify_hub_event(event: &HubEvent) -> (&'static str, bool) {
+    match event.r#type {
+        1 => {
+            // MERGE_MESSAGE
+            let msg_type = if let Some(hub_event::Body::MergeMessageBody(body)) = &event.body {
+                body.message.as_ref().and_then(|m| m.data.as_ref().map(|data| data.r#type))
+            } else {
+                None
+            };
+            (classify_message_type(msg_type), true)
+        },
+        2 => {
+            // PRUNE_MESSAGE
+            let msg_type = if let Some(hub_event::Body::PruneMessageBody(body)) = &event.body {
+                body.message.as_ref().and_then(|m| m.data.as_ref().map(|data| data.r#type))
+            } else {
+                None
+            };
+            (classify_message_type(msg_type), true)
+        },
+        3 => {
+            // REVOKE_MESSAGE
+            let msg_type = if let Some(hub_event::Body::RevokeMessageBody(body)) = &event.body {
+                body.message.as_ref().and_then(|m| m.data.as_ref().map(|data| data.r#type))
+            } else {
+                None
+            };
+            (classify_message_type(msg_type), true)
+        },
+        6 => ("username_proofs", false), // MERGE_USERNAME_PROOF
+        9 => {
+            // MERGE_ON_CHAIN_EVENT
+            let onchain_type =
+                if let Some(hub_event::Body::MergeOnChainEventBody(body)) = &event.body {
+                    body.on_chain_event.as_ref().map(|e| e.r#type)
+                } else {
+                    None
+                };
+            (classify_onchain_event_type(onchain_type), false)
+        },
+        10 => ("merge_failures", false), // MERGE_FAILURE
+        _ => ("unknown", false),
+    }
+}
+
 struct BatchState {
     events: Vec<(HubEvent, Vec<u8>)>,
     current_bytes: usize,
@@ -856,98 +930,7 @@ impl HubSubscriber {
         // Process and group non-spam events
         for &idx in &keep_indices {
             let (event, bytes) = &batch.events[idx];
-            // Track if this event contains a message (for the messages stream)
-            let mut is_message_event = false;
-
-            let event_type = match event.r#type {
-                1 => {
-                    // MERGE_MESSAGE
-                    is_message_event = true;
-                    if let Some(hub_event::Body::MergeMessageBody(body)) = &event.body {
-                        match body
-                            .message
-                            .as_ref()
-                            .and_then(|m| m.data.as_ref().map(|data| data.r#type))
-                        {
-                            Some(1) | Some(2) => "casts",
-                            Some(3) | Some(4) => "reactions",
-                            Some(5) | Some(6) => "links",
-                            Some(7) | Some(8) => "verifications",
-                            Some(11) => "user_data",
-                            Some(12) => "username_proofs",
-                            Some(13) => "frame_actions",
-                            Some(14) => "link_compact_states",
-                            _ => "unknown",
-                        }
-                    } else {
-                        "unknown"
-                    }
-                },
-                2 => {
-                    // PRUNE_MESSAGE
-                    is_message_event = true;
-                    if let Some(hub_event::Body::PruneMessageBody(body)) = &event.body {
-                        match body
-                            .message
-                            .as_ref()
-                            .and_then(|m| m.data.as_ref().map(|data| data.r#type))
-                        {
-                            Some(1) | Some(2) => "casts",
-                            Some(3) | Some(4) => "reactions",
-                            Some(5) | Some(6) => "links",
-                            Some(7) | Some(8) => "verifications",
-                            Some(11) => "user_data",
-                            Some(12) => "username_proofs",
-                            Some(13) => "frame_actions",
-                            Some(14) => "link_compact_states",
-                            _ => "unknown",
-                        }
-                    } else {
-                        "unknown"
-                    }
-                },
-                3 => {
-                    // REVOKE_MESSAGE
-                    is_message_event = true;
-                    if let Some(hub_event::Body::RevokeMessageBody(body)) = &event.body {
-                        match body
-                            .message
-                            .as_ref()
-                            .and_then(|m| m.data.as_ref().map(|data| data.r#type))
-                        {
-                            Some(1) | Some(2) => "casts",
-                            Some(3) | Some(4) => "reactions",
-                            Some(5) | Some(6) => "links",
-                            Some(7) | Some(8) => "verifications",
-                            Some(11) => "user_data",
-                            Some(12) => "username_proofs",
-                            Some(13) => "frame_actions",
-                            Some(14) => "link_compact_states",
-                            _ => "unknown",
-                        }
-                    } else {
-                        "unknown"
-                    }
-                },
-                6 => "username_proofs", // MERGE_USERNAME_PROOF
-                9 => {
-                    // MERGE_ON_CHAIN_EVENT
-                    if let Some(hub_event::Body::MergeOnChainEventBody(body)) = &event.body {
-                        match body.on_chain_event.as_ref().map(|e| e.r#type) {
-                            Some(1) => "onchain:signer",
-                            Some(2) => "onchain:signer_migrated",
-                            Some(3) => "onchain:id_register",
-                            Some(4) => "onchain:storage_rent",
-                            Some(5) => "onchain:tier_purchase",
-                            _ => "onchain:unknown",
-                        }
-                    } else {
-                        "onchain:unknown"
-                    }
-                },
-                10 => "merge_failures", // MERGE_FAILURE
-                _ => "unknown",
-            };
+            let (event_type, is_message_event) = classify_hub_event(event);
             event_groups.entry(event_type).or_default().push(bytes.clone());
 
             // Also add message events to the "messages" stream for external consumption
@@ -1064,7 +1047,284 @@ pub struct SubscriberOptions {
 mod tests {
     use super::*;
     use crate::config::HubConfig;
+    use crate::proto::{
+        HubEvent, MergeMessageBody, MergeOnChainEventBody, Message, MessageData, OnChainEvent,
+        PruneMessageBody, RevokeMessageBody,
+    };
     use std::collections::HashMap;
+
+    /// Helper to build a HubEvent with a MERGE_MESSAGE containing the given message type
+    fn merge_message_event(message_type: i32) -> HubEvent {
+        HubEvent {
+            r#type: 1, // MERGE_MESSAGE
+            id: 0,
+            body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
+                message: Some(Message {
+                    data: Some(MessageData {
+                        r#type: message_type,
+                        fid: 1,
+                        timestamp: 0,
+                        network: 0,
+                        body: None,
+                    }),
+                    hash: vec![],
+                    hash_scheme: 0,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                    data_bytes: None,
+                }),
+                deleted_messages: vec![],
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        }
+    }
+
+    /// Helper to build a PRUNE_MESSAGE event
+    fn prune_message_event(message_type: i32) -> HubEvent {
+        HubEvent {
+            r#type: 2,
+            id: 0,
+            body: Some(hub_event::Body::PruneMessageBody(PruneMessageBody {
+                message: Some(Message {
+                    data: Some(MessageData {
+                        r#type: message_type,
+                        fid: 1,
+                        timestamp: 0,
+                        network: 0,
+                        body: None,
+                    }),
+                    hash: vec![],
+                    hash_scheme: 0,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                    data_bytes: None,
+                }),
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        }
+    }
+
+    /// Helper to build a REVOKE_MESSAGE event
+    fn revoke_message_event(message_type: i32) -> HubEvent {
+        HubEvent {
+            r#type: 3,
+            id: 0,
+            body: Some(hub_event::Body::RevokeMessageBody(RevokeMessageBody {
+                message: Some(Message {
+                    data: Some(MessageData {
+                        r#type: message_type,
+                        fid: 1,
+                        timestamp: 0,
+                        network: 0,
+                        body: None,
+                    }),
+                    hash: vec![],
+                    hash_scheme: 0,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                    data_bytes: None,
+                }),
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        }
+    }
+
+    /// Helper to build a MERGE_ON_CHAIN_EVENT
+    fn onchain_event(onchain_type: i32) -> HubEvent {
+        HubEvent {
+            r#type: 9,
+            id: 0,
+            body: Some(hub_event::Body::MergeOnChainEventBody(MergeOnChainEventBody {
+                on_chain_event: Some(OnChainEvent {
+                    r#type: onchain_type,
+                    chain_id: 0,
+                    block_number: 0,
+                    block_hash: vec![],
+                    block_timestamp: 0,
+                    transaction_hash: vec![],
+                    log_index: 0,
+                    fid: 1,
+                    body: None,
+                    tx_index: 0,
+                    version: 0,
+                }),
+            })),
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn test_classify_message_type_all_known_types() {
+        assert_eq!(classify_message_type(Some(1)), "casts");
+        assert_eq!(classify_message_type(Some(2)), "casts");
+        assert_eq!(classify_message_type(Some(3)), "reactions");
+        assert_eq!(classify_message_type(Some(4)), "reactions");
+        assert_eq!(classify_message_type(Some(5)), "links");
+        assert_eq!(classify_message_type(Some(6)), "links");
+        assert_eq!(classify_message_type(Some(7)), "verifications");
+        assert_eq!(classify_message_type(Some(8)), "verifications");
+        assert_eq!(classify_message_type(Some(11)), "user_data");
+        assert_eq!(classify_message_type(Some(12)), "username_proofs");
+        assert_eq!(classify_message_type(Some(13)), "frame_actions");
+        assert_eq!(classify_message_type(Some(14)), "link_compact_states");
+        assert_eq!(classify_message_type(Some(15)), "lend_storage");
+    }
+
+    #[test]
+    fn test_classify_message_type_unknown() {
+        assert_eq!(classify_message_type(Some(0)), "unknown");
+        assert_eq!(classify_message_type(Some(99)), "unknown");
+        assert_eq!(classify_message_type(None), "unknown");
+    }
+
+    #[test]
+    fn test_classify_onchain_event_type() {
+        assert_eq!(classify_onchain_event_type(Some(1)), "onchain:signer");
+        assert_eq!(classify_onchain_event_type(Some(2)), "onchain:signer_migrated");
+        assert_eq!(classify_onchain_event_type(Some(3)), "onchain:id_register");
+        assert_eq!(classify_onchain_event_type(Some(4)), "onchain:storage_rent");
+        assert_eq!(classify_onchain_event_type(Some(5)), "onchain:tier_purchase");
+        assert_eq!(classify_onchain_event_type(Some(99)), "onchain:unknown");
+        assert_eq!(classify_onchain_event_type(None), "onchain:unknown");
+    }
+
+    #[test]
+    fn test_classify_hub_event_merge_message() {
+        // All message types via MERGE_MESSAGE
+        let cases = vec![
+            (1, "casts"),
+            (2, "casts"),
+            (3, "reactions"),
+            (4, "reactions"),
+            (5, "links"),
+            (6, "links"),
+            (7, "verifications"),
+            (8, "verifications"),
+            (11, "user_data"),
+            (12, "username_proofs"),
+            (13, "frame_actions"),
+            (14, "link_compact_states"),
+            (15, "lend_storage"),
+        ];
+        for (msg_type, expected_key) in cases {
+            let event = merge_message_event(msg_type);
+            let (key, is_msg) = classify_hub_event(&event);
+            assert_eq!(
+                key, expected_key,
+                "MERGE_MESSAGE type {} should map to {}",
+                msg_type, expected_key
+            );
+            assert!(is_msg, "MERGE_MESSAGE should be a message event");
+        }
+    }
+
+    #[test]
+    fn test_classify_hub_event_prune_message() {
+        let event = prune_message_event(15); // lend_storage
+        let (key, is_msg) = classify_hub_event(&event);
+        assert_eq!(key, "lend_storage");
+        assert!(is_msg);
+
+        let event = prune_message_event(1); // cast_add
+        let (key, _) = classify_hub_event(&event);
+        assert_eq!(key, "casts");
+    }
+
+    #[test]
+    fn test_classify_hub_event_revoke_message() {
+        let event = revoke_message_event(15); // lend_storage
+        let (key, is_msg) = classify_hub_event(&event);
+        assert_eq!(key, "lend_storage");
+        assert!(is_msg);
+
+        let event = revoke_message_event(3); // reaction_add
+        let (key, _) = classify_hub_event(&event);
+        assert_eq!(key, "reactions");
+    }
+
+    #[test]
+    fn test_classify_hub_event_onchain() {
+        let event = onchain_event(1);
+        let (key, is_msg) = classify_hub_event(&event);
+        assert_eq!(key, "onchain:signer");
+        assert!(!is_msg);
+
+        let event = onchain_event(5);
+        let (key, _) = classify_hub_event(&event);
+        assert_eq!(key, "onchain:tier_purchase");
+    }
+
+    #[test]
+    fn test_classify_hub_event_username_proof() {
+        let event = HubEvent {
+            r#type: 6, // MERGE_USERNAME_PROOF
+            id: 0,
+            body: None,
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        };
+        let (key, is_msg) = classify_hub_event(&event);
+        assert_eq!(key, "username_proofs");
+        assert!(!is_msg);
+    }
+
+    #[test]
+    fn test_classify_hub_event_merge_failure() {
+        let event = HubEvent {
+            r#type: 10,
+            id: 0,
+            body: None,
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        };
+        let (key, is_msg) = classify_hub_event(&event);
+        assert_eq!(key, "merge_failures");
+        assert!(!is_msg);
+    }
+
+    #[test]
+    fn test_classify_hub_event_unknown_event_type() {
+        let event = HubEvent {
+            r#type: 99,
+            id: 0,
+            body: None,
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        };
+        let (key, is_msg) = classify_hub_event(&event);
+        assert_eq!(key, "unknown");
+        assert!(!is_msg);
+    }
+
+    #[test]
+    fn test_classify_hub_event_missing_body() {
+        // MERGE_MESSAGE with no body
+        let event = HubEvent {
+            r#type: 1,
+            id: 0,
+            body: None,
+            block_number: 0,
+            shard_index: 0,
+            timestamp: 0,
+        };
+        let (key, is_msg) = classify_hub_event(&event);
+        assert_eq!(key, "unknown");
+        assert!(is_msg, "MERGE_MESSAGE is still a message event even with missing body");
+    }
 
     #[test]
     fn test_shard_key_generation() {
