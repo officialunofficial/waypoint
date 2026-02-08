@@ -10,7 +10,7 @@ pub mod subscriber;
 // Re-export data providers
 pub use providers::FarcasterHubClient;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tonic::metadata::{MetadataKey, MetadataValue};
 use tracing::warn;
 
@@ -56,10 +56,30 @@ pub fn add_custom_headers<T>(
     request
 }
 
+/// gRPC interceptor that injects configured custom headers into every request.
+#[derive(Clone, Debug)]
+pub struct HeaderInterceptor {
+    headers: Arc<HashMap<String, String>>,
+}
+
+impl HeaderInterceptor {
+    pub(crate) fn new(headers: Arc<HashMap<String, String>>) -> Self {
+        Self { headers }
+    }
+}
+
+impl tonic::service::Interceptor for HeaderInterceptor {
+    fn call(&mut self, request: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+        Ok(add_custom_headers(request, &self.headers))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use tonic::Request;
+    use tonic::service::Interceptor;
 
     #[test]
     fn test_add_custom_headers_converts_underscores_to_hyphens() {
@@ -142,5 +162,18 @@ mod tests {
             "Bearer abc123-xyz789"
         );
         assert_eq!(metadata.get("x-api-version").unwrap().to_str().unwrap(), "v2.0");
+    }
+
+    #[test]
+    fn test_header_interceptor_adds_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("X_API_KEY".to_string(), "test-key-123".to_string());
+
+        let mut interceptor = HeaderInterceptor::new(Arc::new(headers));
+        let request = Request::new(());
+        let request = interceptor.call(request).unwrap();
+
+        let metadata = request.metadata();
+        assert_eq!(metadata.get("x-api-key").unwrap().to_str().unwrap(), "test-key-123");
     }
 }

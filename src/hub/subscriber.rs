@@ -1,10 +1,10 @@
 use crate::{
     config::HubConfig,
-    hub::{error::Error, filter::SpamFilter, stats::ProcessingStats},
-    proto::{
-        GetInfoRequest, HubEvent, HubEventType, SubscribeRequest, hub_event,
-        hub_service_client::HubServiceClient,
+    hub::{
+        client::AuthenticatedHubServiceClient, error::Error, filter::SpamFilter,
+        stats::ProcessingStats,
     },
+    proto::{GetInfoRequest, HubEvent, HubEventType, SubscribeRequest, hub_event},
     redis::{client::Redis, stream::RedisStream},
 };
 use dashmap::DashMap;
@@ -16,7 +16,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::RwLock;
-use tonic::transport::Channel;
 use tracing::{error, info, instrument, trace, warn};
 
 pub type PreProcessHandler = Arc<
@@ -39,7 +38,7 @@ impl BatchState {
 
 #[derive(Clone)]
 pub struct HubSubscriber {
-    hub: HubServiceClient<Channel>,
+    hub: AuthenticatedHubServiceClient,
     redis: Arc<Redis>,
     redis_stream: Arc<RedisStream>,
     stream_key: Arc<String>,
@@ -68,7 +67,7 @@ pub struct HubSubscriber {
 
 impl HubSubscriber {
     pub async fn new(
-        hub: HubServiceClient<Channel>,
+        hub: AuthenticatedHubServiceClient,
         redis: Arc<Redis>,
         redis_stream: RedisStream,
         hub_host: String,
@@ -161,11 +160,6 @@ impl HubSubscriber {
         self.redis.get_last_processed_event(&self.redis_key).await
     }
 
-    /// Add custom headers to request
-    fn add_custom_headers<T>(&self, request: tonic::Request<T>) -> tonic::Request<T> {
-        crate::hub::add_custom_headers(request, &self.hub_config.headers)
-    }
-
     async fn wait_for_ready(&self) -> Result<(), Error> {
         // Enhanced wait_for_ready with configurable retries and exponential backoff
         let max_attempts = self.hub_config.retry_max_attempts;
@@ -179,7 +173,6 @@ impl HubSubscriber {
 
             // Try to get hub info with custom headers
             let request = tonic::Request::new(GetInfoRequest {});
-            let request = self.add_custom_headers(request);
 
             match self.hub.clone().get_info(request).await {
                 Ok(_) => {
@@ -683,7 +676,6 @@ impl HubSubscriber {
                 event_types: self.event_types.as_ref().to_vec(),
                 shard_index: self.shard_index.map(|s| s as u32),
             });
-            let req = self.add_custom_headers(req);
 
             // Clone hub client before making the call
             let mut hub_clone = self.hub.clone();
