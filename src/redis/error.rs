@@ -80,13 +80,13 @@ impl ErrorHelpers {
             }
 
             // Check for Redis-specific errors
-            if let Some(redis_err) = frame.downcast_ref::<fred::error::RedisError>() {
+            if let Some(redis_err) = frame.downcast_ref::<fred::error::Error>() {
                 // Fred errors are simpler - most are recoverable
                 match redis_err.kind() {
-                    fred::error::RedisErrorKind::IO
-                    | fred::error::RedisErrorKind::Timeout
-                    | fred::error::RedisErrorKind::Backpressure => return true,
-                    fred::error::RedisErrorKind::Auth | fred::error::RedisErrorKind::Config => {
+                    fred::error::ErrorKind::IO
+                    | fred::error::ErrorKind::Timeout
+                    | fred::error::ErrorKind::Backpressure => return true,
+                    fred::error::ErrorKind::Auth | fred::error::ErrorKind::Config => {
                         return false;
                     },
                     _ => continue,
@@ -109,11 +109,11 @@ impl ErrorHelpers {
                 }
             }
 
-            if let Some(redis_err) = frame.downcast_ref::<fred::error::RedisError>() {
+            if let Some(redis_err) = frame.downcast_ref::<fred::error::Error>() {
                 match redis_err.kind() {
-                    fred::error::RedisErrorKind::IO
-                    | fred::error::RedisErrorKind::Auth
-                    | fred::error::RedisErrorKind::Timeout => return true,
+                    fred::error::ErrorKind::IO
+                    | fred::error::ErrorKind::Auth
+                    | fred::error::ErrorKind::Timeout => return true,
                     _ => continue,
                 }
             }
@@ -134,11 +134,11 @@ impl ErrorHelpers {
                 }
             }
 
-            if let Some(redis_err) = frame.downcast_ref::<fred::error::RedisError>() {
+            if let Some(redis_err) = frame.downcast_ref::<fred::error::Error>() {
                 match redis_err.kind() {
-                    fred::error::RedisErrorKind::Backpressure => return Some(1000),
-                    fred::error::RedisErrorKind::Timeout => return Some(500),
-                    fred::error::RedisErrorKind::IO => return Some(500),
+                    fred::error::ErrorKind::Backpressure => return Some(1000),
+                    fred::error::ErrorKind::Timeout => return Some(500),
+                    fred::error::ErrorKind::IO => return Some(500),
                     _ => continue,
                 }
             }
@@ -173,7 +173,7 @@ pub enum Error {
     #[error("Deserialization error: {0}")]
     DeserializationError(String),
     #[error("Redis error: {0}")]
-    RedisError(#[from] fred::error::RedisError),
+    RedisError(#[from] fred::error::Error),
     #[error("Pool error: {0}")]
     PoolError(String),
 }

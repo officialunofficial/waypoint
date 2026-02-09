@@ -259,7 +259,7 @@ impl RedisStream {
 
     /// Create a consumer group for the stream
     pub async fn create_group(&self, key: &str, group: &str) -> Result<(), Error> {
-        use fred::prelude::*;
+        use fred::interfaces::StreamsInterface;
 
         // Try to create the group
         let result: Result<String, _> = self.redis.pool.xgroup_create(key, group, "$", true).await;
@@ -291,7 +291,7 @@ impl RedisStream {
         group: &str,
         consumer: &str,
     ) -> Result<u64, Error> {
-        use fred::prelude::*;
+        use fred::interfaces::StreamsInterface;
 
         let result: u64 = self
             .redis
@@ -455,7 +455,7 @@ impl RedisStream {
 
     /// Wait until the Redis connection is ready
     pub async fn wait_until_ready(&self, timeout: Duration) -> Result<(), Error> {
-        use fred::prelude::*;
+        use fred::interfaces::ClientLike;
 
         tokio::time::timeout(timeout, self.redis.pool.wait_for_connect())
             .await

@@ -3,12 +3,11 @@ use crate::{
     metrics,
     redis::{
         circuit_breaker::RedisCircuitBreaker,
-        error::Error,
+        error::Error as CrateError,
         types::{PendingItem, PoolHealth, PoolHealthStatus},
     },
 };
 use fred::prelude::*;
-use fred::types::{ConnectionConfig, Expiration, PerformanceConfig, ReconnectPolicy, SetOptions};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -32,7 +31,7 @@ impl Default for PoolMetrics {
 }
 
 pub struct Redis {
-    pub pool: RedisPool,
+    pub pool: Pool,
     config: Option<RedisConfig>,
     /// Circuit breaker for protecting Redis operations
     circuit_breaker: Option<Arc<RedisCircuitBreaker>>,
@@ -41,14 +40,13 @@ pub struct Redis {
 }
 
 impl Redis {
-    pub async fn new(config: &RedisConfig) -> Result<Self, Error> {
+    pub async fn new(config: &RedisConfig) -> Result<Self, CrateError> {
         // Configure fred connection options
-        let redis_config = fred::types::RedisConfig::from_url(&config.url)
-            .map_err(|e| Error::PoolError(format!("Invalid Redis URL: {}", e)))?;
+        let redis_config = Config::from_url(&config.url)
+            .map_err(|e| CrateError::PoolError(format!("Invalid Redis URL: {}", e)))?;
 
         // Configure performance options
         let perf_config = PerformanceConfig {
-            auto_pipeline: true,
             default_command_timeout: Duration::from_millis(config.connection_timeout_ms),
             ..Default::default()
         };
@@ -72,31 +70,25 @@ impl Redis {
         reconnect_policy.set_jitter(50);
 
         // Create the pool with proper configuration
-        let pool = RedisPool::new(
+        let pool = Pool::new(
             redis_config,
             Some(perf_config),
             Some(connection_config),
             Some(reconnect_policy),
             config.max_pool_size as usize,
         )
-        .map_err(|e| Error::PoolError(format!("Failed to create Redis pool: {}", e)))?;
+        .map_err(|e| CrateError::PoolError(format!("Failed to create Redis pool: {}", e)))?;
 
         // Connect to Redis with timeout
-        pool.connect();
-
-        // Use a timeout for the connection to avoid hanging in tests
-        match tokio::time::timeout(
-            Duration::from_millis(config.connection_timeout_ms),
-            pool.wait_for_connect(),
-        )
-        .await
+        match tokio::time::timeout(Duration::from_millis(config.connection_timeout_ms), pool.init())
+            .await
         {
             Ok(Ok(_)) => {},
             Ok(Err(e)) => {
-                return Err(Error::PoolError(format!("Failed to connect to Redis: {}", e)));
+                return Err(CrateError::PoolError(format!("Failed to connect to Redis: {}", e)));
             },
             Err(_) => {
-                return Err(Error::PoolError(format!(
+                return Err(CrateError::PoolError(format!(
                     "Redis connection timeout after {}ms",
                     config.connection_timeout_ms
                 )));
@@ -119,18 +111,18 @@ impl Redis {
         );
 
         // Wire up event handlers for connection visibility.
-        // RedisPool doesn't implement EventInterface directly, so we use .next()
+        // Pool doesn't implement EventInterface directly, so we use .next()
         // to get a client handle -- these events fire for the entire pool.
         let client = pool.next();
-        client.on_error(|err| {
-            error!("Redis connection error: {:?}", err);
+        client.on_error(|(err, server)| async move {
+            error!("Redis connection error: {:?} (server: {:?})", err, server);
             Ok(())
         });
-        client.on_reconnect(|server| {
+        client.on_reconnect(|server| async move {
             info!("Redis reconnected to {}", server);
             Ok(())
         });
-        client.on_unresponsive(|server| {
+        client.on_unresponsive(|server| async move {
             warn!("Redis connection unresponsive: {}", server);
             Ok(())
         });
@@ -178,8 +170,8 @@ impl Redis {
     pub fn empty() -> Self {
         // Create an uninitialized pool for testing
         let config = RedisConfig::default();
-        let pool = RedisPool::new(fred::types::RedisConfig::default(), None, None, None, 1)
-            .expect("Failed to create empty pool");
+        let pool =
+            Pool::new(Config::default(), None, None, None, 1).expect("Failed to create empty pool");
 
         Self {
             pool,
@@ -325,7 +317,7 @@ impl Redis {
         &self,
         stream_key: &str,
         group_name: &str,
-    ) -> Result<crate::redis::types::ConsumerGroupHealth, Error> {
+    ) -> Result<crate::redis::types::ConsumerGroupHealth, CrateError> {
         use crate::redis::types::ConsumerGroupHealth;
 
         // For now, return a simplified version
@@ -355,12 +347,12 @@ impl Redis {
     pub async fn get_stream_metrics(
         &self,
         stream_key: &str,
-    ) -> Result<crate::redis::types::StreamMetrics, Error> {
+    ) -> Result<crate::redis::types::StreamMetrics, CrateError> {
         use crate::redis::types::StreamMetrics;
 
         let len: u64 = self.pool.xlen(stream_key).await.map_err(|e| {
             metrics::increment_redis_errors();
-            Error::RedisError(e)
+            CrateError::RedisError(e)
         })?;
 
         let metrics = StreamMetrics { processed_count: len, ..StreamMetrics::default() };
@@ -368,17 +360,17 @@ impl Redis {
         Ok(metrics)
     }
 
-    pub async fn check_connection(&self) -> Result<bool, Error> {
-        match self.pool.ping::<String>().await {
+    pub async fn check_connection(&self) -> Result<bool, CrateError> {
+        match self.pool.ping::<String>(None).await {
             Ok(response) => Ok(response == "PONG"),
             Err(e) => {
                 metrics::increment_redis_errors();
-                Err(Error::RedisError(e))
+                Err(CrateError::RedisError(e))
             },
         }
     }
 
-    pub async fn can_process_event(&self, event_id: u64) -> Result<bool, Error> {
+    pub async fn can_process_event(&self, event_id: u64) -> Result<bool, CrateError> {
         let event_cache_ttl = Duration::from_secs(60);
         let key = format!("processed_event:{}", event_id);
 
@@ -392,12 +384,12 @@ impl Redis {
                 false,
             )
             .await
-            .map_err(Error::RedisError)?;
+            .map_err(CrateError::RedisError)?;
 
         Ok(result.is_some())
     }
 
-    pub async fn xadd(&self, key: &str, value: &[u8]) -> Result<String, Error> {
+    pub async fn xadd(&self, key: &str, value: &[u8]) -> Result<String, CrateError> {
         self.xadd_maxlen(key, None, value).await
     }
 
@@ -406,9 +398,7 @@ impl Redis {
         key: &str,
         maxlen: Option<u64>,
         value: &[u8],
-    ) -> Result<String, Error> {
-        use fred::prelude::*;
-
+    ) -> Result<String, CrateError> {
         // Use a simpler approach with raw Redis command
         let result: String = if let Some(_len) = maxlen {
             // XADD key MAXLEN ~ len * field value
@@ -419,10 +409,10 @@ impl Redis {
                     false, // nomkstream
                     None,  // cap - we'll handle MAXLEN differently
                     "*",
-                    vec![("d", fred::types::RedisValue::Bytes(value.to_vec().into()))],
+                    vec![("d", Value::Bytes(value.to_vec().into()))],
                 )
                 .await
-                .map_err(Error::RedisError)?;
+                .map_err(CrateError::RedisError)?;
 
             // Trim the stream after adding using custom command
             // Since fred doesn't support MAXLEN directly, we'll handle trimming separately
@@ -437,10 +427,10 @@ impl Redis {
                     false, // nomkstream
                     None,  // no cap
                     "*",
-                    vec![("d", fred::types::RedisValue::Bytes(value.to_vec().into()))],
+                    vec![("d", Value::Bytes(value.to_vec().into()))],
                 )
                 .await
-                .map_err(Error::RedisError)?
+                .map_err(CrateError::RedisError)?
         };
 
         Ok(result)
@@ -452,44 +442,28 @@ impl Redis {
         key: &str,
         data: &[u8],
         metadata: &crate::redis::types::DeadLetterMetadata,
-    ) -> Result<String, Error> {
-        use fred::prelude::*;
-
+    ) -> Result<String, CrateError> {
         // Build fields with metadata
         let fields = vec![
             // Original message data
-            ("data", fred::types::RedisValue::Bytes(data.to_vec().into())),
+            ("data", Value::Bytes(data.to_vec().into())),
             // Metadata fields
-            ("original_id", fred::types::RedisValue::String(metadata.original_id.clone().into())),
-            (
-                "source_stream",
-                fred::types::RedisValue::String(metadata.source_stream.clone().into()),
-            ),
-            ("group_name", fred::types::RedisValue::String(metadata.group_name.clone().into())),
-            (
-                "consumer_name",
-                fred::types::RedisValue::String(metadata.consumer_name.clone().into()),
-            ),
-            ("delivery_count", fred::types::RedisValue::Integer(metadata.delivery_count as i64)),
-            (
-                "first_delivery_time",
-                fred::types::RedisValue::Integer(metadata.first_delivery_time as i64),
-            ),
-            (
-                "dead_letter_time",
-                fred::types::RedisValue::Integer(metadata.dead_letter_time as i64),
-            ),
-            ("reason", fred::types::RedisValue::String(metadata.reason.to_string().into())),
+            ("original_id", Value::String(metadata.original_id.clone().into())),
+            ("source_stream", Value::String(metadata.source_stream.clone().into())),
+            ("group_name", Value::String(metadata.group_name.clone().into())),
+            ("consumer_name", Value::String(metadata.consumer_name.clone().into())),
+            ("delivery_count", Value::Integer(metadata.delivery_count as i64)),
+            ("first_delivery_time", Value::Integer(metadata.first_delivery_time as i64)),
+            ("dead_letter_time", Value::Integer(metadata.dead_letter_time as i64)),
+            ("reason", Value::String(metadata.reason.to_string().into())),
             (
                 "error_message",
-                fred::types::RedisValue::String(
-                    metadata.error_message.clone().unwrap_or_default().into(),
-                ),
+                Value::String(metadata.error_message.clone().unwrap_or_default().into()),
             ),
         ];
 
         let id: String =
-            self.pool.xadd(key, false, None, "*", fields).await.map_err(Error::RedisError)?;
+            self.pool.xadd(key, false, None, "*", fields).await.map_err(CrateError::RedisError)?;
 
         Ok(id)
     }
@@ -497,14 +471,14 @@ impl Redis {
     pub async fn xinfo_groups(
         &self,
         key: &str,
-    ) -> Result<Vec<std::collections::HashMap<String, String>>, Error> {
+    ) -> Result<Vec<std::collections::HashMap<String, String>>, CrateError> {
         // Use custom command for XINFO GROUPS
         use fred::interfaces::ClientLike;
-        use fred::types::{ClusterHash, CustomCommand};
+        use fred::types::CustomCommand;
 
-        let cmd = CustomCommand::new("XINFO", ClusterHash::FirstKey, false);
-        let result: Result<Vec<Vec<RedisValue>>, _> =
-            self.pool.custom(cmd, vec![RedisValue::from("GROUPS"), RedisValue::from(key)]).await;
+        let cmd = CustomCommand::new("XINFO", None::<u16>, false);
+        let result: Result<Vec<Vec<Value>>, _> =
+            self.pool.custom(cmd, vec![Value::from("GROUPS"), Value::from(key)]).await;
 
         match result {
             Ok(groups) => {
@@ -516,8 +490,8 @@ impl Redis {
                         if let (Some(key), Some(value)) = (group.get(i), group.get(i + 1)) {
                             let key_str = key.as_string().unwrap_or_default().to_string();
                             let value_str = match value {
-                                fred::types::RedisValue::String(s) => s.to_string(),
-                                fred::types::RedisValue::Integer(i) => i.to_string(),
+                                Value::String(s) => s.to_string(),
+                                Value::Integer(i) => i.to_string(),
                                 _ => String::new(),
                             };
                             map.insert(key_str, value_str);
@@ -527,7 +501,7 @@ impl Redis {
                 }
                 Ok(group_maps)
             },
-            Err(e) => Err(Error::RedisError(e)),
+            Err(e) => Err(CrateError::RedisError(e)),
         }
     }
 
@@ -535,18 +509,15 @@ impl Redis {
         &self,
         key: &str,
         group: &str,
-    ) -> Result<Vec<std::collections::HashMap<String, String>>, Error> {
+    ) -> Result<Vec<std::collections::HashMap<String, String>>, CrateError> {
         // Use custom command for XINFO CONSUMERS
         use fred::interfaces::ClientLike;
-        use fred::types::{ClusterHash, CustomCommand};
+        use fred::types::CustomCommand;
 
-        let cmd = CustomCommand::new("XINFO", ClusterHash::FirstKey, false);
-        let result: Result<Vec<Vec<RedisValue>>, _> = self
+        let cmd = CustomCommand::new("XINFO", None::<u16>, false);
+        let result: Result<Vec<Vec<Value>>, _> = self
             .pool
-            .custom(
-                cmd,
-                vec![RedisValue::from("CONSUMERS"), RedisValue::from(key), RedisValue::from(group)],
-            )
+            .custom(cmd, vec![Value::from("CONSUMERS"), Value::from(key), Value::from(group)])
             .await;
 
         match result {
@@ -559,8 +530,8 @@ impl Redis {
                         if let (Some(key), Some(value)) = (consumer.get(i), consumer.get(i + 1)) {
                             let key_str = key.as_string().unwrap_or_default().to_string();
                             let value_str = match value {
-                                fred::types::RedisValue::String(s) => s.to_string(),
-                                fred::types::RedisValue::Integer(i) => i.to_string(),
+                                Value::String(s) => s.to_string(),
+                                Value::Integer(i) => i.to_string(),
                                 _ => String::new(),
                             };
                             map.insert(key_str, value_str);
@@ -570,7 +541,7 @@ impl Redis {
                 }
                 Ok(consumer_maps)
             },
-            Err(e) => Err(Error::RedisError(e)),
+            Err(e) => Err(CrateError::RedisError(e)),
         }
     }
 
@@ -580,14 +551,13 @@ impl Redis {
         consumer: &str,
         key: &str,
         count: u64,
-    ) -> Result<Vec<(String, Vec<u8>)>, Error> {
+    ) -> Result<Vec<(String, Vec<u8>)>, CrateError> {
         // Use 2 second blocking to reduce CPU usage from busy-waiting
         // This balances responsiveness with efficiency
         let block_timeout: u64 = 2000;
 
-        // Use xreadgroup from fred - let it return raw RedisValue to avoid parse errors
-        use fred::prelude::*;
-        let response: fred::types::RedisValue = self
+        // Use xreadgroup from fred - let it return raw Value to avoid parse errors
+        let response: Value = self
             .pool
             .xreadgroup(
                 group,
@@ -599,27 +569,27 @@ impl Redis {
                 ">", // Read new messages only
             )
             .await
-            .map_err(Error::RedisError)?;
+            .map_err(CrateError::RedisError)?;
 
         let mut results = Vec::with_capacity(count as usize);
 
         // Parse the response - it's an array of streams, each with messages
-        if let fred::types::RedisValue::Array(streams) = response {
+        if let Value::Array(streams) = response {
             for stream in streams {
-                if let fred::types::RedisValue::Array(stream_data) = stream
+                if let Value::Array(stream_data) = stream
                     && stream_data.len() >= 2
                 {
                     // stream_data[0] is the stream key, stream_data[1] is the messages array
-                    if let fred::types::RedisValue::Array(messages) = &stream_data[1] {
+                    if let Value::Array(messages) = &stream_data[1] {
                         for msg in messages {
-                            if let fred::types::RedisValue::Array(msg_data) = msg
+                            if let Value::Array(msg_data) = msg
                                 && msg_data.len() >= 2
                             {
                                 // msg_data[0] is the ID, msg_data[1] is the fields
                                 let id = msg_data[0].as_string().unwrap_or_default().to_string();
 
                                 // Extract the "d" field from the fields array
-                                if let fred::types::RedisValue::Array(fields) = &msg_data[1] {
+                                if let Value::Array(fields) = &msg_data[1] {
                                     // Fields are key-value pairs
                                     for i in (0..fields.len()).step_by(2) {
                                         if i + 1 < fields.len()
@@ -630,10 +600,10 @@ impl Redis {
                                         {
                                             // Handle both Bytes and String data types
                                             match &fields[i + 1] {
-                                                fred::types::RedisValue::Bytes(data) => {
+                                                Value::Bytes(data) => {
                                                     results.push((id.clone(), data.to_vec()));
                                                 },
-                                                fred::types::RedisValue::String(data) => {
+                                                Value::String(data) => {
                                                     results.push((
                                                         id.clone(),
                                                         data.as_bytes().to_vec(),
@@ -665,7 +635,7 @@ impl Redis {
     }
 
     /// Acknowledge message IDs - accepts anything convertible to Vec<String>
-    pub async fn xack<I>(&self, key: &str, group: &str, ids: I) -> Result<(), Error>
+    pub async fn xack<I>(&self, key: &str, group: &str, ids: I) -> Result<(), CrateError>
     where
         I: IntoIterator,
         I::Item: Into<String>,
@@ -675,7 +645,7 @@ impl Redis {
             return Ok(());
         }
 
-        let _: u64 = self.pool.xack(key, group, ids_vec).await.map_err(Error::RedisError)?;
+        let _: u64 = self.pool.xack(key, group, ids_vec).await.map_err(CrateError::RedisError)?;
 
         Ok(())
     }
@@ -686,27 +656,27 @@ impl Redis {
         group: &str,
         idle: Duration,
         count: u64,
-    ) -> Result<Vec<PendingItem>, Error> {
+    ) -> Result<Vec<PendingItem>, CrateError> {
         // Use custom command for XPENDING with IDLE filter
         use fred::interfaces::ClientLike;
 
         let idle_ms = idle.as_millis() as u64;
 
         // XPENDING key group IDLE idle_ms - + count
-        use fred::types::{ClusterHash, CustomCommand};
-        let cmd = CustomCommand::new("XPENDING", ClusterHash::FirstKey, false);
-        let result: Result<Vec<Vec<RedisValue>>, _> = self
+        use fred::types::CustomCommand;
+        let cmd = CustomCommand::new("XPENDING", None::<u16>, false);
+        let result: Result<Vec<Vec<Value>>, _> = self
             .pool
             .custom(
                 cmd,
                 vec![
-                    RedisValue::from(key),
-                    RedisValue::from(group),
-                    RedisValue::from("IDLE"),
-                    RedisValue::from(idle_ms.to_string()),
-                    RedisValue::from("-"),
-                    RedisValue::from("+"),
-                    RedisValue::from(count.to_string()),
+                    Value::from(key),
+                    Value::from(group),
+                    Value::from("IDLE"),
+                    Value::from(idle_ms.to_string()),
+                    Value::from("-"),
+                    Value::from("+"),
+                    Value::from(count.to_string()),
                 ],
             )
             .await;
@@ -719,11 +689,11 @@ impl Redis {
                         // Format: [id, consumer, idle_time, delivery_count]
                         let id = msg[0].as_string().unwrap_or_default().to_string();
                         let idle_time = match &msg[2] {
-                            fred::types::RedisValue::Integer(i) => *i as u64,
+                            Value::Integer(i) => *i as u64,
                             _ => 0,
                         };
                         let delivery_count = match &msg[3] {
-                            fred::types::RedisValue::Integer(i) => *i as u64,
+                            Value::Integer(i) => *i as u64,
                             _ => 0,
                         };
 
@@ -736,18 +706,18 @@ impl Redis {
             },
             Err(_e) => {
                 // Fallback to regular XPENDING without IDLE
-                use fred::types::{ClusterHash, CustomCommand};
-                let cmd = CustomCommand::new("XPENDING", ClusterHash::FirstKey, false);
-                let result: Result<Vec<Vec<RedisValue>>, _> = self
+                use fred::types::CustomCommand;
+                let cmd = CustomCommand::new("XPENDING", None::<u16>, false);
+                let result: Result<Vec<Vec<Value>>, _> = self
                     .pool
                     .custom(
                         cmd,
                         vec![
-                            RedisValue::from(key),
-                            RedisValue::from(group),
-                            RedisValue::from("-"),
-                            RedisValue::from("+"),
-                            RedisValue::from(count.to_string()),
+                            Value::from(key),
+                            Value::from(group),
+                            Value::from("-"),
+                            Value::from("+"),
+                            Value::from(count.to_string()),
                         ],
                     )
                     .await;
@@ -759,11 +729,11 @@ impl Redis {
                             if msg.len() >= 4 {
                                 let id = msg[0].as_string().unwrap_or_default().to_string();
                                 let idle_time = match &msg[2] {
-                                    fred::types::RedisValue::Integer(i) => *i as u64,
+                                    Value::Integer(i) => *i as u64,
                                     _ => 0,
                                 };
                                 let delivery_count = match &msg[3] {
-                                    fred::types::RedisValue::Integer(i) => *i as u64,
+                                    Value::Integer(i) => *i as u64,
                                     _ => 0,
                                 };
 
@@ -774,7 +744,7 @@ impl Redis {
                         }
                         Ok(items)
                     },
-                    Err(e) => Err(Error::RedisError(e)),
+                    Err(e) => Err(CrateError::RedisError(e)),
                 }
             },
         }
@@ -787,14 +757,13 @@ impl Redis {
         consumer: &str,
         min_idle_time: Duration,
         ids: &[String],
-    ) -> Result<Vec<(String, Vec<u8>)>, Error> {
+    ) -> Result<Vec<(String, Vec<u8>)>, CrateError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Use xclaim from fred - let it return raw RedisValue to avoid parse errors
-        use fred::prelude::*;
-        let claimed: fred::types::RedisValue = self
+        // Use xclaim from fred - let it return raw Value to avoid parse errors
+        let claimed: Value = self
             .pool
             .xclaim(
                 key,
@@ -809,21 +778,21 @@ impl Redis {
                 false, // justid=false to get full messages
             )
             .await
-            .map_err(Error::RedisError)?;
+            .map_err(CrateError::RedisError)?;
 
         let mut results = Vec::new();
 
         // Parse the response - it's an array of claimed messages
-        if let fred::types::RedisValue::Array(messages) = claimed {
+        if let Value::Array(messages) = claimed {
             for msg in messages {
-                if let fred::types::RedisValue::Array(msg_data) = msg
+                if let Value::Array(msg_data) = msg
                     && msg_data.len() >= 2
                 {
                     // msg_data[0] is the ID, msg_data[1] is the fields
                     let id = msg_data[0].as_string().unwrap_or_default().to_string();
 
                     // Extract the "d" field from the fields array
-                    if let fred::types::RedisValue::Array(fields) = &msg_data[1] {
+                    if let Value::Array(fields) = &msg_data[1] {
                         // Fields are key-value pairs
                         for i in (0..fields.len()).step_by(2) {
                             if i + 1 < fields.len()
@@ -831,11 +800,11 @@ impl Redis {
                             {
                                 // Handle both Bytes and String data types
                                 match &fields[i + 1] {
-                                    fred::types::RedisValue::Bytes(data) => {
+                                    Value::Bytes(data) => {
                                         results.push((id.clone(), data.to_vec()));
                                         break;
                                     },
-                                    fred::types::RedisValue::String(data) => {
+                                    Value::String(data) => {
                                         results.push((id.clone(), data.as_bytes().to_vec()));
                                         break;
                                     },
@@ -860,19 +829,19 @@ impl Redis {
         Ok(results)
     }
 
-    pub async fn xlen(&self, key: &str) -> Result<u64, Error> {
-        let result: u64 = self.pool.xlen(key).await.map_err(Error::RedisError)?;
+    pub async fn xlen(&self, key: &str) -> Result<u64, CrateError> {
+        let result: u64 = self.pool.xlen(key).await.map_err(CrateError::RedisError)?;
 
         Ok(result)
     }
 
-    pub async fn xdel(&self, key: &str, id: &str) -> Result<(), Error> {
-        let _: u64 = self.pool.xdel(key, vec![id]).await.map_err(Error::RedisError)?;
+    pub async fn xdel(&self, key: &str, id: &str) -> Result<(), CrateError> {
+        let _: u64 = self.pool.xdel(key, vec![id]).await.map_err(CrateError::RedisError)?;
 
         Ok(())
     }
 
-    pub async fn xtrim(&self, key: &str, older_than: Duration) -> Result<u64, Error> {
+    pub async fn xtrim(&self, key: &str, older_than: Duration) -> Result<u64, CrateError> {
         // Calculate the timestamp ID for trimming
         // Redis stream IDs are in format: timestamp-sequence
         let cutoff_time =
@@ -883,32 +852,30 @@ impl Redis {
         let min_id = format!("{}-0", cutoff_time);
 
         // Use fred's custom command to execute XTRIM with MINID
-        use fred::prelude::*;
         use fred::types::CustomCommand;
 
         let cmd = CustomCommand::new_static("XTRIM", None, false);
 
-        let args: Vec<fred::types::RedisValue> = vec![
+        let args: Vec<Value> = vec![
             key.into(),
             "MINID".into(),
             "~".into(), // Use approximate trimming for better performance
             min_id.into(),
         ];
 
-        let result: fred::types::RedisValue =
-            self.pool.custom(cmd, args).await.map_err(Error::RedisError)?;
+        let result: Value = self.pool.custom(cmd, args).await.map_err(CrateError::RedisError)?;
 
         // Convert result to u64
         let count = match result {
-            fred::types::RedisValue::Integer(n) => n as u64,
+            Value::Integer(n) => n as u64,
             _ => 0,
         };
 
         Ok(count)
     }
 
-    pub async fn get_last_processed_event(&self, key: &str) -> Result<Option<u64>, Error> {
-        let result: Option<String> = self.pool.get(key).await.map_err(Error::RedisError)?;
+    pub async fn get_last_processed_event(&self, key: &str) -> Result<Option<u64>, CrateError> {
+        let result: Option<String> = self.pool.get(key).await.map_err(CrateError::RedisError)?;
 
         match result {
             Some(val) => {
@@ -928,25 +895,29 @@ impl Redis {
         }
     }
 
-    pub async fn set_last_processed_event(&self, key: &str, event_id: u64) -> Result<(), Error> {
+    pub async fn set_last_processed_event(
+        &self,
+        key: &str,
+        event_id: u64,
+    ) -> Result<(), CrateError> {
         let _: () = self
             .pool
             .set(key, event_id.to_string(), None, None, false)
             .await
-            .map_err(Error::RedisError)?;
+            .map_err(CrateError::RedisError)?;
 
         Ok(())
     }
 
     // List operations for backfill
-    pub async fn llen(&self, key: &str) -> Result<u64, Error> {
-        let result: u64 = self.pool.llen(key).await.map_err(Error::RedisError)?;
+    pub async fn llen(&self, key: &str) -> Result<u64, CrateError> {
+        let result: u64 = self.pool.llen(key).await.map_err(CrateError::RedisError)?;
 
         Ok(result)
     }
 
-    pub async fn lpush(&self, key: &str, values: Vec<String>) -> Result<u64, Error> {
-        let result: u64 = self.pool.lpush(key, values).await.map_err(Error::RedisError)?;
+    pub async fn lpush(&self, key: &str, values: Vec<String>) -> Result<u64, CrateError> {
+        let result: u64 = self.pool.lpush(key, values).await.map_err(CrateError::RedisError)?;
 
         Ok(result)
     }
@@ -955,42 +926,48 @@ impl Redis {
         &self,
         keys: Vec<String>,
         timeout: u64,
-    ) -> Result<Option<(String, String)>, Error> {
+    ) -> Result<Option<(String, String)>, CrateError> {
         let result: Option<(String, String)> =
-            self.pool.brpop(keys, timeout as f64).await.map_err(Error::RedisError)?;
+            self.pool.brpop(keys, timeout as f64).await.map_err(CrateError::RedisError)?;
 
         Ok(result)
     }
 
-    pub async fn lrange(&self, key: &str, start: i64, stop: i64) -> Result<Vec<String>, Error> {
+    pub async fn lrange(
+        &self,
+        key: &str,
+        start: i64,
+        stop: i64,
+    ) -> Result<Vec<String>, CrateError> {
         let result: Vec<String> =
-            self.pool.lrange(key, start, stop).await.map_err(Error::RedisError)?;
+            self.pool.lrange(key, start, stop).await.map_err(CrateError::RedisError)?;
 
         Ok(result)
     }
 
-    pub async fn lrem(&self, key: &str, count: i64, value: &str) -> Result<u64, Error> {
-        let result: u64 = self.pool.lrem(key, count, value).await.map_err(Error::RedisError)?;
+    pub async fn lrem(&self, key: &str, count: i64, value: &str) -> Result<u64, CrateError> {
+        let result: u64 =
+            self.pool.lrem(key, count, value).await.map_err(CrateError::RedisError)?;
 
         Ok(result)
     }
 
-    pub async fn keys(&self, pattern: &str) -> Result<Vec<String>, Error> {
-        use fred::types::Scanner;
+    pub async fn keys(&self, pattern: &str) -> Result<Vec<String>, CrateError> {
+        use fred::types::scan::Scanner;
         use futures::stream::TryStreamExt;
 
         // Use scan for pattern matching
         // This is safer than KEYS command in production
-        // RedisPool doesn't have scan, so we use next() to get a client
+        // Pool doesn't have scan, so we use next() to get a client
         let client = self.pool.next();
         let scan_stream = client.scan(pattern, Some(100), None);
         let mut results = Vec::new();
 
         let mut stream = Box::pin(scan_stream);
-        while let Some(mut page) = stream.try_next().await.map_err(Error::RedisError)? {
+        while let Some(mut page) = stream.try_next().await.map_err(CrateError::RedisError)? {
             if let Some(keys) = page.take_results() {
-                // Convert RedisKey to String, filtering out non-string keys
-                results.extend(keys.into_iter().filter_map(|k| k.into_string()));
+                // Convert Key to String, filtering out non-string keys
+                results.extend(keys.into_iter().filter_map(|k: Key| k.into_string()));
             }
         }
 

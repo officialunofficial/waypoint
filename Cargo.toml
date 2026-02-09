@@ -38,7 +38,7 @@ serde_with = "3.7.0"
 sqlx = { version = "0.8.4", features = ["runtime-tokio-rustls", "postgres", "json", "macros", "uuid", "time", "chrono"] }
 
 # Redis
-fred = { version = "9.1", features = ["enable-native-tls", "partial-tracing", "custom-reconnect-errors", "transactions"] }
+fred = { version = "10.1", features = ["enable-native-tls", "partial-tracing", "custom-reconnect-errors", "transactions"] }
 
 # Error handling
 thiserror = "1.0.66"
