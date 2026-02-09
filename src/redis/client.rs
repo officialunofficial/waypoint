@@ -12,7 +12,7 @@ use fred::types::{ConnectionConfig, Expiration, PerformanceConfig, ReconnectPoli
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Internal metrics tracking for pool health
 struct PoolMetrics {
@@ -62,13 +62,14 @@ impl Redis {
             ..Default::default()
         };
 
-        // Configure reconnection policy
-        let reconnect_policy = ReconnectPolicy::new_exponential(
-            3,      // max retries
+        // Configure reconnection: retry forever to survive Redis restarts
+        let mut reconnect_policy = ReconnectPolicy::new_exponential(
+            0,      // max attempts (0 = infinite)
             100,    // min delay ms
             30_000, // max delay ms
             2,      // multiplier
         );
+        reconnect_policy.set_jitter(50);
 
         // Create the pool with proper configuration
         let pool = RedisPool::new(
@@ -117,22 +118,38 @@ impl Redis {
             circuit_breaker.is_some(),
         );
 
-        // Start pool health monitoring
+        // Wire up event handlers for connection visibility.
+        // RedisPool doesn't implement EventInterface directly, so we use .next()
+        // to get a client handle -- these events fire for the entire pool.
+        let client = pool.next();
+        client.on_error(|err| {
+            error!("Redis connection error: {:?}", err);
+            Ok(())
+        });
+        client.on_reconnect(|server| {
+            info!("Redis reconnected to {}", server);
+            Ok(())
+        });
+        client.on_unresponsive(|server| {
+            warn!("Redis connection unresponsive: {}", server);
+            Ok(())
+        });
+
+        // Start pool health monitoring -- force reconnection when disconnected
         let pool_monitor = pool.clone();
-        let _max_pool_size = config.max_pool_size;
         let cb_monitor = circuit_breaker.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
 
-                // Fred handles pool metrics internally, but we can check connection state
-                let state = pool_monitor.state();
-                if matches!(state, fred::types::ClientState::Disconnected) {
-                    warn!("Redis pool disconnected, reconnecting...");
+                if matches!(pool_monitor.state(), fred::types::ClientState::Disconnected) {
+                    warn!("Redis pool disconnected, forcing reconnection...");
+                    if let Err(e) = pool_monitor.force_reconnection().await {
+                        error!("Failed to force Redis reconnection: {:?}", e);
+                    }
                 }
 
-                // Log circuit breaker metrics if enabled
                 if let Some(cb) = &cb_monitor {
                     let metrics = cb.get_metrics();
                     let state = cb.get_state().await;
