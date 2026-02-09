@@ -2,6 +2,12 @@
 
 All notable changes to Waypoint will be documented in this file.
 
+## [2026.2.4] - 2026-02-09
+
+### Miscellaneous Tasks
+
+- Upgrade fred Redis client v9 → v10.1
+
 ## [2026.2.2] - 2026-02-08
 
 ### Performance
