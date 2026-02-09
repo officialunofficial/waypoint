@@ -166,7 +166,7 @@ mod tests {
             redis.pool.xgroup_create(stream_key, group_name, "0", true).await;
 
         // Read with consumer1 to make it pending
-        let _: Result<fred::types::RedisValue, _> = redis
+        let _: Result<fred::types::Value, _> = redis
             .pool
             .xreadgroup(group_name, consumer1, Some(1), Some(0), false, stream_key, ">")
             .await;
