@@ -87,7 +87,7 @@ The Waypoint MCP integration provides the following tools to AI assistants:
 
 ## Resources
 
-Waypoint also exposes MCP resources that mirror tool outputs. These are read-only, JSON resources that can be fetched via `resources/read` with a `waypoint://` URI.
+Waypoint also exposes MCP resources for canonical read-only data views. These are JSON resources that can be fetched via `resources/read` with a `waypoint://` URI.
 
 ### URI Design (RFC 3986 / RFC 6570)
 
@@ -106,6 +106,8 @@ This design ensures proper URL encoding, avoids ambiguity, and follows web stand
 
 #### Verifications
 - `waypoint://verifications/{fid}`: Verified addresses for a FID
+- `waypoint://verifications/{fid}/{address}`: Specific verification by FID and address
+- `waypoint://verifications/all-by-fid/{fid}`: All verification messages for a FID
 
 #### Casts
 - `waypoint://casts/{fid}/{hash}`: Specific cast by author FID + hash
@@ -126,6 +128,10 @@ This design ensures proper URL encoding, avoids ambiguity, and follows web stand
 - `waypoint://links/by-fid/{fid}`: Links by FID (defaults to `follow`)
 - `waypoint://links/by-target/{fid}`: Links to a target FID (defaults to `follow`)
 - `waypoint://links/compact-state/{fid}`: Link compact state by FID
+
+#### Username Proofs
+- `waypoint://username-proofs/{fid}`: Username proofs (fname, ens_l1, basename) for a FID
+- `waypoint://username-proofs/by-name/{name}`: Username proof for a specific name
 
 ### URL Query Parameters
 
@@ -619,6 +625,158 @@ Find users that follow a specific user.
 
 By default, this returns "follow" type links unless a different link_type is specified.
 
+#### Get Username Proofs
+
+Retrieve username proofs for a Farcaster user, including fname, ens_l1, and basename proofs.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_username_proofs_by_fid",
+    "input": {
+      "fid": 12345
+    }
+  }
+}
+```
+
+The response includes details about each username proof:
+
+```json
+{
+  "fid": 12345,
+  "count": 2,
+  "proofs": [
+    {
+      "type": "fname",
+      "name": "alice",
+      "fid": 12345,
+      "owner": "0x0000000000000000000000000000000000000000",
+      "timestamp": 1672531200
+    },
+    {
+      "type": "ens_l1",
+      "name": "alice.eth",
+      "fid": 12345,
+      "owner": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+      "timestamp": 1672617600
+    }
+  ]
+}
+```
+
+#### Get Username Proof
+
+Retrieve a single username proof by name.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_username_proof",
+    "input": {
+      "name": "alice.eth"
+    }
+  }
+}
+```
+
+The response includes the proof details and whether it was found:
+
+```json
+{
+  "name": "alice.eth",
+  "type": "ens_l1",
+  "fid": 12345,
+  "timestamp": 1672617600,
+  "owner": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+  "found": true
+}
+```
+
+#### Get Verification
+
+Retrieve a specific verification for a user by FID and wallet address.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_verification",
+    "input": {
+      "fid": 12345,
+      "address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12"
+    }
+  }
+}
+```
+
+The response includes whether the verification exists and its details:
+
+```json
+{
+  "fid": 12345,
+  "address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+  "found": true,
+  "verification": {
+    "fid": 12345,
+    "address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+    "protocol": "ethereum",
+    "type": "eoa",
+    "action": "add",
+    "timestamp": 1672531200
+  }
+}
+```
+
+#### Get All Verification Messages by FID
+
+Retrieve all verification messages for a user with optional timestamp filtering.
+
+```json
+{
+  "method": "callTool",
+  "params": {
+    "name": "get_all_verification_messages_by_fid",
+    "input": {
+      "fid": 12345,
+      "limit": 20,
+      "start_time": 1672531200,
+      "end_time": 1682531200
+    }
+  }
+}
+```
+
+The response includes both add/remove verification messages:
+
+```json
+{
+  "fid": 12345,
+  "count": 2,
+  "start_time": 1672531200,
+  "end_time": 1682531200,
+  "verifications": [
+    {
+      "fid": 12345,
+      "address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+      "protocol": "ethereum",
+      "type": "eoa",
+      "action": "add",
+      "timestamp": 1672531200
+    },
+    {
+      "fid": 12345,
+      "address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+      "protocol": "ethereum",
+      "action": "remove",
+      "timestamp": 1672617600
+    }
+  ]
+}
+```
+
 
 ## Using the Waypoint Prompt
 
@@ -827,6 +985,57 @@ AI: "Let me find who follows Alice on Farcaster."
     "
 ```
 
+### Getting Username Proofs
+
+```
+User: "What usernames does FID 12345 have registered?"
+
+AI: "Let me check the username proofs for this Farcaster user."
+    [AI uses the get_username_proofs_by_fid tool with the FID]
+    
+    "User 12345 has the following registered usernames:
+     - fname: alice (registered Jan 1, 2023)
+     - ENS: alice.eth (owned by 0x1a2b... registered Jan 2, 2023)
+    "
+```
+
+### Getting a Username Proof by Name
+
+```
+User: "Who owns the username alice.eth on Farcaster?"
+
+AI: "Let me fetch the username proof for alice.eth."
+    [AI uses the get_username_proof tool with name "alice.eth"]
+    
+    "The username proof for alice.eth is mapped to FID 12345,
+     and the owner address is 0x1a2b..."
+```
+
+### Checking a Specific Verification
+
+```
+User: "Is 0x1a2b... verified by FID 12345?"
+
+AI: "Let me check that exact verification."
+    [AI uses the get_verification tool with fid + address]
+    
+    "Yes, this address is verified for FID 12345 as an Ethereum EOA."
+```
+
+### Getting Verification History
+
+```
+User: "Show all verification messages for FID 12345 in January 2023."
+
+AI: "Let me fetch verification history for that period."
+    [AI uses the get_all_verification_messages_by_fid tool with start_time/end_time]
+    
+    "I found 4 verification messages for January 2023:
+     - 3 add events
+     - 1 remove event
+    "
+```
+
 ## Connecting AI Assistants to Waypoint MCP
 
 AI assistants can connect to Waypoint's MCP service in several ways:
@@ -855,7 +1064,7 @@ const client = createClient({
 
 // List available tools
 const toolList = await client.listTools();
-console.log(toolList); // Will show get_user_by_fid, get_verifications_by_fid, get_casts_by_fid tools
+console.log(toolList); // Will show tools like get_user_by_fid, get_verifications_by_fid, get_verification, get_all_verification_messages_by_fid, get_casts_by_fid, get_username_proofs_by_fid, get_username_proof
 
 // Get user profile data
 const userData = await client.callTool({
