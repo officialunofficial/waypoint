@@ -776,7 +776,10 @@ mod tests {
     #[test]
     fn test_parse_username_proof_by_name() {
         let result =
-            parse_waypoint_resource_uri("waypoint://username-proofs/by-name/alice.eth").unwrap();
-        assert_eq!(result, WaypointResource::UsernameProofByName { name: "alice.eth".to_string() });
+            parse_waypoint_resource_uri("waypoint://username-proofs/by-name/vitalik.eth").unwrap();
+        assert_eq!(
+            result,
+            WaypointResource::UsernameProofByName { name: "vitalik.eth".to_string() }
+        );
     }
 }

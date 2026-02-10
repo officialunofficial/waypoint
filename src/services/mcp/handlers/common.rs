@@ -224,7 +224,7 @@ pub struct GetFidByUsernameRequest {
 /// Request to get a username proof by name
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetUsernameProofRequest {
-    #[schemars(description = "Username to lookup (e.g., alice, alice.eth)")]
+    #[schemars(description = "Username to lookup (e.g., alice, vitalik.eth)")]
     pub name: String,
 }
 

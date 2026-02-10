@@ -657,7 +657,7 @@ The response includes details about each username proof:
     },
     {
       "type": "ens_l1",
-      "name": "alice.eth",
+      "name": "vitalik.eth",
       "fid": 12345,
       "owner": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
       "timestamp": 1672617600
@@ -676,7 +676,7 @@ Retrieve a single username proof by name.
   "params": {
     "name": "get_username_proof",
     "input": {
-      "name": "alice.eth"
+      "name": "vitalik.eth"
     }
   }
 }
@@ -686,7 +686,7 @@ The response includes the proof details and whether it was found:
 
 ```json
 {
-  "name": "alice.eth",
+  "name": "vitalik.eth",
   "type": "ens_l1",
   "fid": 12345,
   "timestamp": 1672617600,
@@ -995,19 +995,19 @@ AI: "Let me check the username proofs for this Farcaster user."
     
     "User 12345 has the following registered usernames:
      - fname: alice (registered Jan 1, 2023)
-     - ENS: alice.eth (owned by 0x1a2b... registered Jan 2, 2023)
+     - ENS: vitalik.eth (owned by 0x1a2b... registered Jan 2, 2023)
     "
 ```
 
 ### Getting a Username Proof by Name
 
 ```
-User: "Who owns the username alice.eth on Farcaster?"
+User: "Who owns the username vitalik.eth on Farcaster?"
 
-AI: "Let me fetch the username proof for alice.eth."
-    [AI uses the get_username_proof tool with name "alice.eth"]
+AI: "Let me fetch the username proof for vitalik.eth."
+    [AI uses the get_username_proof tool with name "vitalik.eth"]
     
-    "The username proof for alice.eth is mapped to FID 12345,
+    "The username proof for vitalik.eth is mapped to FID 12345,
      and the owner address is 0x1a2b..."
 ```
 
