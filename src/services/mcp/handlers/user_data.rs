@@ -5,68 +5,54 @@ use crate::services::mcp::base::WaypointMcpService;
 
 use prost::Message as ProstMessage;
 
-// Common types are used in the handler implementations
-
 impl<DB, HC> WaypointMcpService<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
-    /// Get user data by FID using Hub client
+    /// Get user data by FID
     pub async fn do_get_user_by_fid(&self, fid: Fid) -> String {
-        // Use the data context to fetch user data
         match self.data_context.get_user_data_by_fid(fid, 20).await {
             Ok(messages) => {
                 if messages.is_empty() {
                     return format!("No user data found for FID {}", fid);
                 }
 
-                // Create a structured user profile from the messages
                 let mut profile = serde_json::Map::new();
-
-                // Add the FID to the profile
                 profile.insert(
                     "fid".to_string(),
                     serde_json::Value::Number(serde_json::Number::from(fid.value())),
                 );
 
-                // Process each message to extract user data
                 for message in messages {
                     if message.message_type != MessageType::UserData {
                         continue;
                     }
 
-                    // Try to decode the message payload as MessageData
-                    if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                        let msg_data: crate::proto::MessageData = data;
-
-                        // Extract the user_data_body if present
-                        if let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
+                    if let Ok(msg_data) =
+                        <crate::proto::MessageData as ProstMessage>::decode(&*message.payload)
+                        && let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
                             msg_data.body
-                        {
-                            // Map user data type to field name
-                            let field_name = match user_data.r#type {
-                                1 => "pfp",          // USER_DATA_TYPE_PFP
-                                2 => "display_name", // USER_DATA_TYPE_DISPLAY
-                                3 => "bio",          // USER_DATA_TYPE_BIO
-                                5 => "url",          // USER_DATA_TYPE_URL
-                                6 => "username",     // USER_DATA_TYPE_USERNAME
-                                7 => "location",     // USER_DATA_TYPE_LOCATION
-                                8 => "twitter",      // USER_DATA_TYPE_TWITTER
-                                9 => "github",       // USER_DATA_TYPE_GITHUB
-                                _ => continue,       // Unknown type
-                            };
+                    {
+                        let field_name = match user_data.r#type {
+                            1 => "pfp",
+                            2 => "display_name",
+                            3 => "bio",
+                            5 => "url",
+                            6 => "username",
+                            7 => "location",
+                            8 => "twitter",
+                            9 => "github",
+                            _ => continue,
+                        };
 
-                            // Add to the profile
-                            profile.insert(
-                                field_name.to_string(),
-                                serde_json::Value::String(user_data.value),
-                            );
-                        }
+                        profile.insert(
+                            field_name.to_string(),
+                            serde_json::Value::String(user_data.value),
+                        );
                     }
                 }
 
-                // Convert the profile to a JSON string
                 serde_json::to_string_pretty(&profile)
                     .unwrap_or_else(|_| format!("Error formatting user data for FID {}", fid))
             },
@@ -90,39 +76,48 @@ where
         }
     }
 
+    fn proof_type_name(proof_type: i32) -> &'static str {
+        match proof_type {
+            1 => "fname",
+            2 => "ens_l1",
+            3 => "basename",
+            _ => "unknown",
+        }
+    }
+
+    fn username_proof_to_json(proof: &crate::proto::UserNameProof) -> serde_json::Value {
+        serde_json::json!({
+            "name": String::from_utf8_lossy(&proof.name),
+            "type": Self::proof_type_name(proof.r#type),
+            "fid": proof.fid,
+            "timestamp": proof.timestamp,
+            "owner": format!("0x{}", hex::encode(&proof.owner)),
+        })
+    }
+
     fn verification_message_to_json(message: &Message) -> Option<serde_json::Value> {
         if message.message_type != MessageType::Verification {
             return None;
         }
 
-        let data = ProstMessage::decode(&*message.payload).ok()?;
-        let msg_data: crate::proto::MessageData = data;
+        let msg_data: crate::proto::MessageData = ProstMessage::decode(&*message.payload).ok()?;
 
         match msg_data.body {
             Some(crate::proto::message_data::Body::VerificationAddAddressBody(verification)) => {
-                let mut verif_obj = serde_json::Map::new();
-                verif_obj.insert("fid".to_string(), serde_json::json!(msg_data.fid));
-                verif_obj.insert(
-                    "address".to_string(),
-                    serde_json::json!(format!("0x{}", hex::encode(&verification.address))),
-                );
-                verif_obj.insert(
-                    "protocol".to_string(),
-                    serde_json::json!(Self::protocol_name(verification.protocol)),
-                );
-                verif_obj.insert(
-                    "type".to_string(),
-                    serde_json::json!(Self::verification_type_name(verification.verification_type)),
-                );
-                verif_obj.insert("action".to_string(), serde_json::json!("add"));
-                verif_obj.insert("timestamp".to_string(), serde_json::json!(msg_data.timestamp));
+                let mut value = serde_json::json!({
+                    "fid": msg_data.fid,
+                    "address": format!("0x{}", hex::encode(&verification.address)),
+                    "protocol": Self::protocol_name(verification.protocol),
+                    "type": Self::verification_type_name(verification.verification_type),
+                    "action": "add",
+                    "timestamp": msg_data.timestamp,
+                });
 
                 if verification.chain_id > 0 {
-                    verif_obj
-                        .insert("chain_id".to_string(), serde_json::json!(verification.chain_id));
+                    value["chain_id"] = serde_json::json!(verification.chain_id);
                 }
 
-                Some(serde_json::Value::Object(verif_obj))
+                Some(value)
             },
             Some(crate::proto::message_data::Body::VerificationRemoveBody(verification)) => {
                 Some(serde_json::json!({
@@ -178,23 +173,22 @@ where
         };
 
         match self.data_context.get_verification(fid, &address_bytes).await {
-            Ok(Some(message)) => {
-                if let Some(verification) = Self::verification_message_to_json(&message) {
+            Ok(Some(message)) => match Self::verification_message_to_json(&message) {
+                Some(verification) => {
                     let result = serde_json::json!({
                         "fid": fid.value(),
                         "address": format!("0x{}", address),
                         "found": true,
                         "verification": verification,
                     });
-                    return serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
                         format!("Error formatting verification for FID {}", fid)
-                    });
-                }
-
-                format!(
+                    })
+                },
+                None => format!(
                     "Verification found but could not be processed for FID {} and address {}",
                     fid, address_hex
-                )
+                ),
             },
             Ok(None) => {
                 let result = serde_json::json!({
@@ -414,37 +408,15 @@ where
                     return format!("No username proofs found for FID {}", fid);
                 }
 
-                // Create a structured array of proof objects
-                let mut proofs = Vec::new();
-
-                // Process each proof message
-                for message in messages {
-                    // The payload is JSON-serialized UserNameProof
-                    if let Ok(proof) =
+                let proofs: Vec<serde_json::Value> = messages
+                    .iter()
+                    .filter_map(|message| {
                         serde_json::from_slice::<crate::proto::UserNameProof>(&message.payload)
-                    {
-                        let name = String::from_utf8_lossy(&proof.name).to_string();
+                            .ok()
+                            .map(|proof| Self::username_proof_to_json(&proof))
+                    })
+                    .collect();
 
-                        let proof_type = match proof.r#type {
-                            1 => "fname",
-                            2 => "ens_l1",
-                            3 => "basename",
-                            _ => "unknown",
-                        };
-
-                        let proof_obj = serde_json::json!({
-                            "name": name,
-                            "type": proof_type,
-                            "fid": proof.fid,
-                            "timestamp": proof.timestamp,
-                            "owner": format!("0x{}", hex::encode(&proof.owner)),
-                        });
-
-                        proofs.push(proof_obj);
-                    }
-                }
-
-                // Wrap in a result object with metadata
                 let result = serde_json::json!({
                     "fid": fid.value(),
                     "count": proofs.len(),
@@ -464,21 +436,8 @@ where
 
         match self.data_context.get_username_proof_by_name(name).await {
             Ok(Some(proof)) => {
-                let proof_type = match proof.r#type {
-                    1 => "fname",
-                    2 => "ens_l1",
-                    3 => "basename",
-                    _ => "unknown",
-                };
-
-                let result = serde_json::json!({
-                    "name": String::from_utf8_lossy(&proof.name).to_string(),
-                    "type": proof_type,
-                    "fid": proof.fid,
-                    "timestamp": proof.timestamp,
-                    "owner": format!("0x{}", hex::encode(&proof.owner)),
-                    "found": true,
-                });
+                let mut result = Self::username_proof_to_json(&proof);
+                result["found"] = serde_json::json!(true);
 
                 serde_json::to_string_pretty(&result)
                     .unwrap_or_else(|_| format!("Error formatting username proof for {}", name))

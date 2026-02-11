@@ -259,10 +259,9 @@ impl HubClient for FarcasterHubClient {
     }
 
     async fn get_verification(&self, fid: Fid, address: &[u8]) -> Result<Option<Message>> {
-        debug!("Fetching verification for FID: {} and address: {}", fid, hex::encode(address));
+        debug!("Fetching verification for FID: {} address: {}", fid, hex::encode(address));
         let mut hub = self.hub.lock().await;
 
-        // Ensure hub is connected
         if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
             return Err(DataAccessError::HubClient("Hub not connected".to_string()));
         }
@@ -825,7 +824,6 @@ impl HubClient for FarcasterHubClient {
         Ok(messages)
     }
 
-    /// Get all verification messages by FID with timestamp filtering
     async fn get_all_verification_messages_by_fid(
         &self,
         fid: Fid,
@@ -836,12 +834,10 @@ impl HubClient for FarcasterHubClient {
         debug!("Fetching all verifications for FID: {} with timestamp filtering", fid);
         let mut hub = self.hub.lock().await;
 
-        // Ensure hub is connected
         if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
             return Err(DataAccessError::HubClient("Hub not connected".to_string()));
         }
 
-        // Create FidTimestampRequest
         let request = crate::proto::FidTimestampRequest {
             fid: fid.value(),
             page_size: Some(limit as u32),
@@ -851,7 +847,6 @@ impl HubClient for FarcasterHubClient {
             stop_timestamp: end_time,
         };
 
-        // Make the RPC call
         let response = hub
             .client()
             .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
@@ -860,7 +855,6 @@ impl HubClient for FarcasterHubClient {
             .map_err(|e| DataAccessError::HubClient(e.to_string()))?
             .into_inner();
 
-        // Convert the response to domain messages
         let messages = response
             .messages
             .into_iter()
