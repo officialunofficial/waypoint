@@ -74,6 +74,9 @@ pub trait HubClient: Send + Sync {
     /// Get verifications
     async fn get_verifications_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>>;
 
+    /// Get a specific verification by FID and address
+    async fn get_verification(&self, fid: Fid, address: &[u8]) -> Result<Option<Message>>;
+
     /// Get casts by FID
     async fn get_casts_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>>;
 
@@ -134,6 +137,15 @@ pub trait HubClient: Send + Sync {
 
     /// Get all reactions by FID with timestamp filtering
     async fn get_all_reactions_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>>;
+
+    /// Get all verification messages by FID with timestamp filtering
+    async fn get_all_verification_messages_by_fid(
         &self,
         fid: Fid,
         limit: usize,
@@ -220,14 +232,22 @@ where
         Err(DataAccessError::Other("Hub client not available".to_string()))
     }
 
-    /// Get FID by username
-    pub async fn get_fid_by_username(&self, username: &str) -> Result<Option<Fid>> {
+    /// Get username proof by name
+    pub async fn get_username_proof_by_name(
+        &self,
+        username: &str,
+    ) -> Result<Option<crate::proto::UserNameProof>> {
         if let Some(hub) = &self.hub_client {
-            let proof = hub.get_username_proof_by_name(username).await?;
-            return Ok(proof.map(|p| Fid::new(p.fid)));
+            return hub.get_username_proof_by_name(username).await;
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get FID by username
+    pub async fn get_fid_by_username(&self, username: &str) -> Result<Option<Fid>> {
+        let proof = self.get_username_proof_by_name(username).await?;
+        Ok(proof.map(|p| Fid::new(p.fid)))
     }
 
     /// Get verifications
@@ -241,6 +261,15 @@ where
         }
 
         Err(DataAccessError::Other("No data source available".to_string()))
+    }
+
+    /// Get a specific verification by FID and address
+    pub async fn get_verification(&self, fid: Fid, address: &[u8]) -> Result<Option<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub.get_verification(fid, address).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
     }
 
     /// Get casts by FID
@@ -386,6 +415,23 @@ where
     ) -> Result<Vec<Message>> {
         if let Some(hub) = &self.hub_client {
             return hub.get_all_reactions_by_fid(fid, limit, start_time, end_time).await;
+        }
+
+        Err(DataAccessError::Other("Hub client not available".to_string()))
+    }
+
+    /// Get all verification messages by FID with timestamp filtering
+    pub async fn get_all_verification_messages_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>> {
+        if let Some(hub) = &self.hub_client {
+            return hub
+                .get_all_verification_messages_by_fid(fid, limit, start_time, end_time)
+                .await;
         }
 
         Err(DataAccessError::Other("Hub client not available".to_string()))

@@ -996,6 +996,13 @@ mod tests {
         ) -> crate::core::data_context::Result<Vec<Message>> {
             Ok(vec![])
         }
+        async fn get_verification(
+            &self,
+            _fid: Fid,
+            _address: &[u8],
+        ) -> crate::core::data_context::Result<Option<Message>> {
+            Ok(None)
+        }
         async fn get_casts_by_fid(
             &self,
             _fid: Fid,
@@ -1070,6 +1077,15 @@ mod tests {
             Ok(vec![])
         }
         async fn get_all_reactions_by_fid(
+            &self,
+            _fid: Fid,
+            _limit: usize,
+            _start_time: Option<u64>,
+            _end_time: Option<u64>,
+        ) -> crate::core::data_context::Result<Vec<Message>> {
+            Ok(vec![])
+        }
+        async fn get_all_verification_messages_by_fid(
             &self,
             _fid: Fid,
             _limit: usize,

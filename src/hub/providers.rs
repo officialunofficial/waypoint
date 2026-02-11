@@ -258,6 +258,37 @@ impl HubClient for FarcasterHubClient {
         Ok(messages)
     }
 
+    async fn get_verification(&self, fid: Fid, address: &[u8]) -> Result<Option<Message>> {
+        debug!("Fetching verification for FID: {} address: {}", fid, hex::encode(address));
+        let mut hub = self.hub.lock().await;
+
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        let request =
+            crate::proto::VerificationRequest { fid: fid.value(), address: address.to_vec() };
+
+        let result = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_verification(tonic::Request::new(request))
+            .await;
+
+        match result {
+            Ok(response) => {
+                let proto_msg = response.into_inner();
+                Ok(Some(Message::new(
+                    Self::format_hex(&proto_msg.hash),
+                    MessageType::Verification,
+                    proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
+                )))
+            },
+            Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
+            Err(e) => Err(DataAccessError::HubClient(e.to_string())),
+        }
+    }
+
     /// Get casts by FID with pagination support
     async fn get_casts_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
         debug!("Fetching casts for FID: {}", fid);
@@ -785,6 +816,52 @@ impl HubClient for FarcasterHubClient {
                 Message::new(
                     Self::format_hex(&proto_msg.hash),
                     MessageType::Reaction,
+                    proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        Ok(messages)
+    }
+
+    async fn get_all_verification_messages_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<Message>> {
+        debug!("Fetching all verifications for FID: {} with timestamp filtering", fid);
+        let mut hub = self.hub.lock().await;
+
+        if !hub.check_connection().await.map_err(|e| DataAccessError::HubClient(e.to_string()))? {
+            return Err(DataAccessError::HubClient("Hub not connected".to_string()));
+        }
+
+        let request = crate::proto::FidTimestampRequest {
+            fid: fid.value(),
+            page_size: Some(limit as u32),
+            page_token: None,
+            reverse: Some(true),
+            start_timestamp: start_time,
+            stop_timestamp: end_time,
+        };
+
+        let response = hub
+            .client()
+            .ok_or_else(|| DataAccessError::HubClient("Hub client not initialized".to_string()))?
+            .get_all_verification_messages_by_fid(tonic::Request::new(request))
+            .await
+            .map_err(|e| DataAccessError::HubClient(e.to_string()))?
+            .into_inner();
+
+        let messages = response
+            .messages
+            .into_iter()
+            .map(|proto_msg| {
+                Message::new(
+                    Self::format_hex(&proto_msg.hash),
+                    MessageType::Verification,
                     proto_msg.data.map(|d| d.encode_to_vec()).unwrap_or_default(),
                 )
             })

@@ -40,6 +40,15 @@ pub struct GetVerificationsRequest {
     pub limit: usize,
 }
 
+/// Request for a specific verification by FID and address
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetVerificationRequest {
+    #[schemars(description = "Farcaster user ID")]
+    pub fid: u64,
+    #[schemars(description = "Address in hex format (with or without 0x prefix)")]
+    pub address: String,
+}
+
 /// Request for a specific cast
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetCastRequest {
@@ -210,6 +219,13 @@ pub struct FidRequest {
 pub struct GetFidByUsernameRequest {
     #[schemars(description = "Farcaster username (without the @ symbol)")]
     pub username: String,
+}
+
+/// Request to get a username proof by name
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetUsernameProofRequest {
+    #[schemars(description = "Username to lookup (e.g., alice, vitalik.eth)")]
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

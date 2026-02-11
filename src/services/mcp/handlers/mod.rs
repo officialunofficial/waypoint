@@ -112,6 +112,39 @@ impl WaypointMcpTools {
     }
 
     #[tool(
+        description = "Get a specific verification by FID and address",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_verification(
+        &self,
+        Parameters(common::GetVerificationRequest { fid, address }): Parameters<
+            common::GetVerificationRequest,
+        >,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_verification(fid, &address).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(
+        description = "Get all verification messages for a Farcaster user with optional timestamp filtering",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_all_verification_messages_by_fid(
+        &self,
+        Parameters(common::FidTimestampRequest { fid, limit, start_time, end_time }): Parameters<
+            common::FidTimestampRequest,
+        >,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self
+            .service
+            .do_get_all_verification_messages_by_fid(fid, limit, start_time, end_time)
+            .await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(
         description = "Find a Farcaster user's FID by their username",
         annotations(read_only_hint = true)
     )]
@@ -439,6 +472,31 @@ impl WaypointMcpTools {
         let result = self.service.do_get_all_links_by_fid(fid, limit, start_time, end_time).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
+
+    // Username Proofs API
+    #[tool(description = "Get a single username proof by name", annotations(read_only_hint = true))]
+    async fn get_username_proof(
+        &self,
+        Parameters(common::GetUsernameProofRequest { name }): Parameters<
+            common::GetUsernameProofRequest,
+        >,
+    ) -> Result<CallToolResult, McpError> {
+        let result = self.service.do_get_username_proof(&name).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(
+        description = "Get username proofs for a Farcaster user (fname and ENS registrations)",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_username_proofs_by_fid(
+        &self,
+        Parameters(common::FidRequest { fid }): Parameters<common::FidRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let fid = Fid::from(fid);
+        let result = self.service.do_get_username_proofs_by_fid(fid).await;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
 }
 
 #[prompt_router]
@@ -533,6 +591,14 @@ impl ServerHandler for WaypointMcpTools {
                 utils::WaypointResource::VerificationsByFid { fid } => {
                     self.service.do_get_verifications_by_fid(Fid::from(fid), limit).await
                 },
+                utils::WaypointResource::VerificationByAddress { fid, address } => {
+                    self.service.do_get_verification(Fid::from(fid), &address).await
+                },
+                utils::WaypointResource::AllVerificationMessagesByFid { fid } => {
+                    self.service
+                        .do_get_all_verification_messages_by_fid(Fid::from(fid), limit, None, None)
+                        .await
+                },
                 utils::WaypointResource::Cast { fid, hash } => {
                     self.service.do_get_cast(Fid::from(fid), &hash).await
                 },
@@ -590,6 +656,12 @@ impl ServerHandler for WaypointMcpTools {
                 utils::WaypointResource::LinkCompactStateByFid { fid } => {
                     self.service.do_get_link_compact_state_by_fid(Fid::from(fid)).await
                 },
+                utils::WaypointResource::UsernameProofByName { name } => {
+                    self.service.do_get_username_proof(&name).await
+                },
+                utils::WaypointResource::UsernameProofsByFid { fid } => {
+                    self.service.do_get_username_proofs_by_fid(Fid::from(fid)).await
+                },
             };
 
             return Ok(Self::resource_json_contents(&uri, result));
@@ -639,6 +711,16 @@ impl ServerHandler for WaypointMcpTools {
                     "waypoint://verifications/{fid}",
                     "verifications-by-fid",
                     "Verified addresses for a FID",
+                ),
+                Self::create_resource_template_json(
+                    "waypoint://verifications/{fid}/{address}",
+                    "verification-by-fid-address",
+                    "Specific verification by FID and address",
+                ),
+                Self::create_resource_template_json(
+                    "waypoint://verifications/all-by-fid/{fid}",
+                    "all-verification-messages-by-fid",
+                    "All verification messages for a FID",
                 ),
                 // Casts
                 Self::create_resource_template_json(
@@ -703,6 +785,17 @@ impl ServerHandler for WaypointMcpTools {
                     "waypoint://links/compact-state/{fid}",
                     "link-compact-state",
                     "Link compact state for a FID",
+                ),
+                // Username Proofs
+                Self::create_resource_template_json(
+                    "waypoint://username-proofs/by-name/{name}",
+                    "username-proof-by-name",
+                    "Username proof for a specific name",
+                ),
+                Self::create_resource_template_json(
+                    "waypoint://username-proofs/{fid}",
+                    "username-proofs-by-fid",
+                    "Username proofs (fname and ENS registrations) for a FID",
                 ),
             ],
             next_cursor: None,

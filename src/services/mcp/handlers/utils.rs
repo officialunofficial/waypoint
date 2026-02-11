@@ -371,6 +371,10 @@ pub enum WaypointResource {
     UserByUsername { username: String },
     /// Verifications for a user by FID
     VerificationsByFid { fid: u64 },
+    /// Specific verification by FID and address
+    VerificationByAddress { fid: u64, address: String },
+    /// All verification messages for a user by FID
+    AllVerificationMessagesByFid { fid: u64 },
     /// Specific cast by FID and hash
     Cast { fid: u64, hash: String },
     /// Conversation thread for a cast (includes replies, participants, context)
@@ -395,6 +399,10 @@ pub enum WaypointResource {
     LinksByTarget { fid: u64 },
     /// Compact link state for a user
     LinkCompactStateByFid { fid: u64 },
+    /// Username proof for a specific name
+    UsernameProofByName { name: String },
+    /// Username proofs for a user
+    UsernameProofsByFid { fid: u64 },
 }
 
 /// Parse a waypoint:// resource URI into a WaypointResource
@@ -411,6 +419,8 @@ pub enum WaypointResource {
 ///
 /// ## Verifications
 /// - `waypoint://verifications/{fid}` - Verifications for a user
+/// - `waypoint://verifications/{fid}/{address}` - Specific verification by FID and address
+/// - `waypoint://verifications/all-by-fid/{fid}` - All verification messages for a user
 ///
 /// ## Casts
 /// - `waypoint://casts/{fid}/{hash}` - Specific cast
@@ -431,6 +441,10 @@ pub enum WaypointResource {
 /// - `waypoint://links/by-fid/{fid}` - Links created by a user
 /// - `waypoint://links/by-target/{fid}` - Links targeting a user
 /// - `waypoint://links/compact-state/{fid}` - Compact link state
+///
+/// ## Username Proofs
+/// - `waypoint://username-proofs/by-name/{name}` - Username proof for a specific name
+/// - `waypoint://username-proofs/{fid}` - Username proofs for a user
 pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String> {
     let url = Url::parse(uri).map_err(|err| format!("Invalid resource URI: {err}"))?;
 
@@ -482,6 +496,13 @@ pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String
 
         // Verifications
         ["verifications", fid] => Ok(WaypointResource::VerificationsByFid { fid: parse_fid(fid)? }),
+        ["verifications", "all-by-fid", fid] => {
+            Ok(WaypointResource::AllVerificationMessagesByFid { fid: parse_fid(fid)? })
+        },
+        ["verifications", fid, address] => Ok(WaypointResource::VerificationByAddress {
+            fid: parse_fid(fid)?,
+            address: address.to_string(),
+        }),
 
         // Casts
         ["casts", "by-fid", fid] => Ok(WaypointResource::CastsByFid { fid: parse_fid(fid)? }),
@@ -520,6 +541,14 @@ pub fn parse_waypoint_resource_uri(uri: &str) -> Result<WaypointResource, String
         ["links", "by-target", fid] => Ok(WaypointResource::LinksByTarget { fid: parse_fid(fid)? }),
         ["links", "compact-state", fid] => {
             Ok(WaypointResource::LinkCompactStateByFid { fid: parse_fid(fid)? })
+        },
+
+        // Username proofs
+        ["username-proofs", "by-name", name] => {
+            Ok(WaypointResource::UsernameProofByName { name: name.to_string() })
+        },
+        ["username-proofs", fid] => {
+            Ok(WaypointResource::UsernameProofsByFid { fid: parse_fid(fid)? })
         },
 
         _ => Err(format!("Unsupported resource path: {}", segments.join("/"))),
@@ -563,6 +592,22 @@ mod tests {
     fn test_parse_verifications() {
         let result = parse_waypoint_resource_uri("waypoint://verifications/123").unwrap();
         assert_eq!(result, WaypointResource::VerificationsByFid { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_verification_by_address() {
+        let result = parse_waypoint_resource_uri("waypoint://verifications/123/0xabc123").unwrap();
+        assert_eq!(
+            result,
+            WaypointResource::VerificationByAddress { fid: 123, address: "0xabc123".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_parse_all_verification_messages_by_fid() {
+        let result =
+            parse_waypoint_resource_uri("waypoint://verifications/all-by-fid/123").unwrap();
+        assert_eq!(result, WaypointResource::AllVerificationMessagesByFid { fid: 123 });
     }
 
     #[test]
@@ -720,5 +765,21 @@ mod tests {
     fn test_parse_hash_bytes_invalid() {
         let result = parse_hash_bytes("not-hex");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_username_proofs() {
+        let result = parse_waypoint_resource_uri("waypoint://username-proofs/123").unwrap();
+        assert_eq!(result, WaypointResource::UsernameProofsByFid { fid: 123 });
+    }
+
+    #[test]
+    fn test_parse_username_proof_by_name() {
+        let result =
+            parse_waypoint_resource_uri("waypoint://username-proofs/by-name/vitalik.eth").unwrap();
+        assert_eq!(
+            result,
+            WaypointResource::UsernameProofByName { name: "vitalik.eth".to_string() }
+        );
     }
 }
