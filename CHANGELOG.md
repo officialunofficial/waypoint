@@ -2,6 +2,22 @@
 
 All notable changes to Waypoint will be documented in this file.
 
+## [2026.2.5] - 2026-02-11
+
+### Features
+
+- Add MCP resources for verifications, reactions, links, username proofs, and conversations (#92)
+- Add RFC 3986/6570 compliant resource URI scheme with query parameter support
+
+### Bug Fixes
+
+- Add default values for optional Docker Compose env vars (#91)
+
+### Miscellaneous Tasks
+
+- Add CLAUDE.md with project conventions and MCP URI standards
+- Simplify MCP handler code: deduplicate JSON builders, extract shared helpers
+
 ## [2026.2.4] - 2026-02-09
 
 ### Miscellaneous Tasks
