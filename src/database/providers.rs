@@ -11,6 +11,35 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{error, info};
 
+/// No-op database provider for hub-only read paths.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NullDb;
+
+#[async_trait]
+impl Database for NullDb {
+    async fn get_message(&self, _id: &MessageId, _message_type: MessageType) -> Result<Message> {
+        Err(DataAccessError::NotFound("NullDb does not store messages".to_string()))
+    }
+
+    async fn get_messages_by_fid(
+        &self,
+        _fid: Fid,
+        _message_type: MessageType,
+        _limit: usize,
+        _cursor: Option<MessageId>,
+    ) -> Result<Vec<Message>> {
+        Ok(Vec::new())
+    }
+
+    async fn store_message(&self, _message: Message) -> Result<()> {
+        Ok(())
+    }
+
+    async fn delete_message(&self, _id: &MessageId, _message_type: MessageType) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// Read-only PostgreSQL data provider
 #[derive(Clone)]
 pub struct PostgresDatabaseClient {
