@@ -17,7 +17,6 @@ pub mod metrics;
 pub mod processor;
 pub mod redis;
 pub mod services;
-pub mod types;
 
 // Include proto definitions - either from build-time generation or pre-generated file
 #[cfg(build_protos)]
