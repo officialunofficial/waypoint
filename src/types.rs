@@ -10,8 +10,6 @@ impl Message {
     }
 }
 
-pub const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
-
 /// Helper function to generate consistent Redis stream keys across components
 ///
 /// This function creates a standardized stream key pattern used throughout the application:
