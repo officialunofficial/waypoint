@@ -1563,9 +1563,9 @@ mod tests {
         // and does NOT produce a 1974 date (which would happen if epoch isn't applied)
 
         // Farcaster timestamp for approximately late Dec 2025
-        // Farcaster epoch: Jan 1, 2021 00:00:00 UTC = 1609459200 Unix seconds
+        // Farcaster epoch: Jan 1, 2021 00:00:00 UTC = FARCASTER_EPOCH_SECONDS
         // Late Dec 2025 ~= 1767244800 Unix seconds
-        // Farcaster time = 1767244800 - 1609459200 = 157785600 seconds since FC epoch
+        // Farcaster time = 1767244800 - FARCASTER_EPOCH_SECONDS = 157785600 seconds since FC epoch
         let farcaster_timestamp: u32 = 157785600;
 
         let result = DatabaseProcessor::convert_timestamp(farcaster_timestamp);

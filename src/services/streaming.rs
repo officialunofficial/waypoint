@@ -570,9 +570,7 @@ impl Consumer {
         message_type: MessageType,
     ) -> std::result::Result<(), crate::redis::error::Error> {
         // Use the same key format that publisher uses
-        let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
-
-        let stream_key = crate::types::get_stream_key(clean_host, message_type.to_stream_key());
+        let stream_key = RedisStream::get_stream_key(&self.hub_host, message_type.to_stream_key());
         let group_name = self.group_name.clone();
 
         // Create the consumer group if it doesn't exist
@@ -758,9 +756,8 @@ impl Consumer {
         let semaphore = Arc::new(Semaphore::new(concurrency));
 
         // Build stream key for DLQ context - use Arc<str> to avoid cloning in hot path
-        let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
         let stream_key: Arc<str> =
-            Arc::from(crate::types::get_stream_key(clean_host, message_type.to_stream_key()));
+            Arc::from(RedisStream::get_stream_key(&self.hub_host, message_type.to_stream_key()));
         let consumer_id: Arc<str> =
             Arc::from(crate::redis::stream::RedisStream::get_stable_consumer_id());
         let group_name = Arc::clone(&self.group_name);
@@ -932,8 +929,7 @@ impl Consumer {
     /// Clean up old events from the stream
     async fn cleanup_old_events(&self, message_type: MessageType) {
         // Use the same key format that publisher uses
-        let clean_host = self.hub_host.split(':').next().unwrap_or(&self.hub_host);
-        let stream_key = crate::types::get_stream_key(clean_host, message_type.to_stream_key());
+        let stream_key = RedisStream::get_stream_key(&self.hub_host, message_type.to_stream_key());
 
         trace!("Starting cleanup task for {:?}", message_type);
 

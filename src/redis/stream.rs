@@ -73,6 +73,17 @@ impl RedisStream {
         }
     }
 
+    /// Generate a standardized stream key.
+    ///
+    /// Format: hub:<hub_host>:stream:<event_type>
+    ///
+    /// Host normalization preserves existing behavior by stripping any trailing
+    /// `:<port>` segment from `hub_host`.
+    pub fn get_stream_key(hub_host: &str, event_type: &str) -> String {
+        let clean_host = hub_host.split(':').next().unwrap_or(hub_host);
+        format!("hub:{}:stream:{}", clean_host, event_type)
+    }
+
     /// Configure stream with values from StreamProcessorConfig
     pub fn with_config(mut self, config: &crate::config::StreamProcessorConfig) -> Self {
         self.max_retry_attempts = config.max_retry_attempts;

@@ -7,7 +7,7 @@ use waypoint::hub::providers::FarcasterHubClient;
 
 // Import the public modules from mcp
 mod mcp_helpers {
-    pub use waypoint::services::mcp::NullDb;
+    pub use waypoint::database::NullDb;
     pub use waypoint::services::mcp::WaypointMcpService;
 }
 use mcp_helpers::*;

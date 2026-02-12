@@ -61,7 +61,7 @@ mod redis_client_tests {
     async fn test_stream_key_generation() {
         let host = "hub.example.com";
         let stream_type = "casts";
-        let key = crate::types::get_stream_key(host, stream_type);
+        let key = stream::RedisStream::get_stream_key(host, stream_type);
         assert_eq!(key, "hub:hub.example.com:stream:casts");
     }
 }

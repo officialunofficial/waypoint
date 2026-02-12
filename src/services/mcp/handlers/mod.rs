@@ -10,7 +10,8 @@ mod utils;
 use std::sync::Arc;
 
 use crate::core::types::Fid;
-use crate::services::mcp::base::{NullDb, WaypointMcpService};
+use crate::database::NullDb;
+use crate::services::mcp::base::WaypointMcpService;
 
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
