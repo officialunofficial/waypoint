@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 use waypoint::config::Config;
 use waypoint::core::data_context::{DataContext, DataContextBuilder};
-use waypoint::services::mcp::{NullDb, WaypointMcpService, WaypointMcpTools};
+use waypoint::services::mcp::{NullDb, WaypointMcpCore, WaypointMcpTools};
 
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8000";
 
@@ -76,13 +76,13 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
         cancellation_token: cancellation_token.clone(),
     };
 
-    // Initialize the WaypointMcpService with data context
-    let waypoint_service = WaypointMcpService::new(data_context);
+    // Initialize MCP core with data context
+    let mcp_core = WaypointMcpCore::new(data_context);
 
     // Create the Streamable HTTP service with session management
     let service = StreamableHttpService::new(
         move || {
-            let tools = WaypointMcpTools::new(waypoint_service.clone());
+            let tools = WaypointMcpTools::new(mcp_core.clone());
             Ok(tools)
         },
         Arc::new(LocalSessionManager::default()),

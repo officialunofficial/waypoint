@@ -10,7 +10,7 @@ mod utils;
 use std::sync::Arc;
 
 use crate::core::types::Fid;
-use crate::services::mcp::base::{NullDb, WaypointMcpService};
+use crate::services::mcp::base::{NullDb, WaypointMcpCore};
 
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
@@ -28,17 +28,17 @@ use rmcp::{
 /// MCP protocol version used by this server
 pub const MCP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_03_26;
 
-// Non-generic wrapper for WaypointMcpService to use with RMCP macros
+// Non-generic wrapper for WaypointMcpCore to use with RMCP macros
 #[derive(Clone)]
 pub struct WaypointMcpTools {
-    service: Arc<WaypointMcpService<NullDb, crate::hub::providers::FarcasterHubClient>>,
+    service: Arc<WaypointMcpCore<NullDb, crate::hub::providers::FarcasterHubClient>>,
     tool_router: ToolRouter<WaypointMcpTools>,
     prompt_router: PromptRouter<WaypointMcpTools>,
 }
 
 impl WaypointMcpTools {
     pub fn new(
-        service: WaypointMcpService<NullDb, crate::hub::providers::FarcasterHubClient>,
+        service: WaypointMcpCore<NullDb, crate::hub::providers::FarcasterHubClient>,
     ) -> Self {
         Self {
             service: Arc::new(service),

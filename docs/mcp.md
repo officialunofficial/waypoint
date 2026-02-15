@@ -1095,7 +1095,7 @@ The service is enabled by default and will automatically start with Waypoint.
 Developers can extend Waypoint's MCP capabilities by adding more tools to the MCP service modules (`src/services/mcp/`):
 
 1. Define new data structures for tool inputs/outputs in `src/services/mcp/handlers/common.rs`
-2. Implement the tool functionality in the `WaypointMcpService<DB, HC>` implementation in `src/services/mcp/base.rs`
+2. Implement the tool functionality in the `WaypointMcpCore<DB, HC>` implementation in `src/services/mcp/base.rs`
 3. Add a delegate method in a `#[tool_router]` impl block for `WaypointMcpTools` in `src/services/mcp/handlers/mod.rs`
 4. Use the `Parameters<T>` wrapper for type-safe parameter handling
 5. Use the DataContext for data access to benefit from the abstraction
@@ -1110,8 +1110,9 @@ The recently implemented `do_get_user_by_fid` function demonstrates this pattern
 6. Handles potential errors gracefully with descriptive messages
 
 This layered approach promotes clean separation of concerns:
+- The `McpService` struct manages MCP server lifecycle/startup integration with the app
 - The `WaypointMcpTools` class handles the MCP protocol interface
-- The `WaypointMcpService` implements the business logic
+- The `WaypointMcpCore` implements the business logic
 - The `DataContext` provides data access abstraction
 - The Hub/Database clients handle the actual data retrieval
 
@@ -1126,8 +1127,8 @@ pub struct SearchCastsRequest {
     pub limit: usize,
 }
 
-// 2. Add the implementation in WaypointMcpService
-impl<DB, HC> WaypointMcpService<DB, HC>
+// 2. Add the implementation in WaypointMcpCore
+impl<DB, HC> WaypointMcpCore<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
@@ -1165,7 +1166,7 @@ impl WaypointMcpTools {
         &self,
         Parameters(SearchCastsRequest { query, limit }): Parameters<SearchCastsRequest>,
     ) -> Result<CallToolResult, McpError> {
-        // Delegate to the implementation in WaypointMcpService
+        // Delegate to the implementation in WaypointMcpCore
         let result = self.service.do_search_casts(&query, limit).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }

@@ -1,7 +1,7 @@
 //! MCP handlers for Cast-related operations
 
 use crate::core::types::{Fid, Message};
-use crate::services::mcp::base::WaypointMcpService;
+use crate::services::mcp::base::WaypointMcpCore;
 use crate::services::mcp::handlers::utils::format_casts_response;
 use std::collections::HashSet;
 
@@ -90,7 +90,7 @@ fn format_message(message: &Message) -> serde_json::Map<String, serde_json::Valu
 
 // Common types are used in the handler implementations
 
-impl<DB, HC> WaypointMcpService<DB, HC>
+impl<DB, HC> WaypointMcpCore<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
@@ -921,10 +921,10 @@ where
 mod tests {
     use crate::core::data_context::DataAccessError;
     use crate::core::types::{Fid, Message, MessageId, MessageType};
-    use crate::services::mcp::base::WaypointMcpService;
+    use crate::services::mcp::base::WaypointMcpCore;
     use async_trait::async_trait;
 
-    // Minimal mock types to access associated functions on WaypointMcpService<DB, HC>
+    // Minimal mock types to access associated functions on WaypointMcpCore<DB, HC>
     #[derive(Clone, Debug)]
     struct MockDb;
 
@@ -1135,7 +1135,7 @@ mod tests {
         }
     }
 
-    type TestService = WaypointMcpService<MockDb, MockHub>;
+    type TestService = WaypointMcpCore<MockDb, MockHub>;
 
     #[test]
     fn test_count_replies_recursive_no_replies() {

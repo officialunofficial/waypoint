@@ -1,11 +1,11 @@
 //! MCP handlers for User Data operations
 
 use crate::core::types::{Fid, Message, MessageType};
-use crate::services::mcp::base::WaypointMcpService;
+use crate::services::mcp::base::WaypointMcpCore;
 
 use prost::Message as ProstMessage;
 
-impl<DB, HC> WaypointMcpService<DB, HC>
+impl<DB, HC> WaypointMcpCore<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
@@ -700,12 +700,12 @@ mod tests {
         }
     }
 
-    type TestService = WaypointMcpService<MockDb, MockHub>;
+    type TestService = WaypointMcpCore<MockDb, MockHub>;
 
     fn make_service(mock_hub: MockHub) -> TestService {
         let data_context =
             DataContextBuilder::new().with_database(MockDb).with_hub_client(mock_hub).build();
-        WaypointMcpService::new(data_context)
+        WaypointMcpCore::new(data_context)
     }
 
     fn make_verification_add_message(

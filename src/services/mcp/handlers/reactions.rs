@@ -1,13 +1,13 @@
 //! MCP handlers for Reaction-related operations
 
 use crate::core::types::Fid;
-use crate::services::mcp::base::WaypointMcpService;
+use crate::services::mcp::base::WaypointMcpCore;
 
 use prost::Message as ProstMessage;
 
 // Common types are used in the handler implementations
 
-impl<DB, HC> WaypointMcpService<DB, HC>
+impl<DB, HC> WaypointMcpCore<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
