@@ -1092,15 +1092,15 @@ The service is enabled by default and will automatically start with Waypoint.
 
 ## Extending the MCP Integration
 
-Developers can extend Waypoint's MCP capabilities by adding more tools to the MCP service modules (`src/services/mcp/`):
+Developers can extend Waypoint's MCP capabilities by adding query logic in `src/query/` and exposing it through MCP adapters in `src/services/mcp/handlers/`:
 
-1. Define new data structures for tool inputs/outputs in `src/services/mcp/handlers/common.rs`
-2. Implement the tool functionality in the `WaypointMcpCore<DB, HC>` implementation in `src/services/mcp/base.rs`
+1. Define new request schemas for MCP in `src/services/mcp/handlers/common.rs`
+2. Implement transport-agnostic query logic in `WaypointQuery<DB, HC>` under `src/query/*.rs`
 3. Add a delegate method in a `#[tool_router]` impl block for `WaypointMcpTools` in `src/services/mcp/handlers/mod.rs`
-4. Use the `Parameters<T>` wrapper for type-safe parameter handling
-5. Use the DataContext for data access to benefit from the abstraction
+4. Use the `Parameters<T>` wrapper for type-safe MCP parameter handling
+5. Use the DataContext through `WaypointQuery` for data access abstraction
 
-The recently implemented `do_get_user_by_fid` function demonstrates this pattern:
+The `do_get_user_by_fid` query method demonstrates this pattern:
 
 1. It receives a Farcaster ID (FID) parameter
 2. Uses the `DataContext` to make a gRPC request to the Hub via `get_user_data_by_fid`
@@ -1111,8 +1111,8 @@ The recently implemented `do_get_user_by_fid` function demonstrates this pattern
 
 This layered approach promotes clean separation of concerns:
 - The `McpService` struct manages MCP server lifecycle/startup integration with the app
-- The `WaypointMcpTools` class handles the MCP protocol interface
-- The `WaypointMcpCore` implements the business logic
+- The `WaypointMcpTools` type handles the MCP protocol interface
+- The `WaypointQuery` type implements transport-agnostic business/query logic
 - The `DataContext` provides data access abstraction
 - The Hub/Database clients handle the actual data retrieval
 
@@ -1127,15 +1127,15 @@ pub struct SearchCastsRequest {
     pub limit: usize,
 }
 
-// 2. Add the implementation in WaypointMcpCore
-impl<DB, HC> WaypointMcpCore<DB, HC>
+// 2. Add the transport-agnostic implementation in WaypointQuery
+impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     // Implementation method with business logic
     async fn do_search_casts(&self, query: &str, limit: usize) -> String {
-        info!("MCP: Searching casts for query: {}", query);
+        info!("Query: Searching casts for query: {}", query);
         
         // Use the Data Context to access multiple data sources
         match self.data_context.search_casts(query, limit).await {
@@ -1166,8 +1166,8 @@ impl WaypointMcpTools {
         &self,
         Parameters(SearchCastsRequest { query, limit }): Parameters<SearchCastsRequest>,
     ) -> Result<CallToolResult, McpError> {
-        // Delegate to the implementation in WaypointMcpCore
-        let result = self.service.do_search_casts(&query, limit).await;
+        // Delegate to transport-agnostic query logic
+        let result = self.query.do_search_casts(&query, limit).await;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 }

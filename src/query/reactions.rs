@@ -1,13 +1,14 @@
-//! MCP handlers for Reaction-related operations
+//! Reaction query operations.
 
 use crate::core::types::Fid;
-use crate::services::mcp::base::WaypointMcpCore;
+use crate::query::WaypointQuery;
+use crate::query::types::TimeRange;
 
 use prost::Message as ProstMessage;
 
 // Common types are used in the handler implementations
 
-impl<DB, HC> WaypointMcpCore<DB, HC>
+impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
@@ -21,7 +22,7 @@ where
         target_cast_hash: Option<&[u8]>,
         target_url: Option<&str>,
     ) -> String {
-        tracing::info!("MCP: Fetching reaction with FID: {} and type: {}", fid, reaction_type);
+        tracing::debug!("Query: Fetching reaction with FID: {} and type: {}", fid, reaction_type);
 
         // Use the data context to fetch the reaction
         match self
@@ -59,7 +60,7 @@ where
         reaction_type: Option<u8>,
         limit: usize,
     ) -> String {
-        tracing::info!("MCP: Fetching reactions for FID: {}", fid);
+        tracing::debug!("Query: Fetching reactions for FID: {}", fid);
 
         // Use the data context to fetch reactions
         match self.data_context.get_reactions_by_fid(fid, reaction_type, limit).await {
@@ -77,7 +78,7 @@ where
         reaction_type: Option<u8>,
         limit: usize,
     ) -> String {
-        tracing::info!("MCP: Fetching reactions by target");
+        tracing::debug!("Query: Fetching reactions by target");
 
         // Use the data context to fetch reactions
         match self
@@ -171,7 +172,7 @@ where
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> String {
-        tracing::info!("MCP: Fetching all reactions for FID: {} with time filtering", fid);
+        tracing::debug!("Query: Fetching all reactions for FID: {} with time filtering", fid);
 
         // Use the data context to fetch reactions with time filtering
         match self.data_context.get_all_reactions_by_fid(fid, limit, start_time, end_time).await {
@@ -181,15 +182,7 @@ where
 
                 // If there are no reactions, return a time-specific message
                 if base_response.starts_with("No reactions found") {
-                    let time_range = match (start_time, end_time) {
-                        (Some(start), Some(end)) => {
-                            format!(" between timestamps {} and {}", start, end)
-                        },
-                        (Some(start), None) => format!(" after timestamp {}", start),
-                        (None, Some(end)) => format!(" before timestamp {}", end),
-                        (None, None) => "".to_string(),
-                    };
-
+                    let time_range = TimeRange::new(start_time, end_time).describe();
                     return format!("No reactions found for FID {}{}", fid, time_range);
                 }
 

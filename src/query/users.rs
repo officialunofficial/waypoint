@@ -1,11 +1,12 @@
-//! MCP handlers for User Data operations
+//! User and verification query operations.
 
 use crate::core::types::{Fid, Message, MessageType};
-use crate::services::mcp::base::WaypointMcpCore;
+use crate::query::WaypointQuery;
+use crate::query::types::TimeRange;
 
 use prost::Message as ProstMessage;
 
-impl<DB, HC> WaypointMcpCore<DB, HC>
+impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
@@ -134,7 +135,7 @@ where
 
     /// Get user verifications by FID
     pub async fn do_get_verifications_by_fid(&self, fid: Fid, limit: usize) -> String {
-        tracing::info!("MCP: Fetching verifications for FID: {}", fid);
+        tracing::debug!("Query: Fetching verifications for FID: {}", fid);
 
         match self.data_context.get_verifications_by_fid(fid, limit).await {
             Ok(messages) => {
@@ -160,7 +161,11 @@ where
 
     /// Get a single verification by FID and address
     pub async fn do_get_verification(&self, fid: Fid, address_hex: &str) -> String {
-        tracing::info!("MCP: Fetching verification for FID: {} and address: {}", fid, address_hex);
+        tracing::debug!(
+            "Query: Fetching verification for FID: {} and address: {}",
+            fid,
+            address_hex
+        );
 
         let address = address_hex.trim_start_matches("0x");
         if address.is_empty() {
@@ -214,8 +219,8 @@ where
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> String {
-        tracing::info!(
-            "MCP: Fetching all verification messages for FID: {} with time filtering",
+        tracing::debug!(
+            "Query: Fetching all verification messages for FID: {} with time filtering",
             fid
         );
 
@@ -229,14 +234,7 @@ where
                     messages.iter().filter_map(Self::verification_message_to_json).collect();
 
                 if verifications.is_empty() {
-                    let time_range = match (start_time, end_time) {
-                        (Some(start), Some(end)) => {
-                            format!(" between timestamps {} and {}", start, end)
-                        },
-                        (Some(start), None) => format!(" after timestamp {}", start),
-                        (None, Some(end)) => format!(" before timestamp {}", end),
-                        (None, None) => "".to_string(),
-                    };
+                    let time_range = TimeRange::new(start_time, end_time).describe();
 
                     return format!("No verification messages found for FID {}{}", fid, time_range);
                 }
@@ -400,7 +398,7 @@ where
 
     /// Get username proofs by FID
     pub async fn do_get_username_proofs_by_fid(&self, fid: Fid) -> String {
-        tracing::info!("MCP: Fetching username proofs for FID: {}", fid);
+        tracing::debug!("Query: Fetching username proofs for FID: {}", fid);
 
         match self.data_context.get_username_proofs_by_fid(fid).await {
             Ok(messages) => {
@@ -432,7 +430,7 @@ where
 
     /// Get a single username proof by name
     pub async fn do_get_username_proof(&self, name: &str) -> String {
-        tracing::info!("MCP: Fetching username proof for name: {}", name);
+        tracing::debug!("Query: Fetching username proof for name: {}", name);
 
         match self.data_context.get_username_proof_by_name(name).await {
             Ok(Some(proof)) => {
@@ -700,12 +698,12 @@ mod tests {
         }
     }
 
-    type TestService = WaypointMcpCore<MockDb, MockHub>;
+    type TestService = WaypointQuery<MockDb, MockHub>;
 
     fn make_service(mock_hub: MockHub) -> TestService {
         let data_context =
             DataContextBuilder::new().with_database(MockDb).with_hub_client(mock_hub).build();
-        WaypointMcpCore::new(data_context)
+        WaypointQuery::new(data_context)
     }
 
     fn make_verification_add_message(

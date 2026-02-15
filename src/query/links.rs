@@ -1,21 +1,22 @@
-//! MCP handlers for Link-related operations
+//! Link query operations.
 
 use crate::core::types::Fid;
-use crate::services::mcp::base::WaypointMcpCore;
+use crate::query::WaypointQuery;
+use crate::query::types::TimeRange;
 
 use prost::Message as ProstMessage;
 
 // Common types are used in the handler implementations
 
-impl<DB, HC> WaypointMcpCore<DB, HC>
+impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     /// Get a specific link
     pub async fn do_get_link(&self, fid: Fid, link_type: &str, target_fid: Fid) -> String {
-        tracing::info!(
-            "MCP: Fetching link with FID: {}, type: {}, target: {}",
+        tracing::debug!(
+            "Query: Fetching link with FID: {}, type: {}, target: {}",
             fid,
             link_type,
             target_fid
@@ -54,7 +55,7 @@ where
         link_type: Option<&str>,
         limit: usize,
     ) -> String {
-        tracing::info!("MCP: Fetching links for FID: {}", fid);
+        tracing::debug!("Query: Fetching links for FID: {}", fid);
 
         // Use the data context to fetch links
         match self.data_context.get_links_by_fid(fid, link_type, limit).await {
@@ -70,7 +71,7 @@ where
         link_type: Option<&str>,
         limit: usize,
     ) -> String {
-        tracing::info!("MCP: Fetching links to target FID: {}", target_fid);
+        tracing::debug!("Query: Fetching links to target FID: {}", target_fid);
 
         // Use the data context to fetch links
         match self.data_context.get_links_by_target(target_fid, link_type, limit).await {
@@ -117,7 +118,7 @@ where
 
     /// Get link compact state messages by FID
     pub async fn do_get_link_compact_state_by_fid(&self, fid: Fid) -> String {
-        tracing::info!("MCP: Fetching link compact state for FID: {}", fid);
+        tracing::debug!("Query: Fetching link compact state for FID: {}", fid);
 
         // Use the data context to fetch compact state messages
         match self.data_context.get_link_compact_state_by_fid(fid).await {
@@ -166,7 +167,7 @@ where
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> String {
-        tracing::info!("MCP: Fetching all links for FID: {} with time filtering", fid);
+        tracing::debug!("Query: Fetching all links for FID: {} with time filtering", fid);
 
         // Use the data context to fetch links with time filtering
         match self.data_context.get_all_links_by_fid(fid, limit, start_time, end_time).await {
@@ -176,15 +177,7 @@ where
 
                 // If there are no links, return a time-specific message
                 if base_response.starts_with("No links found") {
-                    let time_range = match (start_time, end_time) {
-                        (Some(start), Some(end)) => {
-                            format!(" between timestamps {} and {}", start, end)
-                        },
-                        (Some(start), None) => format!(" after timestamp {}", start),
-                        (None, Some(end)) => format!(" before timestamp {}", end),
-                        (None, None) => "".to_string(),
-                    };
-
+                    let time_range = TimeRange::new(start_time, end_time).describe();
                     return format!("No links found for FID {}{}", fid, time_range);
                 }
 

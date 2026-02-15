@@ -1,19 +1,11 @@
-//! MCP handlers for Cast-related operations
+//! Cast and conversation query operations.
 
 use crate::core::types::{Fid, Message};
-use crate::services::mcp::base::WaypointMcpCore;
-use crate::services::mcp::handlers::utils::format_casts_response;
+use crate::query::WaypointQuery;
+use crate::query::types::{ConversationParams, TimeRange};
 use std::collections::HashSet;
 
 use prost::Message as ProstMessage;
-
-// Struct to hold parameters for conversation tree building
-#[derive(Clone, Copy)]
-struct ConversationParams {
-    recursive: bool,
-    max_depth: usize,
-    limit: usize,
-}
 
 /// Helper function to format a message as JSON
 fn format_message(message: &Message) -> serde_json::Map<String, serde_json::Value> {
@@ -90,14 +82,14 @@ fn format_message(message: &Message) -> serde_json::Map<String, serde_json::Valu
 
 // Common types are used in the handler implementations
 
-impl<DB, HC> WaypointMcpCore<DB, HC>
+impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     /// Get user data by FID using Hub client
     pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> String {
-        tracing::info!("MCP: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
+        tracing::debug!("Query: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
 
         // Convert hex hash to bytes
         let hash_bytes = match super::utils::parse_hash_bytes(hash_hex) {
@@ -134,24 +126,24 @@ where
 
     /// Get casts by FID
     pub async fn do_get_casts_by_fid(&self, fid: Fid, limit: usize) -> String {
-        tracing::info!("MCP: Fetching casts for FID: {}", fid);
+        tracing::debug!("Query: Fetching casts for FID: {}", fid);
 
         // Use the data context to fetch casts
         match self.data_context.get_casts_by_fid(fid, limit).await {
-            Ok(messages) => format_casts_response(messages, Some(fid)),
+            Ok(messages) => super::utils::format_casts_response(messages, Some(fid)),
             Err(e) => format!("Error fetching casts: {}", e),
         }
     }
 
     /// Get casts mentioning a user
     pub async fn do_get_casts_by_mention(&self, fid: Fid, limit: usize) -> String {
-        tracing::info!("MCP: Fetching casts mentioning FID: {}", fid);
+        tracing::debug!("Query: Fetching casts mentioning FID: {}", fid);
 
         // Use the data context to fetch mentions
         match self.data_context.get_casts_by_mention(fid, limit).await {
             Ok(messages) => {
                 // Format the response with special metadata for mentions
-                let formatted = format_casts_response(messages, None);
+                let formatted = super::utils::format_casts_response(messages, None);
 
                 if formatted.starts_with("No casts found") {
                     return format!("No casts found mentioning FID {}", fid);
@@ -170,8 +162,8 @@ where
         parent_hash_hex: &str,
         limit: usize,
     ) -> String {
-        tracing::info!(
-            "MCP: Fetching replies to cast with FID: {} and hash: {}",
+        tracing::debug!(
+            "Query: Fetching replies to cast with FID: {} and hash: {}",
             parent_fid,
             parent_hash_hex
         );
@@ -236,7 +228,7 @@ where
 
     /// Get replies to a URL
     pub async fn do_get_casts_by_parent_url(&self, parent_url: &str, limit: usize) -> String {
-        tracing::info!("MCP: Fetching replies to URL: {}", parent_url);
+        tracing::debug!("Query: Fetching replies to URL: {}", parent_url);
 
         // Use the data context to fetch replies
         match self.data_context.get_casts_by_parent_url(parent_url, limit).await {
@@ -288,24 +280,17 @@ where
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> String {
-        tracing::info!("MCP: Fetching all casts for FID: {} with time filtering", fid);
+        tracing::debug!("Query: Fetching all casts for FID: {} with time filtering", fid);
 
         // Use the data context to fetch casts with time filtering
         match self.data_context.get_all_casts_by_fid(fid, limit, start_time, end_time).await {
             Ok(messages) => {
                 // Format the basic response
-                let base_response = format_casts_response(messages, Some(fid));
+                let base_response = super::utils::format_casts_response(messages, Some(fid));
 
                 // If there are no casts, return a time-specific message
                 if base_response.starts_with("No casts found") {
-                    let time_range = match (start_time, end_time) {
-                        (Some(start), Some(end)) => {
-                            format!(" between timestamps {} and {}", start, end)
-                        },
-                        (Some(start), None) => format!(" after timestamp {}", start),
-                        (None, Some(end)) => format!(" before timestamp {}", end),
-                        (None, None) => "".to_string(),
-                    };
+                    let time_range = TimeRange::new(start_time, end_time).describe();
 
                     return format!("No casts found for FID {}{}", fid, time_range);
                 }
@@ -325,7 +310,7 @@ where
         max_depth: usize,
         limit: usize,
     ) -> String {
-        tracing::info!("MCP: Fetching conversation for cast hash: {}", cast_hash);
+        tracing::debug!("Query: Fetching conversation for cast hash: {}", cast_hash);
 
         // Convert hex hash to bytes
         let hash_bytes = match super::utils::parse_hash_bytes(cast_hash) {
@@ -355,10 +340,10 @@ where
 
         // Recursively fetch parent casts to build the context thread (up to 5 levels)
         if parent_info.0.is_some() && parent_info.1.is_some() {
-            tracing::info!("Found parent cast reference, fetching thread context");
+            tracing::debug!("Found parent cast reference, fetching thread context");
             self.fetch_parent_casts(&mut parent_casts, &mut participants, &parent_info, 0, 5).await;
         } else {
-            tracing::info!("No parent cast reference found, this may be a root conversation");
+            tracing::debug!("No parent cast reference found, this may be a root conversation");
         }
 
         // Create parameters struct for conversation tree building
@@ -585,7 +570,7 @@ where
             return;
         };
 
-        tracing::info!(
+        tracing::debug!(
             "Fetching specific cast with FID: {} and hash: {}",
             parent_fid,
             hex::encode(parent_hash)
@@ -921,10 +906,10 @@ where
 mod tests {
     use crate::core::data_context::DataAccessError;
     use crate::core::types::{Fid, Message, MessageId, MessageType};
-    use crate::services::mcp::base::WaypointMcpCore;
+    use crate::query::WaypointQuery;
     use async_trait::async_trait;
 
-    // Minimal mock types to access associated functions on WaypointMcpCore<DB, HC>
+    // Minimal mock types to access associated functions on WaypointQuery<DB, HC>
     #[derive(Clone, Debug)]
     struct MockDb;
 
@@ -1135,7 +1120,7 @@ mod tests {
         }
     }
 
-    type TestService = WaypointMcpCore<MockDb, MockHub>;
+    type TestService = WaypointQuery<MockDb, MockHub>;
 
     #[test]
     fn test_count_replies_recursive_no_replies() {

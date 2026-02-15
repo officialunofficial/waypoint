@@ -66,15 +66,21 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant AI
-    participant MCP
+    participant MCP as MCP Adapter
+    participant Query as WaypointQuery
     participant Hub as Snapchain
     participant DB as PostgreSQL
 
-    AI->>MCP: Tool call
-    MCP->>Hub: Fetch (primary)
-    MCP->>DB: Fallback
+    AI->>MCP: Tool call / resource read
+    MCP->>Query: Transport mapping
+    Query->>Hub: Fetch (primary)
+    Query->>DB: Fallback
     MCP->>AI: JSON response
 ```
+
+- `McpService` handles runtime lifecycle and server startup.
+- `WaypointMcpTools` is a thin protocol adapter (`rmcp` schemas + routing).
+- `WaypointQuery` owns transport-agnostic query/business logic shared across transports.
 
 See [mcp.md](mcp.md) for tool details.
 

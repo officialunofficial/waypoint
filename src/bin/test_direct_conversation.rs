@@ -4,13 +4,8 @@ use waypoint::core::data_context::DataContextBuilder;
 use waypoint::core::types::Fid;
 use waypoint::hub::client::Hub;
 use waypoint::hub::providers::FarcasterHubClient;
-
-// Import the public modules from mcp
-mod mcp_helpers {
-    pub use waypoint::services::mcp::NullDb;
-    pub use waypoint::services::mcp::WaypointMcpCore;
-}
-use mcp_helpers::*;
+use waypoint::query::WaypointQuery;
+use waypoint::services::mcp::NullDb;
 
 #[tokio::main]
 async fn main() {
@@ -45,8 +40,8 @@ async fn main() {
     let data_context =
         DataContextBuilder::new().with_hub_client(hub_client).with_database(NullDb).build();
 
-    // Create the MCP core
-    let mcp_core = WaypointMcpCore::new(data_context);
+    // Create shared query core
+    let query = WaypointQuery::new(data_context);
 
     // Test parameters
     let fid = Fid::from(4085);
@@ -54,7 +49,7 @@ async fn main() {
 
     // Call the get_conversation function
     println!("Testing get_conversation with FID {} and hash {}", fid, hash_str);
-    let conversation = mcp_core
+    let conversation = query
         .do_get_conversation(
             fid, hash_str, // Without 0x prefix
             true,     // recursive

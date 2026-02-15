@@ -18,6 +18,7 @@ use crate::core::{
     data_context::DataContext,
     types::{Fid, Message as FarcasterMessage},
 };
+use crate::query::WaypointQuery;
 
 // NullDB implementation that satisfies the Database trait
 #[derive(Debug, Clone)]
@@ -58,34 +59,6 @@ impl crate::core::data_context::Database for NullDb {
         _message_type: crate::core::types::MessageType,
     ) -> crate::core::data_context::Result<()> {
         Ok(())
-    }
-}
-
-// Waypoint MCP core with Snapchain data
-#[derive(Clone)]
-pub struct WaypointMcpCore<DB, HC> {
-    pub(crate) data_context: DataContext<DB, HC>,
-}
-
-impl<DB, HC> WaypointMcpCore<DB, HC>
-where
-    DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
-    HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
-{
-    pub fn new(data_context: DataContext<DB, HC>) -> Self {
-        Self { data_context }
-    }
-
-    // Conversation API - new method
-    pub async fn do_get_conversation(
-        &self,
-        fid: Fid,
-        cast_hash: &str,
-        recursive: bool,
-        max_depth: usize,
-        limit: usize,
-    ) -> String {
-        self.do_get_conversation_impl(fid, cast_hash, recursive, max_depth, limit).await
     }
 }
 
@@ -167,14 +140,14 @@ impl Service for McpService {
 
         // Launch the service
         let server_handle = tokio::spawn(async move {
-            // Create MCP core for tool handlers
-            let mcp_core = WaypointMcpCore::new(data_context);
+            // Create transport-agnostic query core for tool handlers
+            let query = WaypointQuery::new(data_context);
 
             // Create the Streamable HTTP service with session management
             let service = StreamableHttpService::new(
                 move || {
                     let tools =
-                        crate::services::mcp::handlers::WaypointMcpTools::new(mcp_core.clone());
+                        crate::services::mcp::handlers::WaypointMcpTools::new(query.clone());
                     Ok(tools)
                 },
                 Arc::new(LocalSessionManager::default()),
