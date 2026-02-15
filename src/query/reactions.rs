@@ -1,8 +1,7 @@
 //! Reaction query operations.
 
 use crate::core::types::Fid;
-use crate::query::WaypointQuery;
-use crate::query::types::TimeRange;
+use crate::query::{JsonMap, QueryError, QueryResult, WaypointQuery};
 
 use prost::Message as ProstMessage;
 
@@ -21,35 +20,51 @@ where
         target_cast_fid: Option<Fid>,
         target_cast_hash: Option<&[u8]>,
         target_url: Option<&str>,
-    ) -> String {
+    ) -> QueryResult<JsonMap> {
         tracing::debug!("Query: Fetching reaction with FID: {} and type: {}", fid, reaction_type);
 
-        // Use the data context to fetch the reaction
         match self
             .data_context
             .get_reaction(fid, reaction_type, target_cast_fid, target_cast_hash, target_url)
             .await
         {
             Ok(Some(message)) => {
-                // Try to decode the message payload as MessageData
-                if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                    let msg_data: crate::proto::MessageData = data;
+                let msg_data: crate::proto::MessageData = ProstMessage::decode(&*message.payload)
+                    .map_err(|err| {
+                    QueryError::Processing(format!("failed to decode reaction payload: {}", err))
+                })?;
 
-                    // Process the reaction
-                    if let Some(reaction_obj) =
-                        super::utils::process_reaction_message(&message, &msg_data)
-                    {
-                        // Convert to JSON string
-                        return serde_json::to_string_pretty(&reaction_obj).unwrap_or_else(|_| {
-                            format!("Error formatting reaction for FID {}", fid)
-                        });
-                    }
+                super::utils::process_reaction_message(&message, &msg_data).ok_or_else(|| {
+                    QueryError::Processing(format!(
+                        "reaction payload could not be processed for FID {}",
+                        fid
+                    ))
+                })
+            },
+            Ok(None) => {
+                let mut result = serde_json::Map::new();
+                result.insert("fid".to_string(), serde_json::json!(fid.value()));
+                result.insert("reaction_type_id".to_string(), serde_json::json!(reaction_type));
+                result.insert("found".to_string(), serde_json::json!(false));
+                result.insert("error".to_string(), serde_json::json!("Reaction not found"));
+
+                if let (Some(target_fid), Some(target_hash)) = (target_cast_fid, target_cast_hash) {
+                    result.insert(
+                        "target_cast".to_string(),
+                        serde_json::json!({
+                            "fid": target_fid.value(),
+                            "hash": hex::encode(target_hash)
+                        }),
+                    );
                 }
 
-                format!("Reaction found but could not be processed for FID {}", fid)
+                if let Some(target_url) = target_url {
+                    result.insert("target_url".to_string(), serde_json::json!(target_url));
+                }
+
+                Ok(result)
             },
-            Ok(None) => format!("No reaction found for FID {} with the specified parameters", fid),
-            Err(e) => format!("Error fetching reaction: {}", e),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -59,14 +74,11 @@ where
         fid: Fid,
         reaction_type: Option<u8>,
         limit: usize,
-    ) -> String {
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching reactions for FID: {}", fid);
 
-        // Use the data context to fetch reactions
-        match self.data_context.get_reactions_by_fid(fid, reaction_type, limit).await {
-            Ok(messages) => super::utils::format_reactions_response(messages, Some(fid)),
-            Err(e) => format!("Error fetching reactions: {}", e),
-        }
+        let messages = self.data_context.get_reactions_by_fid(fid, reaction_type, limit).await?;
+        Ok(super::utils::format_reactions_response(messages, Some(fid)))
     }
 
     /// Get reactions by target (cast or URL)
@@ -77,11 +89,10 @@ where
         target_url: Option<&str>,
         reaction_type: Option<u8>,
         limit: usize,
-    ) -> String {
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching reactions by target");
 
-        // Use the data context to fetch reactions
-        match self
+        let messages = self
             .data_context
             .get_reactions_by_target(
                 target_cast_fid,
@@ -90,78 +101,46 @@ where
                 reaction_type,
                 limit,
             )
-            .await
-        {
-            Ok(messages) => {
-                // Format response based on target type
-                let result = if messages.is_empty() {
-                    if let Some(target_url) = target_url {
-                        serde_json::json!({
-                            "target_url": target_url,
-                            "count": 0,
-                            "reactions": []
-                        })
-                    } else if let (Some(tfid), Some(thash)) = (target_cast_fid, target_cast_hash) {
-                        serde_json::json!({
-                            "target_cast": {
-                                "fid": tfid.value(),
-                                "hash": hex::encode(thash)
-                            },
-                            "count": 0,
-                            "reactions": []
-                        })
-                    } else {
-                        serde_json::json!({
-                            "count": 0,
-                            "reactions": []
-                        })
-                    }
-                } else {
-                    // Process messages into reaction objects
-                    let reactions: Vec<serde_json::Value> = messages
-                        .iter()
-                        .filter_map(|message| {
-                            if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                                let msg_data: crate::proto::MessageData = data;
-                                if let Some(reaction_obj) =
-                                    super::utils::process_reaction_message(message, &msg_data)
-                                {
-                                    return Some(serde_json::Value::Object(reaction_obj));
-                                }
-                            }
-                            None
-                        })
-                        .collect();
+            .await?;
 
-                    if let Some(target_url) = target_url {
-                        serde_json::json!({
-                            "target_url": target_url,
-                            "count": reactions.len(),
-                            "reactions": reactions
-                        })
-                    } else if let (Some(tfid), Some(thash)) = (target_cast_fid, target_cast_hash) {
-                        serde_json::json!({
-                            "target_cast": {
-                                "fid": tfid.value(),
-                                "hash": hex::encode(thash)
-                            },
-                            "count": reactions.len(),
-                            "reactions": reactions
-                        })
-                    } else {
-                        serde_json::json!({
-                            "count": reactions.len(),
-                            "reactions": reactions
-                        })
+        let reactions: Vec<serde_json::Value> = messages
+            .iter()
+            .filter_map(|message| {
+                if let Ok(data) = ProstMessage::decode(&*message.payload) {
+                    let msg_data: crate::proto::MessageData = data;
+                    if let Some(reaction_obj) =
+                        super::utils::process_reaction_message(message, &msg_data)
+                    {
+                        return Some(serde_json::Value::Object(reaction_obj));
                     }
-                };
+                }
+                None
+            })
+            .collect();
 
-                // Convert to JSON string
-                serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|_| "Error formatting reactions".to_string())
-            },
-            Err(e) => format!("Error fetching reactions by target: {}", e),
-        }
+        let result = if let Some(target_url) = target_url {
+            serde_json::json!({
+                "target_url": target_url,
+                "count": reactions.len(),
+                "reactions": reactions
+            })
+        } else if let (Some(tfid), Some(thash)) = (target_cast_fid, target_cast_hash) {
+            serde_json::json!({
+                "target_cast": {
+                    "fid": tfid.value(),
+                    "hash": hex::encode(thash)
+                },
+                "count": reactions.len(),
+                "reactions": reactions
+            })
+        } else {
+            serde_json::json!({
+                "count": reactions.len(),
+                "reactions": reactions
+            })
+        };
+
+        Ok(result)
     }
 
     /// Get all reactions by FID with timestamp filtering
@@ -169,26 +148,13 @@ where
         &self,
         fid: Fid,
         limit: usize,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
-    ) -> String {
+        _start_time: Option<u64>,
+        _end_time: Option<u64>,
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching all reactions for FID: {} with time filtering", fid);
 
-        // Use the data context to fetch reactions with time filtering
-        match self.data_context.get_all_reactions_by_fid(fid, limit, start_time, end_time).await {
-            Ok(messages) => {
-                // Format the basic response
-                let base_response = super::utils::format_reactions_response(messages, Some(fid));
-
-                // If there are no reactions, return a time-specific message
-                if base_response.starts_with("No reactions found") {
-                    let time_range = TimeRange::new(start_time, end_time).describe();
-                    return format!("No reactions found for FID {}{}", fid, time_range);
-                }
-
-                base_response
-            },
-            Err(e) => format!("Error fetching reactions with time filtering: {}", e),
-        }
+        let messages =
+            self.data_context.get_all_reactions_by_fid(fid, limit, _start_time, _end_time).await?;
+        Ok(super::utils::format_reactions_response(messages, Some(fid)))
     }
 }

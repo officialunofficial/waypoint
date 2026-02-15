@@ -1,8 +1,8 @@
 //! Cast and conversation query operations.
 
 use crate::core::types::{Fid, Message};
-use crate::query::WaypointQuery;
-use crate::query::types::{ConversationParams, TimeRange};
+use crate::query::types::ConversationParams;
+use crate::query::{JsonMap, QueryError, QueryResult, WaypointQuery};
 use std::collections::HashSet;
 
 use prost::Message as ProstMessage;
@@ -88,71 +88,65 @@ where
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     /// Get user data by FID using Hub client
-    pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> String {
+    pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> QueryResult<JsonMap> {
         tracing::debug!("Query: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
 
-        // Convert hex hash to bytes
-        let hash_bytes = match super::utils::parse_hash_bytes(hash_hex) {
-            Ok(bytes) => bytes,
-            Err(message) => return message,
-        };
+        let hash_bytes =
+            super::utils::parse_hash_bytes(hash_hex).map_err(QueryError::InvalidInput)?;
 
-        // Use the data context to fetch the cast
         match self.data_context.get_cast(fid, &hash_bytes).await {
             Ok(Some(message)) => {
-                // Try to decode the message payload as MessageData
-                if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                    let msg_data: crate::proto::MessageData = data;
+                let msg_data: crate::proto::MessageData = ProstMessage::decode(&*message.payload)
+                    .map_err(|err| {
+                    QueryError::Processing(format!("failed to decode cast payload: {}", err))
+                })?;
 
-                    // Process the cast
-                    if let Some(cast_obj) = super::utils::process_cast_message(&message, &msg_data)
-                    {
-                        // Convert to JSON string
-                        return serde_json::to_string_pretty(&cast_obj).unwrap_or_else(|_| {
-                            format!("Error formatting cast for FID {} and hash {}", fid, hash_hex)
-                        });
-                    }
-                }
-
-                format!(
-                    "Cast found but could not be processed for FID {} and hash {}",
-                    fid, hash_hex
-                )
+                super::utils::process_cast_message(&message, &msg_data).ok_or_else(|| {
+                    QueryError::Processing(format!(
+                        "cast payload could not be processed for FID {} and hash {}",
+                        fid, hash_hex
+                    ))
+                })
             },
-            Ok(None) => format!("No cast found for FID {} and hash {}", fid, hash_hex),
-            Err(e) => format!("Error fetching cast: {}", e),
+            Ok(None) => {
+                let mut not_found = serde_json::Map::new();
+                not_found.insert("fid".to_string(), serde_json::json!(fid.value()));
+                not_found.insert("hash".to_string(), serde_json::json!(hash_hex));
+                not_found.insert("found".to_string(), serde_json::json!(false));
+                not_found.insert("error".to_string(), serde_json::json!("Cast not found"));
+                Ok(not_found)
+            },
+            Err(e) => Err(e.into()),
         }
     }
 
     /// Get casts by FID
-    pub async fn do_get_casts_by_fid(&self, fid: Fid, limit: usize) -> String {
+    pub async fn do_get_casts_by_fid(
+        &self,
+        fid: Fid,
+        limit: usize,
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching casts for FID: {}", fid);
 
-        // Use the data context to fetch casts
-        match self.data_context.get_casts_by_fid(fid, limit).await {
-            Ok(messages) => super::utils::format_casts_response(messages, Some(fid)),
-            Err(e) => format!("Error fetching casts: {}", e),
-        }
+        let messages = self.data_context.get_casts_by_fid(fid, limit).await?;
+        Ok(super::utils::format_casts_response(messages, Some(fid)))
     }
 
     /// Get casts mentioning a user
-    pub async fn do_get_casts_by_mention(&self, fid: Fid, limit: usize) -> String {
+    pub async fn do_get_casts_by_mention(
+        &self,
+        fid: Fid,
+        limit: usize,
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching casts mentioning FID: {}", fid);
 
-        // Use the data context to fetch mentions
-        match self.data_context.get_casts_by_mention(fid, limit).await {
-            Ok(messages) => {
-                // Format the response with special metadata for mentions
-                let formatted = super::utils::format_casts_response(messages, None);
-
-                if formatted.starts_with("No casts found") {
-                    return format!("No casts found mentioning FID {}", fid);
-                }
-
-                formatted
-            },
-            Err(e) => format!("Error fetching cast mentions: {}", e),
+        let messages = self.data_context.get_casts_by_mention(fid, limit).await?;
+        let mut formatted = super::utils::format_casts_response(messages, None);
+        if let Some(obj) = formatted.as_object_mut() {
+            obj.insert("mention_fid".to_string(), serde_json::json!(fid.value()));
         }
+
+        Ok(formatted)
     }
 
     /// Get replies to a cast
@@ -161,115 +155,70 @@ where
         parent_fid: Fid,
         parent_hash_hex: &str,
         limit: usize,
-    ) -> String {
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!(
             "Query: Fetching replies to cast with FID: {} and hash: {}",
             parent_fid,
             parent_hash_hex
         );
 
-        // Convert hex hash to bytes
-        let parent_hash_bytes = match super::utils::parse_hash_bytes(parent_hash_hex) {
-            Ok(bytes) => bytes,
-            Err(message) => return message,
-        };
+        let parent_hash_bytes =
+            super::utils::parse_hash_bytes(parent_hash_hex).map_err(QueryError::InvalidInput)?;
 
-        // Use the data context to fetch replies
-        match self.data_context.get_casts_by_parent(parent_fid, &parent_hash_bytes, limit).await {
-            Ok(messages) => {
-                // Format the response with special metadata for replies
-                let result = if messages.is_empty() {
-                    serde_json::json!({
-                        "parent": {
-                            "fid": parent_fid.value(),
-                            "hash": parent_hash_hex
-                        },
-                        "count": 0,
-                        "replies": []
-                    })
-                } else {
-                    // Process messages into cast objects
-                    let replies: Vec<serde_json::Value> = messages
-                        .iter()
-                        .filter_map(|message| {
-                            if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                                let msg_data: crate::proto::MessageData = data;
-                                if let Some(cast_obj) =
-                                    super::utils::process_cast_message(message, &msg_data)
-                                {
-                                    return Some(serde_json::Value::Object(cast_obj));
-                                }
-                            }
-                            None
-                        })
-                        .collect();
+        let messages =
+            self.data_context.get_casts_by_parent(parent_fid, &parent_hash_bytes, limit).await?;
 
-                    serde_json::json!({
-                        "parent": {
-                            "fid": parent_fid.value(),
-                            "hash": parent_hash_hex
-                        },
-                        "count": replies.len(),
-                        "replies": replies
-                    })
-                };
+        let replies: Vec<serde_json::Value> = messages
+            .iter()
+            .filter_map(|message| {
+                if let Ok(data) = ProstMessage::decode(&*message.payload) {
+                    let msg_data: crate::proto::MessageData = data;
+                    if let Some(cast_obj) = super::utils::process_cast_message(message, &msg_data) {
+                        return Some(serde_json::Value::Object(cast_obj));
+                    }
+                }
+                None
+            })
+            .collect();
 
-                // Convert to JSON string
-                serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
-                    format!(
-                        "Error formatting replies for parent cast with FID {} and hash {}",
-                        parent_fid, parent_hash_hex
-                    )
-                })
+        Ok(serde_json::json!({
+            "parent": {
+                "fid": parent_fid.value(),
+                "hash": parent_hash_hex
             },
-            Err(e) => format!("Error fetching cast replies: {}", e),
-        }
+            "count": replies.len(),
+            "replies": replies
+        }))
     }
 
     /// Get replies to a URL
-    pub async fn do_get_casts_by_parent_url(&self, parent_url: &str, limit: usize) -> String {
+    pub async fn do_get_casts_by_parent_url(
+        &self,
+        parent_url: &str,
+        limit: usize,
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching replies to URL: {}", parent_url);
 
-        // Use the data context to fetch replies
-        match self.data_context.get_casts_by_parent_url(parent_url, limit).await {
-            Ok(messages) => {
-                // Format the response with special metadata for URL replies
-                let result = if messages.is_empty() {
-                    serde_json::json!({
-                        "parent_url": parent_url,
-                        "count": 0,
-                        "replies": []
-                    })
-                } else {
-                    // Process messages into cast objects
-                    let replies: Vec<serde_json::Value> = messages
-                        .iter()
-                        .filter_map(|message| {
-                            if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                                let msg_data: crate::proto::MessageData = data;
-                                if let Some(cast_obj) =
-                                    super::utils::process_cast_message(message, &msg_data)
-                                {
-                                    return Some(serde_json::Value::Object(cast_obj));
-                                }
-                            }
-                            None
-                        })
-                        .collect();
+        let messages = self.data_context.get_casts_by_parent_url(parent_url, limit).await?;
 
-                    serde_json::json!({
-                        "parent_url": parent_url,
-                        "count": replies.len(),
-                        "replies": replies
-                    })
-                };
+        let replies: Vec<serde_json::Value> = messages
+            .iter()
+            .filter_map(|message| {
+                if let Ok(data) = ProstMessage::decode(&*message.payload) {
+                    let msg_data: crate::proto::MessageData = data;
+                    if let Some(cast_obj) = super::utils::process_cast_message(message, &msg_data) {
+                        return Some(serde_json::Value::Object(cast_obj));
+                    }
+                }
+                None
+            })
+            .collect();
 
-                // Convert to JSON string
-                serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|_| format!("Error formatting replies for URL: {}", parent_url))
-            },
-            Err(e) => format!("Error fetching URL replies: {}", e),
-        }
+        Ok(serde_json::json!({
+            "parent_url": parent_url,
+            "count": replies.len(),
+            "replies": replies
+        }))
     }
 
     /// Get all casts by FID with timestamp filtering
@@ -279,26 +228,12 @@ where
         limit: usize,
         start_time: Option<u64>,
         end_time: Option<u64>,
-    ) -> String {
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching all casts for FID: {} with time filtering", fid);
 
-        // Use the data context to fetch casts with time filtering
-        match self.data_context.get_all_casts_by_fid(fid, limit, start_time, end_time).await {
-            Ok(messages) => {
-                // Format the basic response
-                let base_response = super::utils::format_casts_response(messages, Some(fid));
-
-                // If there are no casts, return a time-specific message
-                if base_response.starts_with("No casts found") {
-                    let time_range = TimeRange::new(start_time, end_time).describe();
-
-                    return format!("No casts found for FID {}{}", fid, time_range);
-                }
-
-                base_response
-            },
-            Err(e) => format!("Error fetching casts with time filtering: {}", e),
-        }
+        let messages =
+            self.data_context.get_all_casts_by_fid(fid, limit, start_time, end_time).await?;
+        Ok(super::utils::format_casts_response(messages, Some(fid)))
     }
 
     /// Get conversation details for a cast, including parent context
@@ -309,20 +244,23 @@ where
         recursive: bool,
         max_depth: usize,
         limit: usize,
-    ) -> String {
+    ) -> QueryResult<serde_json::Value> {
         tracing::debug!("Query: Fetching conversation for cast hash: {}", cast_hash);
 
-        // Convert hex hash to bytes
-        let hash_bytes = match super::utils::parse_hash_bytes(cast_hash) {
-            Ok(bytes) => bytes,
-            Err(message) => return format!("Invalid cast hash: {}", message),
-        };
+        let hash_bytes = super::utils::parse_hash_bytes(cast_hash).map_err(|message| {
+            QueryError::InvalidInput(format!("Invalid cast hash: {}", message))
+        })?;
 
-        // Fetch the root cast
-        let root_cast = match self.data_context.get_cast(fid, &hash_bytes).await {
-            Ok(Some(cast)) => cast,
-            Ok(None) => return format!("Cast not found with fid: {} and hash: {}", fid, cast_hash),
-            Err(e) => return format!("Error fetching cast: {}", e),
+        let root_cast = match self.data_context.get_cast(fid, &hash_bytes).await? {
+            Some(cast) => cast,
+            None => {
+                return Ok(serde_json::json!({
+                    "fid": fid.value(),
+                    "hash": cast_hash,
+                    "found": false,
+                    "error": "Cast not found"
+                }));
+            },
         };
 
         // Participants will track all unique FIDs in the conversation
@@ -522,8 +460,7 @@ where
             }
         };
 
-        serde_json::to_string_pretty(&response)
-            .unwrap_or_else(|e| format!("Error formatting response: {}", e))
+        Ok(response)
     }
 
     // Get parent cast information from a cast

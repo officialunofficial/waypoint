@@ -81,6 +81,7 @@ sequenceDiagram
 - `McpService` handles runtime lifecycle and server startup.
 - `WaypointMcpTools` is a thin protocol adapter (`rmcp` schemas + routing).
 - `WaypointQuery` owns transport-agnostic query/business logic shared across transports.
+- `WaypointQuery` returns typed query results; `WaypointMcpTools` serializes JSON for MCP responses.
 
 See [mcp.md](mcp.md) for tool details.
 

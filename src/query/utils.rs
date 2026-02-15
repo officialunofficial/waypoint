@@ -199,14 +199,10 @@ pub fn process_link_message(
     Some(link_obj)
 }
 
-pub fn format_casts_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) -> String {
-    if messages.is_empty() {
-        return match fid {
-            Some(fid) => format!("No casts found for FID {}", fid),
-            None => "No casts found".to_string(),
-        };
-    }
-
+pub fn format_casts_response(
+    messages: Vec<FarcasterMessage>,
+    fid: Option<Fid>,
+) -> serde_json::Value {
     let mut casts = Vec::new();
 
     for message in messages {
@@ -218,7 +214,7 @@ pub fn format_casts_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
         }
     }
 
-    let result = match fid {
+    match fid {
         Some(fid) => serde_json::json!({
             "fid": fid.value(),
             "count": casts.len(),
@@ -228,19 +224,13 @@ pub fn format_casts_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
             "count": casts.len(),
             "casts": casts
         }),
-    };
-
-    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Error formatting casts".to_string())
+    }
 }
 
-pub fn format_reactions_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) -> String {
-    if messages.is_empty() {
-        return match fid {
-            Some(fid) => format!("No reactions found for FID {}", fid),
-            None => "No reactions found".to_string(),
-        };
-    }
-
+pub fn format_reactions_response(
+    messages: Vec<FarcasterMessage>,
+    fid: Option<Fid>,
+) -> serde_json::Value {
     let mut reactions = Vec::new();
 
     for message in messages {
@@ -252,7 +242,7 @@ pub fn format_reactions_response(messages: Vec<FarcasterMessage>, fid: Option<Fi
         }
     }
 
-    let result = match fid {
+    match fid {
         Some(fid) => serde_json::json!({
             "fid": fid.value(),
             "count": reactions.len(),
@@ -262,20 +252,13 @@ pub fn format_reactions_response(messages: Vec<FarcasterMessage>, fid: Option<Fi
             "count": reactions.len(),
             "reactions": reactions
         }),
-    };
-
-    serde_json::to_string_pretty(&result)
-        .unwrap_or_else(|_| "Error formatting reactions".to_string())
+    }
 }
 
-pub fn format_links_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) -> String {
-    if messages.is_empty() {
-        return match fid {
-            Some(fid) => format!("No links found for FID {}", fid),
-            None => "No links found".to_string(),
-        };
-    }
-
+pub fn format_links_response(
+    messages: Vec<FarcasterMessage>,
+    fid: Option<Fid>,
+) -> serde_json::Value {
     let mut links = Vec::new();
 
     for message in messages {
@@ -287,7 +270,7 @@ pub fn format_links_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
         }
     }
 
-    let result = match fid {
+    match fid {
         Some(fid) => serde_json::json!({
             "fid": fid.value(),
             "count": links.len(),
@@ -297,9 +280,7 @@ pub fn format_links_response(messages: Vec<FarcasterMessage>, fid: Option<Fid>) 
             "count": links.len(),
             "links": links
         }),
-    };
-
-    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Error formatting links".to_string())
+    }
 }
 
 pub fn parse_hash_bytes(hash: &str) -> Result<Vec<u8>, String> {

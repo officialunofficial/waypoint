@@ -59,5 +59,14 @@ async fn main() {
         .await;
 
     println!("Conversation Result:");
-    println!("{}", conversation);
+    match conversation {
+        Ok(value) => {
+            let formatted = serde_json::to_string_pretty(&value)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize\"}".to_string());
+            println!("{}", formatted);
+        },
+        Err(err) => {
+            eprintln!("Query error: {}", err);
+        },
+    }
 }

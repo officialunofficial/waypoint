@@ -12,7 +12,10 @@ mod utils;
 use crate::core::data_context::{DataContext, Database, HubClient};
 use crate::core::types::Fid;
 
+pub use error::{QueryError, QueryResult};
 pub use utils::parse_hash_bytes;
+
+pub type JsonMap = serde_json::Map<String, serde_json::Value>;
 
 #[derive(Clone)]
 pub struct WaypointQuery<DB, HC> {
@@ -35,7 +38,7 @@ where
         recursive: bool,
         max_depth: usize,
         limit: usize,
-    ) -> String {
+    ) -> QueryResult<serde_json::Value> {
         self.do_get_conversation_impl(fid, cast_hash, recursive, max_depth, limit).await
     }
 }

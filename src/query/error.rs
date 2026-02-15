@@ -12,6 +12,9 @@ pub enum QueryError {
 
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+
+    #[error("processing error: {0}")]
+    Processing(String),
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;

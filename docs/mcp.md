@@ -1106,13 +1106,14 @@ The `do_get_user_by_fid` query method demonstrates this pattern:
 2. Uses the `DataContext` to make a gRPC request to the Hub via `get_user_data_by_fid`
 3. Processes the returned `MessagesResponse` by decoding the protobuf messages 
 4. Extracts the relevant data from each `UserDataBody` based on its type
-5. Formats the data into a clean JSON structure for the client
-6. Handles potential errors gracefully with descriptive messages
+5. Returns a native JSON value/map as `QueryResult<T>` (without string serialization)
+6. Lets the MCP adapter serialize and return the response to clients
 
 This layered approach promotes clean separation of concerns:
 - The `McpService` struct manages MCP server lifecycle/startup integration with the app
 - The `WaypointMcpTools` type handles the MCP protocol interface
 - The `WaypointQuery` type implements transport-agnostic business/query logic
+- `WaypointMcpTools` performs JSON serialization at the transport boundary
 - The `DataContext` provides data access abstraction
 - The Hub/Database clients handle the actual data retrieval
 
@@ -1134,7 +1135,11 @@ where
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     // Implementation method with business logic
-    async fn do_search_casts(&self, query: &str, limit: usize) -> String {
+    async fn do_search_casts(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> QueryResult<serde_json::Value> {
         info!("Query: Searching casts for query: {}", query);
         
         // Use the Data Context to access multiple data sources
@@ -1149,9 +1154,9 @@ where
                     "results": results
                 });
                 
-                result.to_string()
+                Ok(result)
             },
-            Err(e) => format!("Error searching casts: {}", e)
+            Err(e) => Err(e.into())
         }
     }
 }
@@ -1167,8 +1172,13 @@ impl WaypointMcpTools {
         Parameters(SearchCastsRequest { query, limit }): Parameters<SearchCastsRequest>,
     ) -> Result<CallToolResult, McpError> {
         // Delegate to transport-agnostic query logic
-        let result = self.query.do_search_casts(&query, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_search_casts(&query, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+
+        Self::call_tool_json(result)
     }
 }
 ```

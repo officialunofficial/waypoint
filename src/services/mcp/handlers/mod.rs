@@ -6,7 +6,7 @@ mod utils;
 use std::sync::Arc;
 
 use crate::core::types::Fid;
-use crate::query::{WaypointQuery, parse_hash_bytes};
+use crate::query::{QueryError, WaypointQuery, parse_hash_bytes};
 use crate::services::mcp::base::NullDb;
 
 use rmcp::{
@@ -69,16 +69,58 @@ impl WaypointMcpTools {
         .no_annotation()
     }
 
+    fn map_query_error(error: QueryError) -> McpError {
+        match error {
+            QueryError::InvalidInput(message) => McpError::invalid_params(message, None),
+            QueryError::DataAccess(err) => McpError::internal_error(
+                "Query data access error",
+                Some(serde_json::json!({ "error": err.to_string() })),
+            ),
+            QueryError::Serialization(err) => McpError::internal_error(
+                "Query serialization error",
+                Some(serde_json::json!({ "error": err.to_string() })),
+            ),
+            QueryError::Processing(message) => McpError::internal_error(
+                "Query processing error",
+                Some(serde_json::json!({ "error": message })),
+            ),
+        }
+    }
+
+    fn serialize_json(value: serde_json::Value) -> Result<String, McpError> {
+        serde_json::to_string_pretty(&value).map_err(|err| {
+            McpError::internal_error(
+                "Failed to serialize JSON response",
+                Some(serde_json::json!({ "error": err.to_string() })),
+            )
+        })
+    }
+
+    fn call_tool_json(value: serde_json::Value) -> Result<CallToolResult, McpError> {
+        let json = Self::serialize_json(value)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    fn call_tool_json_map(
+        value: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::call_tool_json(serde_json::Value::Object(value))
+    }
+
     /// Create a ReadResourceResult containing JSON content
-    fn resource_json_contents(uri: &str, json: String) -> ReadResourceResult {
-        ReadResourceResult {
+    fn resource_json_contents(
+        uri: &str,
+        json: serde_json::Value,
+    ) -> Result<ReadResourceResult, McpError> {
+        let text = Self::serialize_json(json)?;
+        Ok(ReadResourceResult {
             contents: vec![ResourceContents::TextResourceContents {
                 uri: uri.to_string(),
                 mime_type: Some("application/json".to_string()),
-                text: json,
+                text,
                 meta: None,
             }],
-        }
+        })
     }
 
     fn waypoint_resource_name(resource: &utils::WaypointResource) -> &'static str {
@@ -115,8 +157,8 @@ impl WaypointMcpTools {
     ) -> Result<CallToolResult, McpError> {
         info!(transport = "mcp", kind = "tool", tool = "get_user_by_fid", fid, "MCP tool call");
         let fid = Fid::from(fid);
-        let result = self.query.do_get_user_by_fid(fid).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self.query.do_get_user_by_fid(fid).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json_map(result)
     }
 
     #[tool(
@@ -138,8 +180,12 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_verifications_by_fid(fid, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_verifications_by_fid(fid, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -161,8 +207,9 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_verification(fid, &address).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result =
+            self.query.do_get_verification(fid, &address).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -189,8 +236,9 @@ impl WaypointMcpTools {
         let result = self
             .query
             .do_get_all_verification_messages_by_fid(fid, limit, start_time, end_time)
-            .await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -210,8 +258,9 @@ impl WaypointMcpTools {
             username_len = username.len(),
             "MCP tool call"
         );
-        let result = self.query.do_get_fid_by_username(&username).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result =
+            self.query.do_get_fid_by_username(&username).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -231,8 +280,9 @@ impl WaypointMcpTools {
             username_len = username.len(),
             "MCP tool call"
         );
-        let result = self.query.do_get_user_by_username(&username).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result =
+            self.query.do_get_user_by_username(&username).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     // Cast APIs
@@ -250,8 +300,8 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_cast(fid, &hash).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self.query.do_get_cast(fid, &hash).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json_map(result)
     }
 
     #[tool(
@@ -271,8 +321,9 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_casts_by_fid(fid, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result =
+            self.query.do_get_casts_by_fid(fid, limit).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -294,8 +345,9 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_casts_by_mention(fid, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result =
+            self.query.do_get_casts_by_mention(fid, limit).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -318,8 +370,12 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let parent_fid = Fid::from(parent_fid);
-        let result = self.query.do_get_casts_by_parent(parent_fid, &parent_hash, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_casts_by_parent(parent_fid, &parent_hash, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(description = "Get cast replies to a specific URL", annotations(read_only_hint = true))]
@@ -337,8 +393,12 @@ impl WaypointMcpTools {
             has_parent_url = !parent_url.is_empty(),
             "MCP tool call"
         );
-        let result = self.query.do_get_casts_by_parent_url(&parent_url, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_casts_by_parent_url(&parent_url, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -360,8 +420,12 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_all_casts_by_fid(fid, limit, start_time, end_time).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_all_casts_by_fid(fid, limit, start_time, end_time)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -395,7 +459,7 @@ impl WaypointMcpTools {
         let result =
             self.query.do_get_conversation(fid, &cast_hash, recursive, max_depth, limit).await;
 
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        Self::call_tool_json(result.map_err(Self::map_query_error)?)
     }
 
     // Reaction APIs
@@ -445,9 +509,10 @@ impl WaypointMcpTools {
                 target_cast_hash_ref,
                 target_url_ref,
             )
-            .await;
+            .await
+            .map_err(Self::map_query_error)?;
 
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        Self::call_tool_json_map(result)
     }
 
     #[tool(
@@ -470,8 +535,12 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_reactions_by_fid(fid, reaction_type, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_reactions_by_fid(fid, reaction_type, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -522,9 +591,10 @@ impl WaypointMcpTools {
                 reaction_type,
                 limit,
             )
-            .await;
+            .await
+            .map_err(Self::map_query_error)?;
 
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -548,8 +618,12 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_all_reactions_by_fid(fid, limit, start_time, end_time).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_all_reactions_by_fid(fid, limit, start_time, end_time)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     // Link APIs
@@ -571,8 +645,12 @@ impl WaypointMcpTools {
         );
         let fid = Fid::from(fid);
         let target_fid = Fid::from(target_fid);
-        let result = self.query.do_get_link(fid, &link_type, target_fid).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_link(fid, &link_type, target_fid)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json_map(result)
     }
 
     #[tool(
@@ -601,8 +679,12 @@ impl WaypointMcpTools {
             Some(ref lt) => Some(lt.as_str()),
             None => Some("follow"),
         };
-        let result = self.query.do_get_links_by_fid(fid, link_type_ref, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_links_by_fid(fid, link_type_ref, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -631,8 +713,12 @@ impl WaypointMcpTools {
             Some(ref lt) => Some(lt.as_str()),
             None => Some("follow"),
         };
-        let result = self.query.do_get_links_by_target(target_fid, link_type_ref, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_links_by_target(target_fid, link_type_ref, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -651,8 +737,12 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_link_compact_state_by_fid(fid).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_link_compact_state_by_fid(fid)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -676,8 +766,12 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_all_links_by_fid(fid, limit, start_time, end_time).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result = self
+            .query
+            .do_get_all_links_by_fid(fid, limit, start_time, end_time)
+            .await
+            .map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     // Username Proofs API
@@ -695,8 +789,9 @@ impl WaypointMcpTools {
             name_len = name.len(),
             "MCP tool call"
         );
-        let result = self.query.do_get_username_proof(&name).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result =
+            self.query.do_get_username_proof(&name).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 
     #[tool(
@@ -715,8 +810,9 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-        let result = self.query.do_get_username_proofs_by_fid(fid).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        let result =
+            self.query.do_get_username_proofs_by_fid(fid).await.map_err(Self::map_query_error)?;
+        Self::call_tool_json(result)
     }
 }
 
@@ -810,9 +906,11 @@ impl ServerHandler for WaypointMcpTools {
             let limit = common::default_limit();
 
             let result = match resource {
-                utils::WaypointResource::UserByFid { fid } => {
-                    self.query.do_get_user_by_fid(Fid::from(fid)).await
-                },
+                utils::WaypointResource::UserByFid { fid } => self
+                    .query
+                    .do_get_user_by_fid(Fid::from(fid))
+                    .await
+                    .map(serde_json::Value::Object),
                 utils::WaypointResource::UserByUsername { username } => {
                     self.query.do_get_user_by_username(&username).await
                 },
@@ -827,9 +925,11 @@ impl ServerHandler for WaypointMcpTools {
                         .do_get_all_verification_messages_by_fid(Fid::from(fid), limit, None, None)
                         .await
                 },
-                utils::WaypointResource::Cast { fid, hash } => {
-                    self.query.do_get_cast(Fid::from(fid), &hash).await
-                },
+                utils::WaypointResource::Cast { fid, hash } => self
+                    .query
+                    .do_get_cast(Fid::from(fid), &hash)
+                    .await
+                    .map(serde_json::Value::Object),
                 utils::WaypointResource::Conversation { fid, hash } => {
                     // Use defaults: recursive=true, max_depth=5, limit=10
                     self.query.do_get_conversation(Fid::from(fid), &hash, true, 5, limit).await
@@ -888,9 +988,10 @@ impl ServerHandler for WaypointMcpTools {
                 utils::WaypointResource::UsernameProofsByFid { fid } => {
                     self.query.do_get_username_proofs_by_fid(Fid::from(fid)).await
                 },
-            };
+            }
+            .map_err(Self::map_query_error)?;
 
-            return Ok(Self::resource_json_contents(&uri, result));
+            return Self::resource_json_contents(&uri, result);
         }
 
         match uri.as_str() {
