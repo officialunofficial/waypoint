@@ -72,8 +72,8 @@ The MCP service is automatically started when you run Waypoint via `waypoint sta
 
 The MCP service uses the Data Context pattern for efficient and flexible data access:
 
-- **Unified Data Access**: Uses a single typed DataContext interface for query operations
-- **Hub-backed MCP runtime**: MCP is wired with a Hub client and `NullDb`, so MCP responses are sourced from Hub data
+- **Unified Data Access**: Accesses data from both Snapchain Hub and PostgreSQL database through a single interface
+- **Prioritized Data Sources**: Always tries to fetch fresh data from the Hub first, with database fallback
 - **Transport-agnostic query core**: `WaypointQuery` stays reusable across adapters and can run with different DB/Hub implementations
 - **Efficient Resource Management**: Shares database and Hub client connections between requests
 - **Type-Safe Interfaces**: Uses Rust's trait system for clean abstractions
