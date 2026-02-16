@@ -1,6 +1,7 @@
 # Architecture
 
 Three main components:
+
 1. **Streaming** - Real-time Snapchain events via gRPC → Redis → PostgreSQL
 2. **Backfill** - Historical data via queue/worker pattern
 3. **MCP** - AI assistant data access
@@ -35,6 +36,7 @@ sequenceDiagram
 ```
 
 **Flow:**
+
 - Subscriber connects to Snapchain gRPC, filters spam, groups by type
 - Redis streams provide durability and backpressure
 - Consumer groups enable parallel processing
@@ -56,6 +58,7 @@ sequenceDiagram
 ```
 
 **Flow:**
+
 - Queue service populates Redis with FID batches
 - Workers pull jobs atomically (BRPOP)
 - Each job reconciles all message types for its FIDs
@@ -87,14 +90,12 @@ See [mcp.md](mcp.md) for tool details.
 
 ## Data Access
 
-Uses a DataContext pattern with adapter-specific composition:
+Uses DataContext pattern with Hub-primary, DB-fallback strategy:
 
 ```
 DataContext<DB, HC>
-  ├── database: Option<DB>    # PostgreSQL or NullDb
+  ├── database: Option<DB>    # PostgreSQL
   └── hub_client: Option<HC>  # Snapchain gRPC
 ```
-
-In the MCP runtime, DataContext is currently configured with Hub + `NullDb`, so MCP reads are Hub-backed.
 
 See [data-architecture.md](data-architecture.md) for schema.

@@ -102,15 +102,18 @@ This design ensures proper URL encoding, avoids ambiguity, and follows web stand
 ### Resource Templates
 
 #### Users
+
 - `waypoint://users/{fid}`: User profile by FID
 - `waypoint://users/by-username/{username}`: User profile by username
 
 #### Verifications
+
 - `waypoint://verifications/{fid}`: Verified addresses for a FID
 - `waypoint://verifications/{fid}/{address}`: Specific verification by FID and address
 - `waypoint://verifications/all-by-fid/{fid}`: All verification messages for a FID
 
 #### Casts
+
 - `waypoint://casts/{fid}/{hash}`: Specific cast by author FID + hash
 - `waypoint://casts/by-fid/{fid}`: Recent casts by FID
 - `waypoint://casts/by-mention/{fid}`: Casts mentioning a FID
@@ -118,19 +121,23 @@ This design ensures proper URL encoding, avoids ambiguity, and follows web stand
 - `waypoint://casts/by-parent-url{?url}`: Replies to a parent URL (RFC 6570 query expansion)
 
 #### Conversations
+
 - `waypoint://conversations/{fid}/{hash}`: Full conversation thread for a cast (includes replies, participants, parent context, quoted casts)
 
 #### Reactions
+
 - `waypoint://reactions/by-fid/{fid}`: Reactions by FID
 - `waypoint://reactions/by-target-cast/{fid}/{hash}`: Reactions to a target cast
 - `waypoint://reactions/by-target-url{?url}`: Reactions to a target URL (RFC 6570 query expansion)
 
 #### Links
+
 - `waypoint://links/by-fid/{fid}`: Links by FID (defaults to `follow`)
 - `waypoint://links/by-target/{fid}`: Links to a target FID (defaults to `follow`)
 - `waypoint://links/compact-state/{fid}`: Link compact state by FID
 
 #### Username Proofs
+
 - `waypoint://username-proofs/{fid}`: Username proofs (fname, ens_l1, basename) for a FID
 - `waypoint://username-proofs/by-name/{name}`: Username proof for a specific name
 
@@ -150,7 +157,6 @@ List-style resources use the same default limit as tools (10), unless the tool s
 ### User Tools
 
 #### Get User by FID
-
 
 ```json
 {
@@ -226,6 +232,7 @@ The response includes detailed information about each verification:
 ```
 
 The response includes:
+
 - Protocol type (ethereum, solana)
 - Verification type (eoa for personal wallets, contract for smart contracts)
 - Chain ID (for contract verifications)
@@ -363,7 +370,7 @@ Retrieve complete conversation details for a cast, including participants, neste
   "params": {
     "name": "get_conversation",
     "input": {
-      "fid": "12345",
+      "fid": 12345,
       "cast_hash": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
       "recursive": true,
       "max_depth": 5,
@@ -372,6 +379,8 @@ Retrieve complete conversation details for a cast, including participants, neste
   }
 }
 ```
+
+`fid` should be sent as a number. For backward compatibility, a numeric string is also accepted.
 
 The response includes:
 
@@ -478,6 +487,7 @@ The response includes:
 ```
 
 Additional parameters:
+
 - `recursive`: When true, fetches nested replies to create a complete conversation tree (default: false)
 - `max_depth`: Controls how deep to traverse the reply tree (default: 5)
 - `limit`: Maximum number of replies to fetch per level (default: 10)
@@ -561,6 +571,7 @@ Find a user's FID by their Farcaster username.
 ```
 
 Response:
+
 ```json
 {
   "username": "alice",
@@ -586,7 +597,7 @@ Check if a user follows another user (or any other link type relationship).
 }
 ```
 
-The `link_type` defaults to `"follow"` for this lookup tool when omitted.
+The `link_type` defaults to "follow" if not specified, making it easy to check follow relationships.
 
 #### Get Links by FID (Who a User Follows)
 
@@ -605,7 +616,7 @@ Find users that a specific user follows.
 }
 ```
 
-If `link_type` is omitted (or `null`), this returns all link types. Pass `"follow"` to filter to follow links.
+By default, this returns "follow" type links unless a different link_type is specified.
 
 #### Get Links by Target (Who Follows a User)
 
@@ -624,7 +635,7 @@ Find users that follow a specific user.
 }
 ```
 
-If `link_type` is omitted (or `null`), this returns all link types. Pass `"follow"` to filter to follow links.
+By default, this returns "follow" type links unless a different link_type is specified.
 
 #### Get Username Proofs
 
@@ -778,7 +789,6 @@ The response includes both add/remove verification messages:
 }
 ```
 
-
 ## Using the Waypoint Prompt
 
 The Waypoint MCP integration includes a customizable prompt for AI assistants:
@@ -797,6 +807,7 @@ The Waypoint MCP integration includes a customizable prompt for AI assistants:
 ```
 
 The prompt supports two parameters:
+
 - `fid` (required): The Farcaster ID to focus on
 - `username` (optional): The username associated with the FID, including full ENS domains
 
@@ -1056,6 +1067,7 @@ Accept: application/json, text/event-stream
 ```
 
 Example connection using the MCP client library:
+
 ```javascript
 import { createClient } from "@modelcontextprotocol/client";
 
@@ -1082,7 +1094,6 @@ const casts = await client.callTool({
 console.log(casts);
 ```
 
-
 ### Docker Setup
 
 When using Docker Compose, the MCP service is already configured and exposed:
@@ -1105,12 +1116,13 @@ The `do_get_user_by_fid` query method demonstrates this pattern:
 
 1. It receives a Farcaster ID (FID) parameter
 2. Uses the `DataContext` to make a gRPC request to the Hub via `get_user_data_by_fid`
-3. Processes the returned `MessagesResponse` by decoding the protobuf messages 
+3. Processes the returned `MessagesResponse` by decoding the protobuf messages
 4. Extracts the relevant data from each `UserDataBody` based on its type
 5. Returns typed DTOs as `QueryResult<T>` (without building transport JSON in query logic)
 6. Lets the MCP adapter serialize and return the response to clients
 
 This layered approach promotes clean separation of concerns:
+
 - The `McpService` struct manages MCP server lifecycle/startup integration with the app
 - The `WaypointMcpTools` type handles the MCP protocol interface
 - The `WaypointQuery` type implements transport-agnostic business/query logic

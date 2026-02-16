@@ -1,7 +1,7 @@
 //! Common request types for MCP handlers
 
 use rmcp::schemars::{self, JsonSchema};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// Default limit for most requests
 pub(crate) fn default_limit() -> usize {
@@ -11,6 +11,25 @@ pub(crate) fn default_limit() -> usize {
 /// Default link type is "follow"
 pub(crate) fn default_link_type() -> String {
     "follow".to_string()
+}
+
+fn deserialize_fid_from_string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FidInput {
+        Number(u64),
+        String(String),
+    }
+
+    match FidInput::deserialize(deserializer)? {
+        FidInput::Number(fid) => Ok(fid),
+        FidInput::String(fid) => {
+            fid.parse::<u64>().map_err(|_| serde::de::Error::custom(format!("Invalid FID: {fid}")))
+        },
+    }
 }
 
 /// Request for a user by FID
@@ -226,7 +245,10 @@ pub struct GetUsernameProofRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetConversationRequest {
-    #[schemars(description = "Farcaster user ID of the cast author")]
+    #[schemars(
+        description = "Farcaster user ID of the cast author (number; string accepted for backward compatibility)"
+    )]
+    #[serde(deserialize_with = "deserialize_fid_from_string_or_number")]
     pub fid: u64,
 
     #[schemars(description = "Cast hash in hexadecimal format")]
@@ -262,4 +284,46 @@ pub struct WaypointPromptArgs {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GetConversationRequest;
+    use serde_json::json;
+
+    #[test]
+    fn get_conversation_request_accepts_numeric_fid() {
+        let request: GetConversationRequest = serde_json::from_value(json!({
+            "fid": 12345,
+            "cast_hash": "0xabc"
+        }))
+        .expect("numeric fid should deserialize");
+
+        assert_eq!(request.fid, 12345);
+        assert!(!request.recursive);
+        assert_eq!(request.max_depth, 5);
+        assert_eq!(request.limit, 10);
+    }
+
+    #[test]
+    fn get_conversation_request_accepts_string_fid() {
+        let request: GetConversationRequest = serde_json::from_value(json!({
+            "fid": "12345",
+            "cast_hash": "0xabc"
+        }))
+        .expect("string fid should deserialize for backward compatibility");
+
+        assert_eq!(request.fid, 12345);
+    }
+
+    #[test]
+    fn get_conversation_request_rejects_non_numeric_string_fid() {
+        let error = serde_json::from_value::<GetConversationRequest>(json!({
+            "fid": "abc",
+            "cast_hash": "0xabc"
+        }))
+        .expect_err("non-numeric fid should be rejected");
+
+        assert!(error.to_string().contains("Invalid FID"));
+    }
 }
