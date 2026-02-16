@@ -200,12 +200,44 @@ where
 {
     /// Get user data by FID, using Hub if available, falling back to database
     pub async fn get_user_data_by_fid(&self, fid: Fid, limit: usize) -> Result<Vec<Message>> {
-        // Try hub client first if available
+        let mut hub_error = None;
+        let mut hub_returned_empty = false;
+
         if let Some(hub) = &self.hub_client {
             match hub.get_user_data_by_fid(fid, limit).await {
-                Ok(data) if !data.is_empty() => return Ok(data),
-                _ => {},
+                Ok(data) => {
+                    if data.is_empty() {
+                        hub_returned_empty = true;
+                    } else {
+                        return Ok(data);
+                    }
+                },
+                Err(error) => {
+                    hub_error = Some(error);
+                },
             }
+        }
+
+        if let Some(db) = &self.database {
+            let db_messages =
+                db.get_messages_by_fid(fid, MessageType::UserData, limit, None).await?;
+            if !db_messages.is_empty() {
+                return Ok(db_messages);
+            }
+
+            if let Some(error) = hub_error {
+                return Err(error);
+            }
+
+            return Ok(db_messages);
+        }
+
+        if hub_returned_empty {
+            return Ok(Vec::new());
+        }
+
+        if let Some(error) = hub_error {
+            return Err(error);
         }
 
         Err(DataAccessError::Other("No data source available".to_string()))

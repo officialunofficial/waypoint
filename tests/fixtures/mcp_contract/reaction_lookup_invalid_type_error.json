@@ -1,0 +1,4 @@
+{
+	"error_type": "invalid_input",
+	"message": "Invalid reaction type: 9 (expected 1=Like or 2=Recast)"
+}

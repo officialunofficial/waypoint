@@ -1,83 +1,95 @@
 //! Cast and conversation query operations.
 
 use crate::core::types::{Fid, Message};
+use crate::query::responses::{
+    CastLookupResponse, CastNotFoundResponse, CastReference, CastsByFidResponse,
+    CastsByMentionResponse, CastsByParentResponse, CastsByParentUrlResponse, ConversationCast,
+    ConversationFoundResponse, ConversationParentCast, ConversationParticipants,
+    ConversationResponse, ConversationTree,
+};
 use crate::query::types::ConversationParams;
-use crate::query::{JsonMap, QueryError, QueryResult, WaypointQuery};
+use crate::query::{QueryError, QueryResult, WaypointQuery};
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 use prost::Message as ProstMessage;
 
-/// Helper function to format a message as JSON
-fn format_message(message: &Message) -> serde_json::Map<String, serde_json::Value> {
-    let mut json_obj = serde_json::Map::new();
+/// Helper function to format a message in conversation-friendly shape.
+fn format_message(message: &Message) -> ConversationCast {
+    let mut formatted = ConversationCast {
+        id: message.id.value().to_string(),
+        message_type: message.message_type.to_string(),
+        fid: None,
+        timestamp: None,
+        text: None,
+        mentions: None,
+        parent: None,
+        parent_url: None,
+        embeds: None,
+        quoted_casts: None,
+        replies: None,
+        has_more_replies: None,
+    };
 
-    // Basic message metadata
-    json_obj.insert("id".to_string(), serde_json::json!(message.id.value()));
-    json_obj.insert("type".to_string(), serde_json::json!(message.message_type.to_string()));
-
-    // Try to decode the protobuf message data from payload
     if let Ok(data) = ProstMessage::decode(&*message.payload) {
         let msg_data: crate::proto::MessageData = data;
+        formatted.fid = Some(msg_data.fid);
+        formatted.timestamp = Some(msg_data.timestamp);
 
-        // Add common fields
-        json_obj.insert("fid".to_string(), serde_json::json!(msg_data.fid));
-        json_obj.insert("timestamp".to_string(), serde_json::json!(msg_data.timestamp));
-
-        // Extract cast-specific data if it's a cast
         if let Some(crate::proto::message_data::Body::CastAddBody(cast)) = &msg_data.body {
-            json_obj.insert("text".to_string(), serde_json::json!(cast.text));
+            formatted.text = Some(cast.text.clone());
 
-            // Add mentions if present
             if !cast.mentions.is_empty() {
-                json_obj.insert("mentions".to_string(), serde_json::json!(cast.mentions));
+                formatted.mentions = Some(cast.mentions.clone());
             }
 
-            // Add parent information if present
             match &cast.parent {
                 Some(crate::proto::cast_add_body::Parent::ParentCastId(parent)) => {
-                    json_obj.insert(
-                        "parent".to_string(),
-                        serde_json::json!({
-                            "fid": parent.fid,
-                            "hash": hex::encode(&parent.hash)
-                        }),
-                    );
+                    formatted.parent = Some(ConversationParentCast {
+                        fid: parent.fid,
+                        hash: hex::encode(&parent.hash),
+                    });
                 },
                 Some(crate::proto::cast_add_body::Parent::ParentUrl(url)) => {
-                    json_obj.insert("parent_url".to_string(), serde_json::json!(url));
+                    formatted.parent_url = Some(url.clone());
                 },
                 None => {},
             }
 
-            // Add embeds information if present, including quote casts
             if !cast.embeds.is_empty() {
-                let embeds: Vec<serde_json::Value> = cast
+                let embeds = cast
                     .embeds
                     .iter()
                     .filter_map(|embed| match &embed.embed {
-                        Some(crate::proto::embed::Embed::Url(url)) => Some(serde_json::json!({
-                            "type": "url",
-                            "url": url
-                        })),
+                        Some(crate::proto::embed::Embed::Url(url)) => {
+                            Some(crate::query::responses::CastEmbed::Url(
+                                crate::query::responses::TypedUrlReference {
+                                    target_type: "url".to_string(),
+                                    url: url.clone(),
+                                },
+                            ))
+                        },
                         Some(crate::proto::embed::Embed::CastId(cast_id)) => {
-                            Some(serde_json::json!({
-                                "type": "cast",
-                                "fid": cast_id.fid,
-                                "hash": hex::encode(&cast_id.hash)
-                            }))
+                            Some(crate::query::responses::CastEmbed::Cast(
+                                crate::query::responses::TypedCastReference {
+                                    target_type: "cast".to_string(),
+                                    fid: cast_id.fid,
+                                    hash: hex::encode(&cast_id.hash),
+                                },
+                            ))
                         },
                         None => None,
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
 
                 if !embeds.is_empty() {
-                    json_obj.insert("embeds".to_string(), serde_json::json!(embeds));
+                    formatted.embeds = Some(embeds);
                 }
             }
         }
     }
 
-    json_obj
+    formatted
 }
 
 // Common types are used in the handler implementations
@@ -88,11 +100,12 @@ where
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     /// Get user data by FID using Hub client
-    pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> QueryResult<JsonMap> {
+    pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> QueryResult<CastLookupResponse> {
         tracing::debug!("Query: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
 
         let hash_bytes =
             super::utils::parse_hash_bytes(hash_hex).map_err(QueryError::InvalidInput)?;
+        let normalized_hash = hex::encode(&hash_bytes);
 
         match self.data_context.get_cast(fid, &hash_bytes).await {
             Ok(Some(message)) => {
@@ -101,21 +114,21 @@ where
                     QueryError::Processing(format!("failed to decode cast payload: {}", err))
                 })?;
 
-                super::utils::process_cast_message(&message, &msg_data).ok_or_else(|| {
-                    QueryError::Processing(format!(
-                        "cast payload could not be processed for FID {} and hash {}",
-                        fid, hash_hex
-                    ))
-                })
+                let cast =
+                    super::utils::process_cast_message(&message, &msg_data).ok_or_else(|| {
+                        QueryError::Processing(format!(
+                            "cast payload could not be processed for FID {} and hash {}",
+                            fid, hash_hex
+                        ))
+                    })?;
+                Ok(CastLookupResponse::Found(cast))
             },
-            Ok(None) => {
-                let mut not_found = serde_json::Map::new();
-                not_found.insert("fid".to_string(), serde_json::json!(fid.value()));
-                not_found.insert("hash".to_string(), serde_json::json!(hash_hex));
-                not_found.insert("found".to_string(), serde_json::json!(false));
-                not_found.insert("error".to_string(), serde_json::json!("Cast not found"));
-                Ok(not_found)
-            },
+            Ok(None) => Ok(CastLookupResponse::NotFound(CastNotFoundResponse {
+                fid: fid.value(),
+                hash: normalized_hash,
+                found: false,
+                error: "Cast not found".to_string(),
+            })),
             Err(e) => Err(e.into()),
         }
     }
@@ -125,11 +138,12 @@ where
         &self,
         fid: Fid,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<CastsByFidResponse> {
         tracing::debug!("Query: Fetching casts for FID: {}", fid);
 
         let messages = self.data_context.get_casts_by_fid(fid, limit).await?;
-        Ok(super::utils::format_casts_response(messages, Some(fid)))
+        let casts = super::utils::parse_cast_messages(&messages);
+        Ok(CastsByFidResponse { fid: fid.value(), count: casts.len(), casts })
     }
 
     /// Get casts mentioning a user
@@ -137,16 +151,13 @@ where
         &self,
         fid: Fid,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<CastsByMentionResponse> {
         tracing::debug!("Query: Fetching casts mentioning FID: {}", fid);
 
         let messages = self.data_context.get_casts_by_mention(fid, limit).await?;
-        let mut formatted = super::utils::format_casts_response(messages, None);
-        if let Some(obj) = formatted.as_object_mut() {
-            obj.insert("mention_fid".to_string(), serde_json::json!(fid.value()));
-        }
+        let casts = super::utils::parse_cast_messages(&messages);
 
-        Ok(formatted)
+        Ok(CastsByMentionResponse { mention_fid: fid.value(), count: casts.len(), casts })
     }
 
     /// Get replies to a cast
@@ -155,7 +166,7 @@ where
         parent_fid: Fid,
         parent_hash_hex: &str,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<CastsByParentResponse> {
         tracing::debug!(
             "Query: Fetching replies to cast with FID: {} and hash: {}",
             parent_fid,
@@ -164,31 +175,18 @@ where
 
         let parent_hash_bytes =
             super::utils::parse_hash_bytes(parent_hash_hex).map_err(QueryError::InvalidInput)?;
+        let normalized_parent_hash = hex::encode(&parent_hash_bytes);
 
         let messages =
             self.data_context.get_casts_by_parent(parent_fid, &parent_hash_bytes, limit).await?;
 
-        let replies: Vec<serde_json::Value> = messages
-            .iter()
-            .filter_map(|message| {
-                if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                    let msg_data: crate::proto::MessageData = data;
-                    if let Some(cast_obj) = super::utils::process_cast_message(message, &msg_data) {
-                        return Some(serde_json::Value::Object(cast_obj));
-                    }
-                }
-                None
-            })
-            .collect();
+        let replies = super::utils::parse_cast_messages(&messages);
 
-        Ok(serde_json::json!({
-            "parent": {
-                "fid": parent_fid.value(),
-                "hash": parent_hash_hex
-            },
-            "count": replies.len(),
-            "replies": replies
-        }))
+        Ok(CastsByParentResponse {
+            parent: CastReference { fid: parent_fid.value(), hash: normalized_parent_hash },
+            count: replies.len(),
+            replies,
+        })
     }
 
     /// Get replies to a URL
@@ -196,29 +194,17 @@ where
         &self,
         parent_url: &str,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<CastsByParentUrlResponse> {
         tracing::debug!("Query: Fetching replies to URL: {}", parent_url);
 
         let messages = self.data_context.get_casts_by_parent_url(parent_url, limit).await?;
+        let replies = super::utils::parse_cast_messages(&messages);
 
-        let replies: Vec<serde_json::Value> = messages
-            .iter()
-            .filter_map(|message| {
-                if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                    let msg_data: crate::proto::MessageData = data;
-                    if let Some(cast_obj) = super::utils::process_cast_message(message, &msg_data) {
-                        return Some(serde_json::Value::Object(cast_obj));
-                    }
-                }
-                None
-            })
-            .collect();
-
-        Ok(serde_json::json!({
-            "parent_url": parent_url,
-            "count": replies.len(),
-            "replies": replies
-        }))
+        Ok(CastsByParentUrlResponse {
+            parent_url: parent_url.to_string(),
+            count: replies.len(),
+            replies,
+        })
     }
 
     /// Get all casts by FID with timestamp filtering
@@ -228,12 +214,13 @@ where
         limit: usize,
         start_time: Option<u64>,
         end_time: Option<u64>,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<CastsByFidResponse> {
         tracing::debug!("Query: Fetching all casts for FID: {} with time filtering", fid);
 
         let messages =
             self.data_context.get_all_casts_by_fid(fid, limit, start_time, end_time).await?;
-        Ok(super::utils::format_casts_response(messages, Some(fid)))
+        let casts = super::utils::parse_cast_messages(&messages);
+        Ok(CastsByFidResponse { fid: fid.value(), count: casts.len(), casts })
     }
 
     /// Get conversation details for a cast, including parent context
@@ -244,21 +231,22 @@ where
         recursive: bool,
         max_depth: usize,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<ConversationResponse> {
         tracing::debug!("Query: Fetching conversation for cast hash: {}", cast_hash);
 
         let hash_bytes = super::utils::parse_hash_bytes(cast_hash).map_err(|message| {
             QueryError::InvalidInput(format!("Invalid cast hash: {}", message))
         })?;
+        let normalized_hash = hex::encode(&hash_bytes);
 
         let root_cast = match self.data_context.get_cast(fid, &hash_bytes).await? {
             Some(cast) => cast,
             None => {
-                return Ok(serde_json::json!({
-                    "fid": fid.value(),
-                    "hash": cast_hash,
-                    "found": false,
-                    "error": "Cast not found"
+                return Ok(ConversationResponse::NotFound(CastNotFoundResponse {
+                    fid: fid.value(),
+                    hash: normalized_hash,
+                    found: false,
+                    error: "Cast not found".to_string(),
                 }));
             },
         };
@@ -329,21 +317,15 @@ where
         }
 
         // Fetch user data for all participants to hydrate the conversation
-        let mut user_data_map = serde_json::Map::new();
+        let mut user_data_map = BTreeMap::new();
         for &participant_fid in &participants {
             match self.data_context.get_user_data_by_fid(participant_fid, 20).await {
                 Ok(messages) => {
                     if !messages.is_empty() {
-                        // Create a structured user profile from the messages
-                        let mut profile = serde_json::Map::new();
-
-                        // Add the FID to the profile
-                        profile.insert(
-                            "fid".to_string(),
-                            serde_json::Value::Number(serde_json::Number::from(
-                                participant_fid.value(),
-                            )),
-                        );
+                        let mut profile = crate::query::responses::UserProfile {
+                            fid: participant_fid.value(),
+                            ..crate::query::responses::UserProfile::default()
+                        };
 
                         // Process each message to extract user data
                         for message in messages {
@@ -360,33 +342,17 @@ where
                                     user_data,
                                 )) = msg_data.body
                                 {
-                                    // Map user data type to field name
-                                    let field_name = match user_data.r#type {
-                                        1 => "pfp",          // USER_DATA_TYPE_PFP
-                                        2 => "display_name", // USER_DATA_TYPE_DISPLAY
-                                        3 => "bio",          // USER_DATA_TYPE_BIO
-                                        5 => "url",          // USER_DATA_TYPE_URL
-                                        6 => "username",     // USER_DATA_TYPE_USERNAME
-                                        7 => "location",     // USER_DATA_TYPE_LOCATION
-                                        8 => "twitter",      // USER_DATA_TYPE_TWITTER
-                                        9 => "github",       // USER_DATA_TYPE_GITHUB
-                                        _ => continue,       // Unknown type
-                                    };
-
-                                    // Add to the profile
-                                    profile.insert(
-                                        field_name.to_string(),
-                                        serde_json::Value::String(user_data.value),
+                                    Self::set_participant_user_field(
+                                        &mut profile,
+                                        user_data.r#type,
+                                        user_data.value,
                                     );
                                 }
                             }
                         }
 
                         // Add this profile to the user data map, keyed by FID
-                        user_data_map.insert(
-                            participant_fid.value().to_string(),
-                            serde_json::Value::Object(profile),
-                        );
+                        user_data_map.insert(participant_fid.value().to_string(), profile);
                     }
                 },
                 Err(_) => {
@@ -399,68 +365,40 @@ where
         // Generate the summary with user information
         let summary = self.generate_conversation_summary(&root_cast, &conversation_tree).await;
 
-        // Format the response with parent casts
-        let response = if parent_casts.is_empty() {
-            // No parent casts, use original format
-            if quoted_casts.is_empty() {
-                serde_json::json!({
-                    "root_cast": format_message(&root_cast),
-                    "participants": {
-                        "count": participants.len(),
-                        "fids": participants.iter().collect::<Vec<_>>(),
-                        "user_data": user_data_map
-                    },
-                    "topic": topic,
-                    "summary": summary,
-                    "conversation": conversation_tree
-                })
-            } else {
-                serde_json::json!({
-                    "root_cast": format_message(&root_cast),
-                    "participants": {
-                        "count": participants.len(),
-                        "fids": participants.iter().collect::<Vec<_>>(),
-                        "user_data": user_data_map
-                    },
-                    "topic": topic,
-                    "summary": summary,
-                    "quoted_casts": quoted_casts,
-                    "conversation": conversation_tree
-                })
-            }
-        } else {
-            // Include parent casts in the response
-            if quoted_casts.is_empty() {
-                serde_json::json!({
-                    "root_cast": format_message(&root_cast),
-                    "participants": {
-                        "count": participants.len(),
-                        "fids": participants.iter().collect::<Vec<_>>(),
-                        "user_data": user_data_map
-                    },
-                    "topic": topic,
-                    "summary": summary,
-                    "parent_casts": parent_casts,
-                    "conversation": conversation_tree
-                })
-            } else {
-                serde_json::json!({
-                    "root_cast": format_message(&root_cast),
-                    "participants": {
-                        "count": participants.len(),
-                        "fids": participants.iter().collect::<Vec<_>>(),
-                        "user_data": user_data_map
-                    },
-                    "topic": topic,
-                    "summary": summary,
-                    "parent_casts": parent_casts,
-                    "quoted_casts": quoted_casts,
-                    "conversation": conversation_tree
-                })
-            }
-        };
+        let mut participant_fids = participants.iter().map(|fid| fid.value()).collect::<Vec<_>>();
+        participant_fids.sort_unstable();
 
-        Ok(response)
+        Ok(ConversationResponse::Found(Box::new(ConversationFoundResponse {
+            root_cast: format_message(&root_cast),
+            participants: ConversationParticipants {
+                count: participants.len(),
+                fids: participant_fids.into_iter().map(|fid| fid.to_string()).collect(),
+                user_data: user_data_map,
+            },
+            topic,
+            summary,
+            parent_casts: if parent_casts.is_empty() { None } else { Some(parent_casts) },
+            quoted_casts: if quoted_casts.is_empty() { None } else { Some(quoted_casts) },
+            conversation: conversation_tree,
+        })))
+    }
+
+    fn set_participant_user_field(
+        profile: &mut crate::query::responses::UserProfile,
+        data_type: i32,
+        value: String,
+    ) {
+        match data_type {
+            1 => profile.pfp = Some(value),
+            2 => profile.display_name = Some(value),
+            3 => profile.bio = Some(value),
+            5 => profile.url = Some(value),
+            6 => profile.username = Some(value),
+            7 => profile.location = Some(value),
+            8 => profile.twitter = Some(value),
+            9 => profile.github = Some(value),
+            _ => {},
+        }
     }
 
     // Get parent cast information from a cast
@@ -491,7 +429,7 @@ where
     // Recursively fetch parent casts
     async fn fetch_parent_casts(
         &self,
-        parent_casts: &mut Vec<serde_json::Map<String, serde_json::Value>>,
+        parent_casts: &mut Vec<ConversationCast>,
         participants: &mut HashSet<Fid>,
         parent_info: &(Option<Fid>, Option<Vec<u8>>),
         current_depth: usize,
@@ -559,13 +497,10 @@ where
         participants: &mut HashSet<Fid>,
         params: ConversationParams,
         current_depth: usize,
-    ) -> serde_json::Value {
+    ) -> ConversationTree {
         // If we've reached max depth, stop recursion
         if current_depth >= params.max_depth {
-            return serde_json::json!({
-                "replies": [],
-                "has_more": false
-            });
+            return ConversationTree { replies: vec![], has_more: false };
         }
 
         // For a cast with hash X, we want to find all casts that have X as their parent
@@ -590,16 +525,9 @@ where
                     _parent_cast.id.value(),
                     message
                 );
-                // If we can't decode the hash, use the raw bytes as fallback
-                // This is a last resort and may not produce correct results
-                Vec::new()
+                return ConversationTree { replies: vec![], has_more: false };
             },
         };
-
-        // Log a warning if we have an empty hash, as this will likely cause issues
-        if parent_hash.is_empty() {
-            tracing::warn!("Empty hash for parent FID {} - replies won't be found", parent_fid);
-        }
 
         // Fetch direct replies to this cast using the Hub's GetCastsByParent API
         // This returns all casts that have the current cast as their parent
@@ -659,15 +587,7 @@ where
 
                         // Add quoted casts to the formatted reply if any were found
                         if !quoted_casts.is_empty() {
-                            formatted_reply.insert(
-                                "quoted_casts".to_string(),
-                                serde_json::Value::Array(
-                                    quoted_casts
-                                        .into_iter()
-                                        .map(serde_json::Value::Object)
-                                        .collect(),
-                                ),
-                            );
+                            formatted_reply.quoted_casts = Some(quoted_casts);
                         }
                     }
                 }
@@ -684,31 +604,22 @@ where
                 ));
 
                 let nested_replies = nested_replies_future.await;
-                // Use get() which safely returns an Option rather than panicking
-                formatted_reply.insert(
-                    "replies".to_string(),
-                    nested_replies.get("replies").cloned().unwrap_or_else(|| serde_json::json!([])),
-                );
-                formatted_reply.insert(
-                    "has_more_replies".to_string(),
-                    nested_replies.get("has_more").cloned().unwrap_or(serde_json::json!(false)),
-                );
+                formatted_reply.replies = Some(nested_replies.replies);
+                formatted_reply.has_more_replies = Some(nested_replies.has_more);
             }
 
             formatted_replies.push(formatted_reply);
         }
 
-        serde_json::json!({
-            "replies": formatted_replies,
-            "has_more": formatted_replies.len() >= params.limit
-        })
+        let has_more = formatted_replies.len() >= params.limit;
+        ConversationTree { replies: formatted_replies, has_more }
     }
 
     // Extract the main topic of conversation based on the root cast
     fn extract_conversation_topic(
         &self,
         _root_cast: &Message,
-        _conversation_tree: &serde_json::Value,
+        _conversation_tree: &ConversationTree,
     ) -> String {
         // For now, we'll simply use the first few words of the root cast as the topic
         // A more sophisticated implementation would use NLP to identify common themes
@@ -737,7 +648,7 @@ where
     async fn generate_conversation_summary(
         &self,
         _root_cast: &Message,
-        conversation_tree: &serde_json::Value,
+        conversation_tree: &ConversationTree,
     ) -> String {
         // Count replies in the tree (including nested replies)
         let reply_count = Self::count_replies_recursive(conversation_tree);
@@ -807,26 +718,22 @@ where
     }
 
     // Helper to count total replies in the tree - static method to avoid clippy warning
-    fn count_replies_recursive(tree: &serde_json::Value) -> usize {
-        if let Some(replies_arr) = tree["replies"].as_array() {
-            let count = replies_arr.len();
+    fn count_replies_recursive(tree: &ConversationTree) -> usize {
+        tree.replies
+            .iter()
+            .map(|reply| {
+                1 + reply.replies.as_ref().map_or(0, |nested| Self::count_nested_replies(nested))
+            })
+            .sum()
+    }
 
-            // Add counts from nested replies
-            let nested_count: usize = replies_arr
-                .iter()
-                .filter_map(|reply| {
-                    if reply.get("replies").is_some() {
-                        Some(Self::count_replies_recursive(reply))
-                    } else {
-                        None
-                    }
-                })
-                .sum();
-
-            count + nested_count
-        } else {
-            0
-        }
+    fn count_nested_replies(replies: &[ConversationCast]) -> usize {
+        replies
+            .iter()
+            .map(|reply| {
+                1 + reply.replies.as_ref().map_or(0, |nested| Self::count_nested_replies(nested))
+            })
+            .sum()
     }
 
     // Helper to truncate text with ellipsis - static method
@@ -844,6 +751,7 @@ mod tests {
     use crate::core::data_context::DataAccessError;
     use crate::core::types::{Fid, Message, MessageId, MessageType};
     use crate::query::WaypointQuery;
+    use crate::query::responses::{ConversationCast, ConversationTree};
     use async_trait::async_trait;
 
     // Minimal mock types to access associated functions on WaypointQuery<DB, HC>
@@ -1059,75 +967,70 @@ mod tests {
 
     type TestService = WaypointQuery<MockDb, MockHub>;
 
+    fn make_reply(replies: Option<Vec<ConversationCast>>) -> ConversationCast {
+        ConversationCast {
+            id: "id".to_string(),
+            message_type: "cast".to_string(),
+            fid: None,
+            timestamp: None,
+            text: None,
+            mentions: None,
+            parent: None,
+            parent_url: None,
+            embeds: None,
+            quoted_casts: None,
+            replies,
+            has_more_replies: None,
+        }
+    }
+
     #[test]
     fn test_count_replies_recursive_no_replies() {
-        let tree = serde_json::json!({"text": "hello"});
+        let tree = ConversationTree { replies: vec![], has_more: false };
         assert_eq!(TestService::count_replies_recursive(&tree), 0);
     }
 
     #[test]
     fn test_count_replies_recursive_empty_replies() {
-        let tree = serde_json::json!({"text": "hello", "replies": []});
+        let tree = ConversationTree { replies: vec![], has_more: false };
         assert_eq!(TestService::count_replies_recursive(&tree), 0);
     }
 
     #[test]
     fn test_count_replies_recursive_flat_replies() {
-        let tree = serde_json::json!({
-            "text": "root",
-            "replies": [
-                {"text": "reply 1"},
-                {"text": "reply 2"},
-                {"text": "reply 3"}
-            ]
-        });
+        let tree = ConversationTree {
+            replies: vec![make_reply(None), make_reply(None), make_reply(None)],
+            has_more: false,
+        };
         assert_eq!(TestService::count_replies_recursive(&tree), 3);
     }
 
     #[test]
     fn test_count_replies_recursive_nested_replies() {
-        let tree = serde_json::json!({
-            "text": "root",
-            "replies": [
-                {
-                    "text": "reply 1",
-                    "replies": [
-                        {"text": "nested 1"},
-                        {"text": "nested 2"}
-                    ]
-                },
-                {"text": "reply 2"}
-            ]
-        });
+        let tree = ConversationTree {
+            replies: vec![
+                make_reply(Some(vec![make_reply(None), make_reply(None)])),
+                make_reply(None),
+            ],
+            has_more: false,
+        };
         // 2 top-level + 2 nested = 4
         assert_eq!(TestService::count_replies_recursive(&tree), 4);
     }
 
     #[test]
     fn test_count_replies_recursive_deeply_nested() {
-        let tree = serde_json::json!({
-            "text": "root",
-            "replies": [
-                {
-                    "text": "level 1",
-                    "replies": [
-                        {
-                            "text": "level 2",
-                            "replies": [
-                                {"text": "level 3"}
-                            ]
-                        }
-                    ]
-                }
-            ]
-        });
+        let tree = ConversationTree {
+            replies: vec![make_reply(Some(vec![make_reply(Some(vec![make_reply(None)]))]))],
+            has_more: false,
+        };
         // 1 at each level = 3
         assert_eq!(TestService::count_replies_recursive(&tree), 3);
     }
 
     #[test]
     fn test_count_replies_recursive_replies_not_array() {
-        let tree = serde_json::json!({"replies": "not an array"});
+        let tree = ConversationTree { replies: vec![], has_more: false };
         assert_eq!(TestService::count_replies_recursive(&tree), 0);
     }
 

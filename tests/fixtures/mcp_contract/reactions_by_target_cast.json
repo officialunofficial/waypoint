@@ -1,0 +1,21 @@
+{
+	"count": 1,
+	"reactions": [
+		{
+			"fid": 5005,
+			"timestamp": 22,
+			"hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			"reaction_type": "like",
+			"reaction_type_id": 1,
+			"target": {
+				"type": "cast",
+				"fid": 1001,
+				"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		}
+	],
+	"target_cast": {
+		"fid": 1001,
+		"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	}
+}

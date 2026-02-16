@@ -168,9 +168,7 @@ pub struct LinkRequest {
 pub struct LinksByFidRequest {
     #[schemars(description = "Farcaster user ID")]
     pub fid: u64,
-    #[schemars(
-        description = "Link type (defaults to 'follow' if not specified, use null for all types)"
-    )]
+    #[schemars(description = "Optional link type filter (omit or null for all types)")]
     #[serde(default)]
     pub link_type: Option<String>,
     #[schemars(description = "Maximum number of results to return")]
@@ -183,9 +181,7 @@ pub struct LinksByFidRequest {
 pub struct LinksByTargetRequest {
     #[schemars(description = "Target Farcaster user ID")]
     pub target_fid: u64,
-    #[schemars(
-        description = "Link type (defaults to 'follow' if not specified, use null for all types)"
-    )]
+    #[schemars(description = "Optional link type filter (omit or null for all types)")]
     #[serde(default)]
     pub link_type: Option<String>,
     #[schemars(description = "Maximum number of results to return")]
@@ -231,7 +227,7 @@ pub struct GetUsernameProofRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetConversationRequest {
     #[schemars(description = "Farcaster user ID of the cast author")]
-    pub fid: String,
+    pub fid: u64,
 
     #[schemars(description = "Cast hash in hexadecimal format")]
     pub cast_hash: String,

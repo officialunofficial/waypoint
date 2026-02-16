@@ -73,8 +73,8 @@ sequenceDiagram
 
     AI->>MCP: Tool call / resource read
     MCP->>Query: Transport mapping
-    Query->>Hub: Fetch (primary)
-    Query->>DB: Fallback
+    Query->>Hub: Fetch
+    Query->>DB: Optional fallback (adapter-dependent)
     MCP->>AI: JSON response
 ```
 
@@ -87,12 +87,14 @@ See [mcp.md](mcp.md) for tool details.
 
 ## Data Access
 
-Uses DataContext pattern with Hub-primary, DB-fallback strategy:
+Uses a DataContext pattern with adapter-specific composition:
 
 ```
 DataContext<DB, HC>
-  ├── database: Option<DB>    # PostgreSQL
+  ├── database: Option<DB>    # PostgreSQL or NullDb
   └── hub_client: Option<HC>  # Snapchain gRPC
 ```
+
+In the MCP runtime, DataContext is currently configured with Hub + `NullDb`, so MCP reads are Hub-backed.
 
 See [data-architecture.md](data-architecture.md) for schema.

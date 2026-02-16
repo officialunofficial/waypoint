@@ -1,0 +1,7 @@
+{
+	"fid": 5005,
+	"reaction_type_id": 1,
+	"found": false,
+	"error": "Reaction not found",
+	"target_url": "https://example.com/missing"
+}

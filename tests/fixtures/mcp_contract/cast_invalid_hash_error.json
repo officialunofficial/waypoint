@@ -1,0 +1,4 @@
+{
+	"error_type": "invalid_input",
+	"message": "Invalid hash format: not-hex"
+}

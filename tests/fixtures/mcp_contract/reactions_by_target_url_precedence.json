@@ -1,0 +1,17 @@
+{
+	"count": 1,
+	"reactions": [
+		{
+			"fid": 5005,
+			"timestamp": 23,
+			"hash": "ffffffffffffffffffffffffffffffffffffffff",
+			"reaction_type": "recast",
+			"reaction_type_id": 2,
+			"target": {
+				"type": "url",
+				"url": "https://example.com/post/123"
+			}
+		}
+	],
+	"target_url": "https://example.com/post/123"
+}

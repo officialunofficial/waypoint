@@ -10,9 +10,6 @@ pub enum QueryError {
     #[error("data access error: {0}")]
     DataAccess(#[from] crate::core::data_context::DataAccessError),
 
-    #[error("serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
     #[error("processing error: {0}")]
     Processing(String),
 }

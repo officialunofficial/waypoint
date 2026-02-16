@@ -1,0 +1,14 @@
+{
+	"fid": 5005,
+	"count": 1,
+	"links": [
+		{
+			"fid": 5005,
+			"timestamp": 24,
+			"hash": "1212121212121212121212121212121212121212",
+			"link_type": "follow",
+			"target_fid": 1001,
+			"display_timestamp": 77
+		}
+	]
+}

@@ -1,7 +1,14 @@
 //! User and verification query operations.
 
 use crate::core::types::{Fid, Message, MessageType};
-use crate::query::{JsonMap, QueryError, QueryResult, WaypointQuery};
+use crate::query::responses::{
+    AllVerificationMessagesResponse, FidByUsernameResponse, UserByFidResponse,
+    UserByUsernameNotFound, UserByUsernameResponse, UserNotFound, UserProfile, UsernameProof,
+    UsernameProofByNameResponse, UsernameProofsByFidResponse, Verification,
+    VerificationLookupFound, VerificationLookupNotFound, VerificationLookupResponse,
+    VerificationsByFidResponse,
+};
+use crate::query::{QueryError, QueryResult, WaypointQuery};
 
 use prost::Message as ProstMessage;
 
@@ -11,31 +18,31 @@ where
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     /// Get user data by FID
-    pub async fn do_get_user_by_fid(&self, fid: Fid) -> QueryResult<JsonMap> {
+    pub async fn do_get_user_by_fid(&self, fid: Fid) -> QueryResult<UserByFidResponse> {
         let messages = self.data_context.get_user_data_by_fid(fid, 20).await?;
 
         if messages.is_empty() {
-            let mut not_found = serde_json::Map::new();
-            not_found.insert("fid".to_string(), serde_json::json!(fid.value()));
-            not_found.insert("found".to_string(), serde_json::json!(false));
-            not_found.insert("error".to_string(), serde_json::json!("User data not found"));
-            return Ok(not_found);
+            return Ok(UserByFidResponse::NotFound(UserNotFound {
+                fid: fid.value(),
+                found: false,
+                error: "User data not found".to_string(),
+            }));
         }
 
-        Ok(Self::user_profile_from_messages(fid, &messages, None))
+        Ok(UserByFidResponse::Found(Self::user_profile_from_messages(fid, &messages, None)))
     }
 
-    fn user_data_field_name(data_type: i32) -> Option<&'static str> {
+    fn set_user_data_field(profile: &mut UserProfile, data_type: i32, value: String) {
         match data_type {
-            1 => Some("pfp"),
-            2 => Some("display_name"),
-            3 => Some("bio"),
-            5 => Some("url"),
-            6 => Some("username"),
-            7 => Some("location"),
-            8 => Some("twitter"),
-            9 => Some("github"),
-            _ => None,
+            1 => profile.pfp = Some(value),
+            2 => profile.display_name = Some(value),
+            3 => profile.bio = Some(value),
+            5 => profile.url = Some(value),
+            6 => profile.username = Some(value),
+            7 => profile.location = Some(value),
+            8 => profile.twitter = Some(value),
+            9 => profile.github = Some(value),
+            _ => {},
         }
     }
 
@@ -43,13 +50,9 @@ where
         fid: Fid,
         messages: &[Message],
         username: Option<&str>,
-    ) -> JsonMap {
-        let mut profile = serde_json::Map::new();
-        profile.insert("fid".to_string(), serde_json::json!(fid.value()));
-
-        if let Some(username) = username {
-            profile.insert("username".to_string(), serde_json::json!(username));
-        }
+    ) -> UserProfile {
+        let mut profile = UserProfile { fid: fid.value(), ..UserProfile::default() };
+        profile.username = username.map(ToString::to_string);
 
         for message in messages {
             if message.message_type != MessageType::UserData {
@@ -60,9 +63,8 @@ where
                 <crate::proto::MessageData as ProstMessage>::decode(&*message.payload)
                 && let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
                     msg_data.body
-                && let Some(field_name) = Self::user_data_field_name(user_data.r#type)
             {
-                profile.insert(field_name.to_string(), serde_json::Value::String(user_data.value));
+                Self::set_user_data_field(&mut profile, user_data.r#type, user_data.value);
             }
         }
 
@@ -94,17 +96,17 @@ where
         }
     }
 
-    fn username_proof_to_json(proof: &crate::proto::UserNameProof) -> serde_json::Value {
-        serde_json::json!({
-            "name": String::from_utf8_lossy(&proof.name),
-            "type": Self::proof_type_name(proof.r#type),
-            "fid": proof.fid,
-            "timestamp": proof.timestamp,
-            "owner": format!("0x{}", hex::encode(&proof.owner)),
-        })
+    fn username_proof_to_json(proof: &crate::proto::UserNameProof) -> UsernameProof {
+        UsernameProof {
+            name: String::from_utf8_lossy(&proof.name).to_string(),
+            proof_type: Self::proof_type_name(proof.r#type).to_string(),
+            fid: proof.fid,
+            timestamp: proof.timestamp,
+            owner: format!("0x{}", hex::encode(&proof.owner)),
+        }
     }
 
-    fn verification_message_to_json(message: &Message) -> Option<serde_json::Value> {
+    fn verification_message_to_json(message: &Message) -> Option<Verification> {
         if message.message_type != MessageType::Verification {
             return None;
         }
@@ -113,29 +115,32 @@ where
 
         match msg_data.body {
             Some(crate::proto::message_data::Body::VerificationAddAddressBody(verification)) => {
-                let mut value = serde_json::json!({
-                    "fid": msg_data.fid,
-                    "address": format!("0x{}", hex::encode(&verification.address)),
-                    "protocol": Self::protocol_name(verification.protocol),
-                    "type": Self::verification_type_name(verification.verification_type),
-                    "action": "add",
-                    "timestamp": msg_data.timestamp,
-                });
-
-                if verification.chain_id > 0 {
-                    value["chain_id"] = serde_json::json!(verification.chain_id);
-                }
-
-                Some(value)
+                Some(Verification {
+                    fid: msg_data.fid,
+                    address: format!("0x{}", hex::encode(&verification.address)),
+                    protocol: Self::protocol_name(verification.protocol).to_string(),
+                    verification_type: Some(
+                        Self::verification_type_name(verification.verification_type).to_string(),
+                    ),
+                    action: "add".to_string(),
+                    timestamp: msg_data.timestamp,
+                    chain_id: if verification.chain_id > 0 {
+                        Some(verification.chain_id)
+                    } else {
+                        None
+                    },
+                })
             },
             Some(crate::proto::message_data::Body::VerificationRemoveBody(verification)) => {
-                Some(serde_json::json!({
-                    "fid": msg_data.fid,
-                    "address": format!("0x{}", hex::encode(&verification.address)),
-                    "protocol": Self::protocol_name(verification.protocol),
-                    "action": "remove",
-                    "timestamp": msg_data.timestamp,
-                }))
+                Some(Verification {
+                    fid: msg_data.fid,
+                    address: format!("0x{}", hex::encode(&verification.address)),
+                    protocol: Self::protocol_name(verification.protocol).to_string(),
+                    verification_type: None,
+                    action: "remove".to_string(),
+                    timestamp: msg_data.timestamp,
+                    chain_id: None,
+                })
             },
             _ => None,
         }
@@ -146,18 +151,18 @@ where
         &self,
         fid: Fid,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<VerificationsByFidResponse> {
         tracing::debug!("Query: Fetching verifications for FID: {}", fid);
 
         let messages = self.data_context.get_verifications_by_fid(fid, limit).await?;
-        let verifications: Vec<serde_json::Value> =
+        let verifications: Vec<Verification> =
             messages.iter().filter_map(Self::verification_message_to_json).collect();
 
-        Ok(serde_json::json!({
-            "fid": fid.value(),
-            "count": verifications.len(),
-            "verifications": verifications
-        }))
+        Ok(VerificationsByFidResponse {
+            fid: fid.value(),
+            count: verifications.len(),
+            verifications,
+        })
     }
 
     /// Get a single verification by FID and address
@@ -165,7 +170,7 @@ where
         &self,
         fid: Fid,
         address_hex: &str,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<VerificationLookupResponse> {
         tracing::debug!(
             "Query: Fetching verification for FID: {} and address: {}",
             fid,
@@ -191,22 +196,24 @@ where
 
         match self.data_context.get_verification(fid, &address_bytes).await? {
             Some(message) => match Self::verification_message_to_json(&message) {
-                Some(verification) => Ok(serde_json::json!({
-                    "fid": fid.value(),
-                    "address": format!("0x{}", address),
-                    "found": true,
-                    "verification": verification,
-                })),
+                Some(verification) => {
+                    Ok(VerificationLookupResponse::Found(VerificationLookupFound {
+                        fid: fid.value(),
+                        address: format!("0x{}", address),
+                        found: true,
+                        verification,
+                    }))
+                },
                 None => Err(QueryError::Processing(format!(
                     "verification payload could not be processed for FID {} and address {}",
                     fid, address_hex
                 ))),
             },
-            None => Ok(serde_json::json!({
-                "fid": fid.value(),
-                "address": format!("0x{}", address),
-                "found": false,
-                "error": "Verification not found",
+            None => Ok(VerificationLookupResponse::NotFound(VerificationLookupNotFound {
+                fid: fid.value(),
+                address: format!("0x{}", address),
+                found: false,
+                error: "Verification not found".to_string(),
             })),
         }
     }
@@ -218,7 +225,7 @@ where
         limit: usize,
         start_time: Option<u64>,
         end_time: Option<u64>,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<AllVerificationMessagesResponse> {
         tracing::debug!(
             "Query: Fetching all verification messages for FID: {} with time filtering",
             fid
@@ -229,65 +236,77 @@ where
             .get_all_verification_messages_by_fid(fid, limit, start_time, end_time)
             .await?;
 
-        let verifications: Vec<serde_json::Value> =
+        let verifications: Vec<Verification> =
             messages.iter().filter_map(Self::verification_message_to_json).collect();
 
-        Ok(serde_json::json!({
-            "fid": fid.value(),
-            "count": verifications.len(),
-            "start_time": start_time,
-            "end_time": end_time,
-            "verifications": verifications,
-        }))
+        Ok(AllVerificationMessagesResponse {
+            fid: fid.value(),
+            count: verifications.len(),
+            start_time,
+            end_time,
+            verifications,
+        })
     }
 
     /// Find FID by username
-    pub async fn do_get_fid_by_username(&self, username: &str) -> QueryResult<serde_json::Value> {
+    pub async fn do_get_fid_by_username(
+        &self,
+        username: &str,
+    ) -> QueryResult<FidByUsernameResponse> {
         match self.data_context.get_fid_by_username(username).await? {
-            Some(fid) => Ok(serde_json::json!({
-                "username": username,
-                "fid": fid.value(),
-                "found": true
-            })),
-            None => Ok(serde_json::json!({
-                "username": username,
-                "found": false,
-                "error": "Username not found"
-            })),
+            Some(fid) => Ok(FidByUsernameResponse {
+                username: username.to_string(),
+                found: true,
+                fid: Some(fid.value()),
+                error: None,
+            }),
+            None => Ok(FidByUsernameResponse {
+                username: username.to_string(),
+                found: false,
+                fid: None,
+                error: Some("Username not found".to_string()),
+            }),
         }
     }
 
     /// Get user profile by username
-    pub async fn do_get_user_by_username(&self, username: &str) -> QueryResult<serde_json::Value> {
+    pub async fn do_get_user_by_username(
+        &self,
+        username: &str,
+    ) -> QueryResult<UserByUsernameResponse> {
         match self.data_context.get_fid_by_username(username).await? {
             Some(fid) => {
                 let messages = self.data_context.get_user_data_by_fid(fid, 20).await?;
                 if messages.is_empty() {
-                    return Ok(serde_json::json!({
-                        "username": username,
-                        "fid": fid.value(),
-                        "found": false,
-                        "error": "User data not found"
+                    return Ok(UserByUsernameResponse::NotFound(UserByUsernameNotFound {
+                        username: username.to_string(),
+                        fid: Some(fid.value()),
+                        found: false,
+                        error: "User data not found".to_string(),
                     }));
                 }
 
                 let profile = Self::user_profile_from_messages(fid, &messages, Some(username));
-                Ok(serde_json::Value::Object(profile))
+                Ok(UserByUsernameResponse::Found(profile))
             },
-            None => Ok(serde_json::json!({
-                "username": username,
-                "found": false,
-                "error": "Username not found"
+            None => Ok(UserByUsernameResponse::NotFound(UserByUsernameNotFound {
+                username: username.to_string(),
+                fid: None,
+                found: false,
+                error: "Username not found".to_string(),
             })),
         }
     }
 
     /// Get username proofs by FID
-    pub async fn do_get_username_proofs_by_fid(&self, fid: Fid) -> QueryResult<serde_json::Value> {
+    pub async fn do_get_username_proofs_by_fid(
+        &self,
+        fid: Fid,
+    ) -> QueryResult<UsernameProofsByFidResponse> {
         tracing::debug!("Query: Fetching username proofs for FID: {}", fid);
 
         let messages = self.data_context.get_username_proofs_by_fid(fid).await?;
-        let proofs: Vec<serde_json::Value> = messages
+        let proofs: Vec<UsernameProof> = messages
             .iter()
             .filter_map(|message| {
                 serde_json::from_slice::<crate::proto::UserNameProof>(&message.payload)
@@ -296,29 +315,38 @@ where
             })
             .collect();
 
-        Ok(serde_json::json!({
-            "fid": fid.value(),
-            "count": proofs.len(),
-            "proofs": proofs
-        }))
+        Ok(UsernameProofsByFidResponse { fid: fid.value(), count: proofs.len(), proofs })
     }
 
     /// Get a single username proof by name
-    pub async fn do_get_username_proof(&self, name: &str) -> QueryResult<serde_json::Value> {
+    pub async fn do_get_username_proof(
+        &self,
+        name: &str,
+    ) -> QueryResult<UsernameProofByNameResponse> {
         tracing::debug!("Query: Fetching username proof for name: {}", name);
 
         match self.data_context.get_username_proof_by_name(name).await? {
             Some(proof) => {
-                let mut result = Self::username_proof_to_json(&proof);
-                result["found"] = serde_json::json!(true);
-
-                Ok(result)
+                let response = Self::username_proof_to_json(&proof);
+                Ok(UsernameProofByNameResponse {
+                    name: response.name,
+                    found: true,
+                    proof_type: Some(response.proof_type),
+                    fid: Some(response.fid),
+                    timestamp: Some(response.timestamp),
+                    owner: Some(response.owner),
+                    error: None,
+                })
             },
-            None => Ok(serde_json::json!({
-                "name": name,
-                "found": false,
-                "error": "Username proof not found",
-            })),
+            None => Ok(UsernameProofByNameResponse {
+                name: name.to_string(),
+                found: false,
+                proof_type: None,
+                fid: None,
+                timestamp: None,
+                owner: None,
+                error: Some("Username proof not found".to_string()),
+            }),
         }
     }
 }
@@ -626,13 +654,13 @@ mod tests {
         let message = make_verification_add_message(12345, &[0x1a, 0x2b], 0, 1, 10, 1672531200);
 
         let result = TestService::verification_message_to_json(&message).unwrap();
-        assert_eq!(result["fid"], 12345);
-        assert_eq!(result["address"], "0x1a2b");
-        assert_eq!(result["protocol"], "ethereum");
-        assert_eq!(result["type"], "contract");
-        assert_eq!(result["action"], "add");
-        assert_eq!(result["chain_id"], 10);
-        assert_eq!(result["timestamp"], 1672531200);
+        assert_eq!(result.fid, 12345);
+        assert_eq!(result.address, "0x1a2b");
+        assert_eq!(result.protocol, "ethereum");
+        assert_eq!(result.verification_type.as_deref(), Some("contract"));
+        assert_eq!(result.action, "add");
+        assert_eq!(result.chain_id, Some(10));
+        assert_eq!(result.timestamp, 1672531200);
     }
 
     #[test]
@@ -640,8 +668,7 @@ mod tests {
         let message = make_verification_add_message(12345, &[0xaa, 0xbb], 0, 0, 0, 1672531200);
 
         let result = TestService::verification_message_to_json(&message).unwrap();
-        let obj = result.as_object().unwrap();
-        assert!(!obj.contains_key("chain_id"));
+        assert_eq!(result.chain_id, None);
     }
 
     #[test]
@@ -649,11 +676,12 @@ mod tests {
         let message = make_verification_remove_message(12345, &[0xde, 0xad], 1, 1672617600);
 
         let result = TestService::verification_message_to_json(&message).unwrap();
-        assert_eq!(result["fid"], 12345);
-        assert_eq!(result["address"], "0xdead");
-        assert_eq!(result["protocol"], "solana");
-        assert_eq!(result["action"], "remove");
-        assert_eq!(result["timestamp"], 1672617600);
+        assert_eq!(result.fid, 12345);
+        assert_eq!(result.address, "0xdead");
+        assert_eq!(result.protocol, "solana");
+        assert_eq!(result.action, "remove");
+        assert_eq!(result.timestamp, 1672617600);
+        assert_eq!(result.verification_type, None);
     }
 
     #[test]
@@ -692,10 +720,14 @@ mod tests {
         let result = service.do_get_verification(Fid::from(12345), "0x00112233").await;
         let parsed = result.expect("query succeeds");
 
-        assert_eq!(parsed["fid"], 12345);
-        assert_eq!(parsed["address"], "0x00112233");
-        assert_eq!(parsed["found"], false);
-        assert_eq!(parsed["error"], "Verification not found");
+        let VerificationLookupResponse::NotFound(not_found) = parsed else {
+            panic!("expected not found response");
+        };
+
+        assert_eq!(not_found.fid, 12345);
+        assert_eq!(not_found.address, "0x00112233");
+        assert!(!not_found.found);
+        assert_eq!(not_found.error, "Verification not found");
     }
 
     #[tokio::test]
@@ -706,11 +738,15 @@ mod tests {
         let result = service.do_get_verification(Fid::from(12345), "0xaabb").await;
         let parsed = result.expect("query succeeds");
 
-        assert_eq!(parsed["fid"], 12345);
-        assert_eq!(parsed["address"], "0xaabb");
-        assert_eq!(parsed["found"], true);
-        assert_eq!(parsed["verification"]["action"], "add");
-        assert_eq!(parsed["verification"]["protocol"], "ethereum");
-        assert_eq!(parsed["verification"]["type"], "eoa");
+        let VerificationLookupResponse::Found(found) = parsed else {
+            panic!("expected found response");
+        };
+
+        assert_eq!(found.fid, 12345);
+        assert_eq!(found.address, "0xaabb");
+        assert!(found.found);
+        assert_eq!(found.verification.action, "add");
+        assert_eq!(found.verification.protocol, "ethereum");
+        assert_eq!(found.verification.verification_type.as_deref(), Some("eoa"));
     }
 }

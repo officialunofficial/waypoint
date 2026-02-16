@@ -1,12 +1,16 @@
-//! Shared query helpers for message decoding and JSON formatting.
+//! Shared query helpers for protobuf decoding and typed mapping.
 
-use crate::core::types::{Fid, Message as FarcasterMessage, MessageType};
+use crate::core::types::{Message as FarcasterMessage, MessageType};
+use crate::query::responses::{
+    Cast, CastEmbed, CastParent, Link, Reaction, ReactionTarget, TypedCastReference,
+    TypedUrlReference,
+};
 use prost::Message as ProstMessage;
 
 pub fn process_cast_message(
     message: &FarcasterMessage,
     msg_data: &crate::proto::MessageData,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
+) -> Option<Cast> {
     if message.message_type != MessageType::Cast {
         return None;
     }
@@ -16,85 +20,86 @@ pub fn process_cast_message(
         _ => return None,
     };
 
-    let mut cast_obj = serde_json::Map::new();
+    let mentions =
+        if cast_body.mentions.is_empty() { None } else { Some(cast_body.mentions.clone()) };
 
-    cast_obj.insert(
-        "fid".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(msg_data.fid)),
-    );
-    cast_obj.insert(
-        "timestamp".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(msg_data.timestamp)),
-    );
-    cast_obj.insert("hash".to_string(), serde_json::Value::String(message.id.value().to_string()));
+    let mentions_positions = if cast_body.mentions_positions.is_empty() {
+        None
+    } else {
+        Some(cast_body.mentions_positions.clone())
+    };
 
-    cast_obj.insert("text".to_string(), serde_json::Value::String(cast_body.text.clone()));
-
-    if !cast_body.mentions.is_empty() {
-        let mentions: Vec<serde_json::Value> = cast_body
-            .mentions
-            .iter()
-            .map(|&fid| serde_json::Value::Number(serde_json::Number::from(fid)))
-            .collect();
-        cast_obj.insert("mentions".to_string(), serde_json::Value::Array(mentions));
-    }
-
-    if !cast_body.mentions_positions.is_empty() {
-        let positions: Vec<serde_json::Value> = cast_body
-            .mentions_positions
-            .iter()
-            .map(|&pos| serde_json::Value::Number(serde_json::Number::from(pos)))
-            .collect();
-        cast_obj.insert("mentions_positions".to_string(), serde_json::Value::Array(positions));
-    }
-
-    if !cast_body.embeds.is_empty() {
-        let embeds: Vec<serde_json::Value> = cast_body
+    let embeds = if cast_body.embeds.is_empty() {
+        None
+    } else {
+        let values: Vec<CastEmbed> = cast_body
             .embeds
             .iter()
-            .map(|embed| match &embed.embed {
+            .filter_map(|embed| match &embed.embed {
                 Some(crate::proto::embed::Embed::Url(url)) => {
-                    serde_json::json!({ "type": "url", "url": url })
+                    Some(CastEmbed::Url(TypedUrlReference {
+                        target_type: "url".to_string(),
+                        url: url.clone(),
+                    }))
                 },
                 Some(crate::proto::embed::Embed::CastId(cast_id)) => {
-                    serde_json::json!({
-                        "type": "cast",
-                        "fid": cast_id.fid,
-                        "hash": hex::encode(&cast_id.hash)
-                    })
+                    Some(CastEmbed::Cast(TypedCastReference {
+                        target_type: "cast".to_string(),
+                        fid: cast_id.fid,
+                        hash: hex::encode(&cast_id.hash),
+                    }))
                 },
-                None => serde_json::json!(null),
+                None => None,
             })
             .collect();
-        cast_obj.insert("embeds".to_string(), serde_json::Value::Array(embeds));
-    }
 
-    match &cast_body.parent {
+        if values.is_empty() { None } else { Some(values) }
+    };
+
+    let parent = match &cast_body.parent {
         Some(crate::proto::cast_add_body::Parent::ParentCastId(parent_cast_id)) => {
-            let parent = serde_json::json!({
-                "type": "cast",
-                "fid": parent_cast_id.fid,
-                "hash": hex::encode(&parent_cast_id.hash)
-            });
-            cast_obj.insert("parent".to_string(), parent);
+            Some(CastParent::Cast(TypedCastReference {
+                target_type: "cast".to_string(),
+                fid: parent_cast_id.fid,
+                hash: hex::encode(&parent_cast_id.hash),
+            }))
         },
         Some(crate::proto::cast_add_body::Parent::ParentUrl(url)) => {
-            let parent = serde_json::json!({
-                "type": "url",
-                "url": url
-            });
-            cast_obj.insert("parent".to_string(), parent);
+            Some(CastParent::Url(TypedUrlReference {
+                target_type: "url".to_string(),
+                url: url.clone(),
+            }))
         },
-        None => {},
-    }
+        None => None,
+    };
 
-    Some(cast_obj)
+    Some(Cast {
+        fid: msg_data.fid,
+        timestamp: msg_data.timestamp,
+        hash: message.id.value().to_string(),
+        text: cast_body.text.clone(),
+        mentions,
+        mentions_positions,
+        embeds,
+        parent,
+    })
+}
+
+pub fn parse_cast_messages(messages: &[FarcasterMessage]) -> Vec<Cast> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            ProstMessage::decode(&*message.payload).ok().and_then(
+                |msg_data: crate::proto::MessageData| process_cast_message(message, &msg_data),
+            )
+        })
+        .collect()
 }
 
 pub fn process_reaction_message(
     message: &FarcasterMessage,
     msg_data: &crate::proto::MessageData,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
+) -> Option<Reaction> {
     if message.message_type != MessageType::Reaction {
         return None;
     }
@@ -104,59 +109,55 @@ pub fn process_reaction_message(
         _ => return None,
     };
 
-    let mut reaction_obj = serde_json::Map::new();
-
-    reaction_obj.insert(
-        "fid".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(msg_data.fid)),
-    );
-    reaction_obj.insert(
-        "timestamp".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(msg_data.timestamp)),
-    );
-    reaction_obj
-        .insert("hash".to_string(), serde_json::Value::String(message.id.value().to_string()));
-
-    let reaction_type_str = match reaction_body.r#type {
+    let reaction_type = match reaction_body.r#type {
         1 => "like",
         2 => "recast",
         _ => "unknown",
-    };
-    reaction_obj.insert(
-        "reaction_type".to_string(),
-        serde_json::Value::String(reaction_type_str.to_string()),
-    );
-    reaction_obj.insert(
-        "reaction_type_id".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(reaction_body.r#type)),
-    );
+    }
+    .to_string();
 
-    match &reaction_body.target {
+    let target = match &reaction_body.target {
         Some(crate::proto::reaction_body::Target::TargetCastId(cast_id)) => {
-            let target = serde_json::json!({
-                "type": "cast",
-                "fid": cast_id.fid,
-                "hash": hex::encode(&cast_id.hash)
-            });
-            reaction_obj.insert("target".to_string(), target);
+            Some(ReactionTarget::Cast(TypedCastReference {
+                target_type: "cast".to_string(),
+                fid: cast_id.fid,
+                hash: hex::encode(&cast_id.hash),
+            }))
         },
         Some(crate::proto::reaction_body::Target::TargetUrl(url)) => {
-            let target = serde_json::json!({
-                "type": "url",
-                "url": url
-            });
-            reaction_obj.insert("target".to_string(), target);
+            Some(ReactionTarget::Url(TypedUrlReference {
+                target_type: "url".to_string(),
+                url: url.clone(),
+            }))
         },
-        None => {},
-    }
+        None => None,
+    };
 
-    Some(reaction_obj)
+    Some(Reaction {
+        fid: msg_data.fid,
+        timestamp: msg_data.timestamp,
+        hash: message.id.value().to_string(),
+        reaction_type,
+        reaction_type_id: reaction_body.r#type,
+        target,
+    })
+}
+
+pub fn parse_reaction_messages(messages: &[FarcasterMessage]) -> Vec<Reaction> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            ProstMessage::decode(&*message.payload).ok().and_then(
+                |msg_data: crate::proto::MessageData| process_reaction_message(message, &msg_data),
+            )
+        })
+        .collect()
 }
 
 pub fn process_link_message(
     message: &FarcasterMessage,
     msg_data: &crate::proto::MessageData,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
+) -> Option<Link> {
     if message.message_type != MessageType::Link {
         return None;
     }
@@ -166,121 +167,88 @@ pub fn process_link_message(
         _ => return None,
     };
 
-    let mut link_obj = serde_json::Map::new();
+    let target_fid =
+        if let Some(crate::proto::link_body::Target::TargetFid(target_fid)) = &link_body.target {
+            Some(*target_fid)
+        } else {
+            None
+        };
 
-    link_obj.insert(
-        "fid".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(msg_data.fid)),
-    );
-    link_obj.insert(
-        "timestamp".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(msg_data.timestamp)),
-    );
-    link_obj.insert("hash".to_string(), serde_json::Value::String(message.id.value().to_string()));
+    let display_timestamp = link_body.display_timestamp.filter(|value| *value > 0);
 
-    link_obj.insert("link_type".to_string(), serde_json::Value::String(link_body.r#type.clone()));
-
-    if let Some(crate::proto::link_body::Target::TargetFid(target_fid)) = &link_body.target {
-        link_obj.insert(
-            "target_fid".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(*target_fid)),
-        );
-    }
-
-    if let Some(display_timestamp) = link_body.display_timestamp
-        && display_timestamp > 0
-    {
-        link_obj.insert(
-            "display_timestamp".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(display_timestamp)),
-        );
-    }
-
-    Some(link_obj)
+    Some(Link {
+        fid: msg_data.fid,
+        timestamp: msg_data.timestamp,
+        hash: message.id.value().to_string(),
+        link_type: link_body.r#type.clone(),
+        target_fid,
+        display_timestamp,
+    })
 }
 
-pub fn format_casts_response(
-    messages: Vec<FarcasterMessage>,
-    fid: Option<Fid>,
-) -> serde_json::Value {
-    let mut casts = Vec::new();
-
-    for message in messages {
-        if let Ok(data) = ProstMessage::decode(&*message.payload) {
-            let msg_data: crate::proto::MessageData = data;
-            if let Some(cast_obj) = process_cast_message(&message, &msg_data) {
-                casts.push(serde_json::Value::Object(cast_obj));
-            }
-        }
-    }
-
-    match fid {
-        Some(fid) => serde_json::json!({
-            "fid": fid.value(),
-            "count": casts.len(),
-            "casts": casts
-        }),
-        None => serde_json::json!({
-            "count": casts.len(),
-            "casts": casts
-        }),
-    }
+pub fn parse_link_messages(messages: &[FarcasterMessage]) -> Vec<Link> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            ProstMessage::decode(&*message.payload).ok().and_then(
+                |msg_data: crate::proto::MessageData| process_link_message(message, &msg_data),
+            )
+        })
+        .collect()
 }
 
-pub fn format_reactions_response(
-    messages: Vec<FarcasterMessage>,
-    fid: Option<Fid>,
-) -> serde_json::Value {
-    let mut reactions = Vec::new();
-
-    for message in messages {
-        if let Ok(data) = ProstMessage::decode(&*message.payload) {
-            let msg_data: crate::proto::MessageData = data;
-            if let Some(reaction_obj) = process_reaction_message(&message, &msg_data) {
-                reactions.push(serde_json::Value::Object(reaction_obj));
-            }
-        }
+fn process_link_compact_state_message(
+    message: &FarcasterMessage,
+    msg_data: &crate::proto::MessageData,
+) -> Vec<Link> {
+    if message.message_type != MessageType::Link {
+        return Vec::new();
     }
 
-    match fid {
-        Some(fid) => serde_json::json!({
-            "fid": fid.value(),
-            "count": reactions.len(),
-            "reactions": reactions
-        }),
-        None => serde_json::json!({
-            "count": reactions.len(),
-            "reactions": reactions
-        }),
+    match &msg_data.body {
+        Some(crate::proto::message_data::Body::LinkCompactStateBody(compact_state)) => {
+            let hash = message.id.value().to_string();
+            if compact_state.target_fids.is_empty() {
+                return vec![Link {
+                    fid: msg_data.fid,
+                    timestamp: msg_data.timestamp,
+                    hash,
+                    link_type: compact_state.r#type.clone(),
+                    target_fid: None,
+                    display_timestamp: None,
+                }];
+            }
+
+            compact_state
+                .target_fids
+                .iter()
+                .map(|target_fid| Link {
+                    fid: msg_data.fid,
+                    timestamp: msg_data.timestamp,
+                    hash: hash.clone(),
+                    link_type: compact_state.r#type.clone(),
+                    target_fid: Some(*target_fid),
+                    display_timestamp: None,
+                })
+                .collect()
+        },
+        Some(crate::proto::message_data::Body::LinkBody(_)) => {
+            process_link_message(message, msg_data).into_iter().collect()
+        },
+        _ => Vec::new(),
     }
 }
 
-pub fn format_links_response(
-    messages: Vec<FarcasterMessage>,
-    fid: Option<Fid>,
-) -> serde_json::Value {
-    let mut links = Vec::new();
-
-    for message in messages {
-        if let Ok(data) = ProstMessage::decode(&*message.payload) {
-            let msg_data: crate::proto::MessageData = data;
-            if let Some(link_obj) = process_link_message(&message, &msg_data) {
-                links.push(serde_json::Value::Object(link_obj));
-            }
-        }
-    }
-
-    match fid {
-        Some(fid) => serde_json::json!({
-            "fid": fid.value(),
-            "count": links.len(),
-            "links": links
-        }),
-        None => serde_json::json!({
-            "count": links.len(),
-            "links": links
-        }),
-    }
+pub fn parse_link_compact_state_messages(messages: &[FarcasterMessage]) -> Vec<Link> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            ProstMessage::decode(&*message.payload)
+                .ok()
+                .map(|msg_data: crate::proto::MessageData| (message, msg_data))
+        })
+        .flat_map(|(message, msg_data)| process_link_compact_state_message(message, &msg_data))
+        .collect()
 }
 
 pub fn parse_hash_bytes(hash: &str) -> Result<Vec<u8>, String> {

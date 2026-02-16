@@ -72,8 +72,9 @@ The MCP service is automatically started when you run Waypoint via `waypoint sta
 
 The MCP service uses the Data Context pattern for efficient and flexible data access:
 
-- **Unified Data Access**: Accesses data from both Snapchain Hub and PostgreSQL database through a single interface
-- **Prioritized Data Sources**: Always tries to fetch fresh data from the Hub first, with database fallback
+- **Unified Data Access**: Uses a single typed DataContext interface for query operations
+- **Hub-backed MCP runtime**: MCP is wired with a Hub client and `NullDb`, so MCP responses are sourced from Hub data
+- **Transport-agnostic query core**: `WaypointQuery` stays reusable across adapters and can run with different DB/Hub implementations
 - **Efficient Resource Management**: Shares database and Hub client connections between requests
 - **Type-Safe Interfaces**: Uses Rust's trait system for clean abstractions
 
@@ -585,7 +586,7 @@ Check if a user follows another user (or any other link type relationship).
 }
 ```
 
-The `link_type` defaults to "follow" if not specified, making it easy to check follow relationships.
+The `link_type` defaults to `"follow"` for this lookup tool when omitted.
 
 #### Get Links by FID (Who a User Follows)
 
@@ -604,7 +605,7 @@ Find users that a specific user follows.
 }
 ```
 
-By default, this returns "follow" type links unless a different link_type is specified.
+If `link_type` is omitted (or `null`), this returns all link types. Pass `"follow"` to filter to follow links.
 
 #### Get Links by Target (Who Follows a User)
 
@@ -623,7 +624,7 @@ Find users that follow a specific user.
 }
 ```
 
-By default, this returns "follow" type links unless a different link_type is specified.
+If `link_type` is omitted (or `null`), this returns all link types. Pass `"follow"` to filter to follow links.
 
 #### Get Username Proofs
 
@@ -1106,7 +1107,7 @@ The `do_get_user_by_fid` query method demonstrates this pattern:
 2. Uses the `DataContext` to make a gRPC request to the Hub via `get_user_data_by_fid`
 3. Processes the returned `MessagesResponse` by decoding the protobuf messages 
 4. Extracts the relevant data from each `UserDataBody` based on its type
-5. Returns a native JSON value/map as `QueryResult<T>` (without string serialization)
+5. Returns typed DTOs as `QueryResult<T>` (without building transport JSON in query logic)
 6. Lets the MCP adapter serialize and return the response to clients
 
 This layered approach promotes clean separation of concerns:
@@ -1128,6 +1129,12 @@ pub struct SearchCastsRequest {
     pub limit: usize,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct SearchCastsResponse {
+    pub query: String,
+    pub results: Vec<CastSummary>,
+}
+
 // 2. Add the transport-agnostic implementation in WaypointQuery
 impl<DB, HC> WaypointQuery<DB, HC>
 where
@@ -1139,22 +1146,20 @@ where
         &self,
         query: &str,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<SearchCastsResponse> {
         info!("Query: Searching casts for query: {}", query);
         
         // Use the Data Context to access multiple data sources
         match self.data_context.search_casts(query, limit).await {
             Ok(messages) => {
                 let results = messages.iter()
-                    .map(|message| Self::message_to_json(message))
+                    .map(Self::map_cast_summary)
                     .collect::<Vec<_>>();
-                
-                let result = serde_json::json!({
-                    "query": query,
-                    "results": results
-                });
-                
-                Ok(result)
+
+                Ok(SearchCastsResponse {
+                    query: query.to_string(),
+                    results,
+                })
             },
             Err(e) => Err(e.into())
         }
@@ -1178,7 +1183,7 @@ impl WaypointMcpTools {
             .await
             .map_err(Self::map_query_error)?;
 
-        Self::call_tool_json(result)
+        Self::call_tool_json(&result)
     }
 }
 ```

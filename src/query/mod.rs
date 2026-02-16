@@ -1,6 +1,7 @@
 //! Transport-agnostic query core.
 
 pub mod error;
+pub mod responses;
 pub mod types;
 
 mod casts;
@@ -14,8 +15,6 @@ use crate::core::types::Fid;
 
 pub use error::{QueryError, QueryResult};
 pub use utils::parse_hash_bytes;
-
-pub type JsonMap = serde_json::Map<String, serde_json::Value>;
 
 #[derive(Clone)]
 pub struct WaypointQuery<DB, HC> {
@@ -38,7 +37,7 @@ where
         recursive: bool,
         max_depth: usize,
         limit: usize,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<responses::ConversationResponse> {
         self.do_get_conversation_impl(fid, cast_hash, recursive, max_depth, limit).await
     }
 }
