@@ -26,7 +26,6 @@ use tracing::info;
 /// MCP protocol version used by this server
 pub const MCP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_03_26;
 
-// Non-generic wrapper for WaypointQuery to use with RMCP macros
 #[derive(Clone)]
 pub struct WaypointMcpTools {
     query: Arc<WaypointQuery<NullDb, crate::hub::providers::FarcasterHubClient>>,
@@ -44,7 +43,6 @@ impl WaypointMcpTools {
     }
 }
 
-// Tool implementations for standard APIs
 #[tool_router]
 impl WaypointMcpTools {
     /// Create a text resource with the given URI and name
@@ -139,7 +137,6 @@ impl WaypointMcpTools {
         }
     }
 
-    // User data APIs
     #[tool(description = "Get Farcaster user data by FID", annotations(read_only_hint = true))]
     async fn get_user_by_fid(
         &self,
@@ -275,7 +272,6 @@ impl WaypointMcpTools {
         Self::call_tool_json(&result)
     }
 
-    // Cast APIs
     #[tool(description = "Get a specific cast by FID and hash", annotations(read_only_hint = true))]
     async fn get_cast(
         &self,
@@ -443,15 +439,14 @@ impl WaypointMcpTools {
             "MCP tool call"
         );
         let fid = Fid::from(fid);
-
-        let result =
-            self.query.do_get_conversation(fid, &cast_hash, recursive, max_depth, limit).await;
-
-        let result = result.map_err(Self::map_query_error)?;
+        let result = self
+            .query
+            .do_get_conversation(fid, &cast_hash, recursive, max_depth, limit)
+            .await
+            .map_err(Self::map_query_error)?;
         Self::call_tool_json(&result)
     }
 
-    // Reaction APIs
     #[tool(description = "Get a specific reaction", annotations(read_only_hint = true))]
     async fn get_reaction(
         &self,
@@ -477,7 +472,6 @@ impl WaypointMcpTools {
         let fid = Fid::from(fid);
         let target_cast_fid = target_cast_fid.map(Fid::from);
 
-        // Convert hex hash to bytes if provided
         let target_cast_hash_bytes = if let Some(hash) = &target_cast_hash {
             Some(parse_hash_bytes(hash).map_err(|message| {
                 McpError::invalid_params(message, Some(serde_json::json!({ "hash": hash })))
@@ -559,7 +553,6 @@ impl WaypointMcpTools {
         );
         let target_cast_fid = target_cast_fid.map(Fid::from);
 
-        // Convert hex hash to bytes if provided
         let target_cast_hash_bytes = if let Some(hash) = &target_cast_hash {
             Some(parse_hash_bytes(hash).map_err(|message| {
                 McpError::invalid_params(message, Some(serde_json::json!({ "hash": hash })))
@@ -615,7 +608,6 @@ impl WaypointMcpTools {
         Self::call_tool_json(&result)
     }
 
-    // Link APIs
     #[tool(description = "Get a specific link", annotations(read_only_hint = true))]
     async fn get_link(
         &self,
@@ -753,7 +745,6 @@ impl WaypointMcpTools {
         Self::call_tool_json(&result)
     }
 
-    // Username Proofs API
     #[tool(description = "Get a single username proof by name", annotations(read_only_hint = true))]
     async fn get_username_proof(
         &self,
@@ -806,12 +797,9 @@ impl WaypointMcpTools {
         >,
         _ctx: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
-        // Check if username is provided, ensuring we preserve any .eth suffix
-        let username_context = if let Some(username) = username {
-            // Make sure to use the full username including .eth if present
-            format!(" (username: {})", username)
-        } else {
-            "".to_string()
+        let username_context = match username {
+            Some(name) => format!(" (username: {})", name),
+            None => String::new(),
         };
 
         let prompt = format!(

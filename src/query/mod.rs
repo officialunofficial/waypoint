@@ -11,7 +11,6 @@ mod users;
 mod utils;
 
 use crate::core::data_context::{DataContext, Database, HubClient};
-use crate::core::types::Fid;
 
 pub use error::{QueryError, QueryResult};
 pub use utils::parse_hash_bytes;
@@ -28,16 +27,5 @@ where
 {
     pub fn new(data_context: DataContext<DB, HC>) -> Self {
         Self { data_context }
-    }
-
-    pub async fn do_get_conversation(
-        &self,
-        fid: Fid,
-        cast_hash: &str,
-        recursive: bool,
-        max_depth: usize,
-        limit: usize,
-    ) -> QueryResult<responses::ConversationResponse> {
-        self.do_get_conversation_impl(fid, cast_hash, recursive, max_depth, limit).await
     }
 }

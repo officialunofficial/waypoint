@@ -282,7 +282,6 @@ pub struct WaypointPromptArgs {
     #[schemars(
         description = "The Farcaster username (optional, will be included in the prompt if provided)"
     )]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
 }
 

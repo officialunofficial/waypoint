@@ -102,13 +102,13 @@ where
         &self,
         fid: Fid,
         limit: usize,
-        _start_time: Option<u64>,
-        _end_time: Option<u64>,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
     ) -> QueryResult<LinksByFidResponse> {
         tracing::debug!("Query: Fetching all links for FID: {} with time filtering", fid);
 
         let messages =
-            self.data_context.get_all_links_by_fid(fid, limit, _start_time, _end_time).await?;
+            self.data_context.get_all_links_by_fid(fid, limit, start_time, end_time).await?;
         let links = super::utils::parse_link_messages(&messages);
         Ok(LinksByFidResponse { fid: fid.value(), count: links.len(), links })
     }

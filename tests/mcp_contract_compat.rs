@@ -410,6 +410,7 @@ fn make_cast_embed_cast(fid: u64, hash: &str) -> waypoint::proto::Embed {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_cast_message(
     id: &str,
     fid: u64,

@@ -1,11 +1,11 @@
 //! Cast and conversation query operations.
 
-use crate::core::types::{Fid, Message};
+use crate::core::types::{Fid, Message, MessageType};
 use crate::query::responses::{
     CastLookupResponse, CastNotFoundResponse, CastReference, CastsByFidResponse,
     CastsByMentionResponse, CastsByParentResponse, CastsByParentUrlResponse, ConversationCast,
     ConversationFoundResponse, ConversationParentCast, ConversationParticipants,
-    ConversationResponse, ConversationTree,
+    ConversationResponse, ConversationTree, UserProfile,
 };
 use crate::query::types::ConversationParams;
 use crate::query::{QueryError, QueryResult, WaypointQuery};
@@ -14,7 +14,6 @@ use std::collections::HashSet;
 
 use prost::Message as ProstMessage;
 
-/// Helper function to format a message in conversation-friendly shape.
 fn format_message(message: &Message) -> ConversationCast {
     let mut formatted = ConversationCast {
         id: message.id.value().to_string(),
@@ -31,8 +30,7 @@ fn format_message(message: &Message) -> ConversationCast {
         has_more_replies: None,
     };
 
-    if let Ok(data) = ProstMessage::decode(&*message.payload) {
-        let msg_data: crate::proto::MessageData = data;
+    if let Ok(msg_data) = <crate::proto::MessageData as ProstMessage>::decode(&*message.payload) {
         formatted.fid = Some(msg_data.fid);
         formatted.timestamp = Some(msg_data.timestamp);
 
@@ -56,35 +54,9 @@ fn format_message(message: &Message) -> ConversationCast {
                 None => {},
             }
 
-            if !cast.embeds.is_empty() {
-                let embeds = cast
-                    .embeds
-                    .iter()
-                    .filter_map(|embed| match &embed.embed {
-                        Some(crate::proto::embed::Embed::Url(url)) => {
-                            Some(crate::query::responses::CastEmbed::Url(
-                                crate::query::responses::TypedUrlReference {
-                                    target_type: "url".to_string(),
-                                    url: url.clone(),
-                                },
-                            ))
-                        },
-                        Some(crate::proto::embed::Embed::CastId(cast_id)) => {
-                            Some(crate::query::responses::CastEmbed::Cast(
-                                crate::query::responses::TypedCastReference {
-                                    target_type: "cast".to_string(),
-                                    fid: cast_id.fid,
-                                    hash: hex::encode(&cast_id.hash),
-                                },
-                            ))
-                        },
-                        None => None,
-                    })
-                    .collect::<Vec<_>>();
-
-                if !embeds.is_empty() {
-                    formatted.embeds = Some(embeds);
-                }
+            let embeds = super::utils::parse_embed_list(&cast.embeds);
+            if !embeds.is_empty() {
+                formatted.embeds = Some(embeds);
             }
         }
     }
@@ -92,14 +64,17 @@ fn format_message(message: &Message) -> ConversationCast {
     formatted
 }
 
-// Common types are used in the handler implementations
+/// Decode a message payload and extract the FID, returning it if successful.
+fn extract_fid(message: &Message) -> Option<Fid> {
+    let msg_data: crate::proto::MessageData = ProstMessage::decode(&*message.payload).ok()?;
+    Some(Fid::from(msg_data.fid))
+}
 
 impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
-    /// Get user data by FID using Hub client
     pub async fn do_get_cast(&self, fid: Fid, hash_hex: &str) -> QueryResult<CastLookupResponse> {
         tracing::debug!("Query: Fetching cast with FID: {} and hash: {}", fid, hash_hex);
 
@@ -133,7 +108,6 @@ where
         }
     }
 
-    /// Get casts by FID
     pub async fn do_get_casts_by_fid(
         &self,
         fid: Fid,
@@ -146,7 +120,6 @@ where
         Ok(CastsByFidResponse { fid: fid.value(), count: casts.len(), casts })
     }
 
-    /// Get casts mentioning a user
     pub async fn do_get_casts_by_mention(
         &self,
         fid: Fid,
@@ -160,7 +133,6 @@ where
         Ok(CastsByMentionResponse { mention_fid: fid.value(), count: casts.len(), casts })
     }
 
-    /// Get replies to a cast
     pub async fn do_get_casts_by_parent(
         &self,
         parent_fid: Fid,
@@ -189,7 +161,6 @@ where
         })
     }
 
-    /// Get replies to a URL
     pub async fn do_get_casts_by_parent_url(
         &self,
         parent_url: &str,
@@ -207,7 +178,6 @@ where
         })
     }
 
-    /// Get all casts by FID with timestamp filtering
     pub async fn do_get_all_casts_by_fid(
         &self,
         fid: Fid,
@@ -223,8 +193,7 @@ where
         Ok(CastsByFidResponse { fid: fid.value(), count: casts.len(), casts })
     }
 
-    /// Get conversation details for a cast, including parent context
-    pub async fn do_get_conversation_impl(
+    pub async fn do_get_conversation(
         &self,
         fid: Fid,
         cast_hash: &str,
@@ -251,118 +220,37 @@ where
             },
         };
 
-        // Participants will track all unique FIDs in the conversation
         let mut participants = HashSet::new();
-
-        // Add the root cast author to participants by decoding the protobuf
-        if let Ok(data) = ProstMessage::decode(&*root_cast.payload) {
-            let msg_data: crate::proto::MessageData = data;
-            participants.insert(Fid::from(msg_data.fid));
+        if let Some(author_fid) = extract_fid(&root_cast) {
+            participants.insert(author_fid);
         }
 
-        // NEW: First fetch parent casts to build the conversation thread above this cast
         let mut parent_casts = Vec::new();
-        let parent_info = self.get_parent_cast_info(&root_cast).await;
+        let parent_info = Self::get_parent_cast_info(&root_cast);
 
-        // Recursively fetch parent casts to build the context thread (up to 5 levels)
-        if parent_info.0.is_some() && parent_info.1.is_some() {
+        if let Some((parent_fid, parent_hash)) = parent_info {
             tracing::debug!("Found parent cast reference, fetching thread context");
-            self.fetch_parent_casts(&mut parent_casts, &mut participants, &parent_info, 0, 5).await;
-        } else {
-            tracing::debug!("No parent cast reference found, this may be a root conversation");
-        }
-
-        // Create parameters struct for conversation tree building
-        let conversation_params = ConversationParams { recursive, max_depth, limit };
-
-        // Fetch and build the conversation tree recursively (replies)
-        let conversation_tree = self
-            .build_conversation_tree(
-                &root_cast,
+            self.fetch_parent_casts(
+                &mut parent_casts,
                 &mut participants,
-                conversation_params,
-                0, // current depth starts at 0
+                parent_fid,
+                &parent_hash,
+                5,
             )
             .await;
-
-        // Extract topic/summary from conversation content
-        let topic = self.extract_conversation_topic(&root_cast, &conversation_tree);
-
-        // Check if this cast has any quote cast embeds and fetch them
-        let mut quoted_casts = Vec::new();
-
-        if let Ok(data) = ProstMessage::decode(&*root_cast.payload) {
-            let msg_data: crate::proto::MessageData = data;
-
-            if let Some(crate::proto::message_data::Body::CastAddBody(cast)) = &msg_data.body {
-                // Extract any cast embeds (quote casts)
-                for embed in &cast.embeds {
-                    if let Some(crate::proto::embed::Embed::CastId(cast_id)) = &embed.embed {
-                        // Try to fetch the quoted cast
-                        let quoted_fid = Fid::from(cast_id.fid);
-                        if let Ok(Some(quoted_cast)) =
-                            self.data_context.get_cast(quoted_fid, &cast_id.hash).await
-                        {
-                            quoted_casts.push(format_message(&quoted_cast));
-
-                            // Add the author of the quoted cast to participants
-                            if let Ok(q_data) = ProstMessage::decode(&*quoted_cast.payload) {
-                                let q_msg_data: crate::proto::MessageData = q_data;
-                                participants.insert(Fid::from(q_msg_data.fid));
-                            }
-                        }
-                    }
-                }
-            }
         }
 
-        // Fetch user data for all participants to hydrate the conversation
-        let mut user_data_map = BTreeMap::new();
-        for &participant_fid in &participants {
-            match self.data_context.get_user_data_by_fid(participant_fid, 20).await {
-                Ok(messages) => {
-                    if !messages.is_empty() {
-                        let mut profile = crate::query::responses::UserProfile {
-                            fid: participant_fid.value(),
-                            ..crate::query::responses::UserProfile::default()
-                        };
+        let conversation_params = ConversationParams { recursive, max_depth, limit };
+        let conversation_tree = self
+            .build_conversation_tree(&root_cast, &mut participants, conversation_params, 0)
+            .await;
 
-                        // Process each message to extract user data
-                        for message in messages {
-                            if message.message_type != crate::core::types::MessageType::UserData {
-                                continue;
-                            }
+        let topic = Self::extract_conversation_topic(&root_cast);
 
-                            // Try to decode the message payload as MessageData
-                            if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                                let msg_data: crate::proto::MessageData = data;
+        let quoted_casts = self.fetch_quoted_casts(&root_cast, &mut participants).await;
 
-                                // Extract the user_data_body if present
-                                if let Some(crate::proto::message_data::Body::UserDataBody(
-                                    user_data,
-                                )) = msg_data.body
-                                {
-                                    Self::set_participant_user_field(
-                                        &mut profile,
-                                        user_data.r#type,
-                                        user_data.value,
-                                    );
-                                }
-                            }
-                        }
+        let user_data_map = self.fetch_participant_profiles(&participants).await;
 
-                        // Add this profile to the user data map, keyed by FID
-                        user_data_map.insert(participant_fid.value().to_string(), profile);
-                    }
-                },
-                Err(_) => {
-                    // If there's an error fetching user data, just continue with other participants
-                    continue;
-                },
-            }
-        }
-
-        // Generate the summary with user information
         let summary = self.generate_conversation_summary(&root_cast, &conversation_tree).await;
 
         let mut participant_fids = participants.iter().map(|fid| fid.value()).collect::<Vec<_>>();
@@ -383,67 +271,111 @@ where
         })))
     }
 
-    fn set_participant_user_field(
-        profile: &mut crate::query::responses::UserProfile,
-        data_type: i32,
-        value: String,
-    ) {
-        match data_type {
-            1 => profile.pfp = Some(value),
-            2 => profile.display_name = Some(value),
-            3 => profile.bio = Some(value),
-            5 => profile.url = Some(value),
-            6 => profile.username = Some(value),
-            7 => profile.location = Some(value),
-            8 => profile.twitter = Some(value),
-            9 => profile.github = Some(value),
-            _ => {},
-        }
-    }
+    /// Extract cast embed references and fetch the quoted casts, adding authors to participants.
+    async fn fetch_quoted_casts(
+        &self,
+        cast: &Message,
+        participants: &mut HashSet<Fid>,
+    ) -> Vec<ConversationCast> {
+        let mut quoted_casts = Vec::new();
 
-    // Get parent cast information from a cast
-    async fn get_parent_cast_info(&self, cast: &Message) -> (Option<Fid>, Option<Vec<u8>>) {
-        let mut parent_fid = None;
-        let mut parent_hash = None;
+        let Ok(msg_data) = <crate::proto::MessageData as ProstMessage>::decode(&*cast.payload)
+        else {
+            return quoted_casts;
+        };
 
-        // Try to decode the message payload
-        if let Ok(data) = ProstMessage::decode(&*cast.payload) {
-            let msg_data: crate::proto::MessageData = data;
+        let Some(crate::proto::message_data::Body::CastAddBody(body)) = &msg_data.body else {
+            return quoted_casts;
+        };
 
-            // Check if this is a cast that has a parent
-            if let Some(crate::proto::message_data::Body::CastAddBody(cast_body)) = &msg_data.body {
-                // Check if the cast has a parent cast reference
-                if let Some(crate::proto::cast_add_body::Parent::ParentCastId(parent)) =
-                    &cast_body.parent
+        for embed in &body.embeds {
+            if let Some(crate::proto::embed::Embed::CastId(cast_id)) = &embed.embed {
+                let quoted_fid = Fid::from(cast_id.fid);
+                if let Ok(Some(quoted_cast)) =
+                    self.data_context.get_cast(quoted_fid, &cast_id.hash).await
                 {
-                    parent_fid = Some(Fid::from(parent.fid));
-                    parent_hash = Some(parent.hash.clone());
+                    if let Some(author_fid) = extract_fid(&quoted_cast) {
+                        participants.insert(author_fid);
+                    }
+                    quoted_casts.push(format_message(&quoted_cast));
                 }
-                // Note: We're ignoring ParentUrl parents for now as they reference external content
             }
         }
 
-        (parent_fid, parent_hash)
+        quoted_casts
     }
 
-    // Recursively fetch parent casts
+    /// Fetch user profiles for all conversation participants.
+    async fn fetch_participant_profiles(
+        &self,
+        participants: &HashSet<Fid>,
+    ) -> BTreeMap<String, UserProfile> {
+        let mut user_data_map = BTreeMap::new();
+
+        for &participant_fid in participants {
+            let Ok(messages) = self.data_context.get_user_data_by_fid(participant_fid, 20).await
+            else {
+                continue;
+            };
+
+            if messages.is_empty() {
+                continue;
+            }
+
+            let mut profile =
+                UserProfile { fid: participant_fid.value(), ..UserProfile::default() };
+
+            for message in messages {
+                if message.message_type != MessageType::UserData {
+                    continue;
+                }
+
+                if let Ok(msg_data) =
+                    <crate::proto::MessageData as ProstMessage>::decode(&*message.payload)
+                    && let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
+                        msg_data.body
+                {
+                    super::users::set_user_data_field(
+                        &mut profile,
+                        user_data.r#type,
+                        user_data.value,
+                    );
+                }
+            }
+
+            user_data_map.insert(participant_fid.value().to_string(), profile);
+        }
+
+        user_data_map
+    }
+
+    /// Extract parent cast reference (fid + hash) from a cast message, if present.
+    fn get_parent_cast_info(cast: &Message) -> Option<(Fid, Vec<u8>)> {
+        let msg_data: crate::proto::MessageData = ProstMessage::decode(&*cast.payload).ok()?;
+
+        let Some(crate::proto::message_data::Body::CastAddBody(cast_body)) = &msg_data.body else {
+            return None;
+        };
+
+        match &cast_body.parent {
+            Some(crate::proto::cast_add_body::Parent::ParentCastId(parent)) => {
+                Some((Fid::from(parent.fid), parent.hash.clone()))
+            },
+            _ => None,
+        }
+    }
+
     async fn fetch_parent_casts(
         &self,
         parent_casts: &mut Vec<ConversationCast>,
         participants: &mut HashSet<Fid>,
-        parent_info: &(Option<Fid>, Option<Vec<u8>>),
-        current_depth: usize,
-        max_depth: usize,
+        parent_fid: Fid,
+        parent_hash: &[u8],
+        remaining_depth: usize,
     ) {
-        // Stop recursion if we've reached max depth
-        if current_depth >= max_depth {
+        if remaining_depth == 0 {
             return;
         }
-
-        // We need both FID and hash to fetch the parent cast
-        let (Some(parent_fid), Some(parent_hash)) = (parent_info.0, parent_info.1.as_ref()) else {
-            return;
-        };
 
         tracing::debug!(
             "Fetching specific cast with FID: {} and hash: {}",
@@ -451,30 +383,26 @@ where
             hex::encode(parent_hash)
         );
 
-        // Fetch the parent cast
         match self.data_context.get_cast(parent_fid, parent_hash).await {
             Ok(Some(parent_cast)) => {
-                // Add the parent cast author to participants
-                if let Ok(data) = ProstMessage::decode(&*parent_cast.payload) {
-                    let msg_data: crate::proto::MessageData = data;
-                    participants.insert(Fid::from(msg_data.fid));
+                if let Some(author_fid) = extract_fid(&parent_cast) {
+                    participants.insert(author_fid);
                 }
 
-                // Format and add this parent cast to the list
-                let formatted_cast = format_message(&parent_cast);
-                parent_casts.push(formatted_cast);
+                parent_casts.push(format_message(&parent_cast));
 
-                // Get the grandparent info and recurse
-                let grandparent_info = self.get_parent_cast_info(&parent_cast).await;
-                // Use Box::pin for recursion in async functions
-                let future = Box::pin(self.fetch_parent_casts(
-                    parent_casts,
-                    participants,
-                    &grandparent_info,
-                    current_depth + 1,
-                    max_depth,
-                ));
-                future.await;
+                if let Some((grandparent_fid, grandparent_hash)) =
+                    Self::get_parent_cast_info(&parent_cast)
+                {
+                    Box::pin(self.fetch_parent_casts(
+                        parent_casts,
+                        participants,
+                        grandparent_fid,
+                        &grandparent_hash,
+                        remaining_depth - 1,
+                    ))
+                    .await;
+                }
             },
             Ok(None) => {
                 tracing::warn!(
@@ -489,48 +417,31 @@ where
         }
     }
 
-    // Helper function to recursively build the conversation tree
-    // We're using a struct to reduce the number of parameters and address the clippy warning
     async fn build_conversation_tree(
         &self,
-        _parent_cast: &Message,
+        parent_cast: &Message,
         participants: &mut HashSet<Fid>,
         params: ConversationParams,
         current_depth: usize,
     ) -> ConversationTree {
-        // If we've reached max depth, stop recursion
         if current_depth >= params.max_depth {
             return ConversationTree { replies: vec![], has_more: false };
         }
 
-        // For a cast with hash X, we want to find all casts that have X as their parent
-        // To find replies to the current cast, we need:
-        // 1. The FID of the cast author (parent_fid)
-        // 2. The hash of the cast itself (parent_hash)
-        let mut parent_fid = Fid::from(0);
+        let parent_fid = extract_fid(parent_cast).unwrap_or(Fid::from(0));
 
-        // Extract the FID from the MessageData
-        if let Ok(msg_data) = ProstMessage::decode(&*_parent_cast.payload) {
-            let msg_data: crate::proto::MessageData = msg_data;
-            parent_fid = Fid::from(msg_data.fid);
-        }
-
-        // The hash is stored in the Message's id field
-        // This is from the Message.hash property in the protobuf
-        let parent_hash = match super::utils::parse_hash_bytes(_parent_cast.id.value()) {
+        let parent_hash = match super::utils::parse_hash_bytes(parent_cast.id.value()) {
             Ok(hash_bytes) => hash_bytes,
             Err(message) => {
                 tracing::error!(
                     "Failed to decode cast hash from ID: {} - {}",
-                    _parent_cast.id.value(),
+                    parent_cast.id.value(),
                     message
                 );
                 return ConversationTree { replies: vec![], has_more: false };
             },
         };
 
-        // Fetch direct replies to this cast using the Hub's GetCastsByParent API
-        // This returns all casts that have the current cast as their parent
         let replies = match self
             .data_context
             .get_casts_by_parent(parent_fid, &parent_hash, params.limit)
@@ -543,69 +454,32 @@ where
             },
         };
 
-        // Add reply authors to participants by decoding the protobuf
         for reply in &replies {
-            if let Ok(data) = ProstMessage::decode(&*reply.payload) {
-                let msg_data: crate::proto::MessageData = data;
-                participants.insert(Fid::from(msg_data.fid));
+            if let Some(reply_fid) = extract_fid(reply) {
+                participants.insert(reply_fid);
             }
         }
 
-        // Format and possibly recurse for each reply
         let mut formatted_replies = Vec::new();
         for reply in replies {
             let mut formatted_reply = format_message(&reply);
 
-            // Process embedded casts (quotes) in the reply just like we do for the root cast
-            if let Ok(data) = ProstMessage::decode(&*reply.payload) {
-                let msg_data: crate::proto::MessageData = data;
-
-                if let Some(crate::proto::message_data::Body::CastAddBody(cast)) = &msg_data.body {
-                    // If there are embeds, check for cast embeds (quotes)
-                    if !cast.embeds.is_empty() {
-                        let mut quoted_casts = Vec::new();
-
-                        for embed in &cast.embeds {
-                            if let Some(crate::proto::embed::Embed::CastId(cast_id)) = &embed.embed
-                            {
-                                // Try to fetch the quoted cast
-                                let quoted_fid = Fid::from(cast_id.fid);
-                                if let Ok(Some(quoted_cast)) =
-                                    self.data_context.get_cast(quoted_fid, &cast_id.hash).await
-                                {
-                                    quoted_casts.push(format_message(&quoted_cast));
-
-                                    // Add the author of the quoted cast to participants
-                                    if let Ok(q_data) = ProstMessage::decode(&*quoted_cast.payload)
-                                    {
-                                        let q_msg_data: crate::proto::MessageData = q_data;
-                                        participants.insert(Fid::from(q_msg_data.fid));
-                                    }
-                                }
-                            }
-                        }
-
-                        // Add quoted casts to the formatted reply if any were found
-                        if !quoted_casts.is_empty() {
-                            formatted_reply.quoted_casts = Some(quoted_casts);
-                        }
-                    }
-                }
+            let quoted = self.fetch_quoted_casts(&reply, participants).await;
+            if !quoted.is_empty() {
+                formatted_reply.quoted_casts = Some(quoted);
             }
 
-            // If recursive, fetch replies to this reply
             if params.recursive && current_depth < params.max_depth - 1 {
-                // Use Box::pin for recursion in async functions to avoid infinite size issues
-                let nested_replies_future = Box::pin(self.build_conversation_tree(
+                let nested = Box::pin(self.build_conversation_tree(
                     &reply,
                     participants,
                     params,
                     current_depth + 1,
-                ));
+                ))
+                .await;
 
-                let nested_replies = nested_replies_future.await;
-                formatted_reply.replies = Some(nested_replies.replies);
-                formatted_reply.has_more_replies = Some(nested_replies.has_more);
+                formatted_reply.replies = Some(nested.replies);
+                formatted_reply.has_more_replies = Some(nested.has_more);
             }
 
             formatted_replies.push(formatted_reply);
@@ -615,84 +489,69 @@ where
         ConversationTree { replies: formatted_replies, has_more }
     }
 
-    // Extract the main topic of conversation based on the root cast
-    fn extract_conversation_topic(
-        &self,
-        _root_cast: &Message,
-        _conversation_tree: &ConversationTree,
-    ) -> String {
-        // For now, we'll simply use the first few words of the root cast as the topic
-        // A more sophisticated implementation would use NLP to identify common themes
-        // Extract text from the message payload
-        let mut text = "".to_string();
-
-        if let Ok(data) = ProstMessage::decode(&*_root_cast.payload) {
-            let msg_data: crate::proto::MessageData = data;
-
-            if let Some(crate::proto::message_data::Body::CastAddBody(cast)) = &msg_data.body {
-                text = cast.text.clone();
-            }
-        }
+    fn extract_conversation_topic(root_cast: &Message) -> String {
+        let text = Self::extract_cast_text(root_cast).unwrap_or_default();
 
         if text.is_empty() {
             return "Untitled conversation".to_string();
         }
 
-        let words: Vec<&str> = text.split_whitespace().collect();
-        let topic = words.iter().take(5).cloned().collect::<Vec<_>>().join(" ");
+        let topic: String = text.split_whitespace().take(5).collect::<Vec<_>>().join(" ");
 
         if topic.is_empty() { "Untitled conversation".to_string() } else { format!("{}...", topic) }
     }
 
-    // Generate a summary of the conversation
+    fn extract_cast_text(message: &Message) -> Option<String> {
+        let msg_data: crate::proto::MessageData = ProstMessage::decode(&*message.payload).ok()?;
+
+        match &msg_data.body {
+            Some(crate::proto::message_data::Body::CastAddBody(cast)) => Some(cast.text.clone()),
+            _ => None,
+        }
+    }
+
     async fn generate_conversation_summary(
         &self,
-        _root_cast: &Message,
+        root_cast: &Message,
         conversation_tree: &ConversationTree,
     ) -> String {
-        // Count replies in the tree (including nested replies)
         let reply_count = Self::count_replies_recursive(conversation_tree);
 
-        // Get the root cast author and text from the protobuf
         let mut root_author = Fid::from(0);
-        let mut root_text = "".to_string();
+        let mut root_text = String::new();
 
-        if let Ok(data) = ProstMessage::decode(&*_root_cast.payload) {
-            let msg_data: crate::proto::MessageData = data;
+        if let Ok(msg_data) =
+            <crate::proto::MessageData as ProstMessage>::decode(&*root_cast.payload)
+        {
             root_author = Fid::from(msg_data.fid);
-
             if let Some(crate::proto::message_data::Body::CastAddBody(cast)) = &msg_data.body {
                 root_text = cast.text.clone();
             }
         }
 
-        // Try to get the username for the author
         let author_display = match self.data_context.get_user_data_by_fid(root_author, 20).await {
             Ok(messages) => {
                 let mut username = None;
                 let mut display_name = None;
 
                 for message in messages {
-                    if message.message_type != crate::core::types::MessageType::UserData {
+                    if message.message_type != MessageType::UserData {
                         continue;
                     }
 
-                    if let Ok(data) = ProstMessage::decode(&*message.payload) {
-                        let msg_data: crate::proto::MessageData = data;
-
-                        if let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
+                    if let Ok(msg_data) =
+                        <crate::proto::MessageData as ProstMessage>::decode(&*message.payload)
+                        && let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
                             msg_data.body
-                        {
-                            match user_data.r#type {
-                                2 => display_name = Some(user_data.value), // USER_DATA_TYPE_DISPLAY
-                                6 => username = Some(user_data.value), // USER_DATA_TYPE_USERNAME
-                                _ => {},
-                            }
+                    {
+                        match user_data.r#type {
+                            2 => display_name = Some(user_data.value),
+                            6 => username = Some(user_data.value),
+                            _ => {},
                         }
                     }
                 }
 
-                // Prefer display name, fall back to username, then FID
                 if let Some(name) = display_name {
                     format!(
                         "{} (@{})",
@@ -708,7 +567,6 @@ where
             Err(_) => format!("FID {}", root_author),
         };
 
-        // Format summary
         format!(
             "Conversation started by {} with: \"{}\". {} replies in the thread.",
             author_display,
@@ -717,7 +575,6 @@ where
         )
     }
 
-    // Helper to count total replies in the tree - static method to avoid clippy warning
     fn count_replies_recursive(tree: &ConversationTree) -> usize {
         tree.replies
             .iter()
@@ -736,7 +593,6 @@ where
             .sum()
     }
 
-    // Helper to truncate text with ellipsis - static method
     fn truncate_text(text: &str, max_length: usize) -> String {
         if text.len() <= max_length {
             text.to_string()
@@ -754,7 +610,6 @@ mod tests {
     use crate::query::responses::{ConversationCast, ConversationTree};
     use async_trait::async_trait;
 
-    // Minimal mock types to access associated functions on WaypointQuery<DB, HC>
     #[derive(Clone, Debug)]
     struct MockDb;
 
@@ -1014,7 +869,6 @@ mod tests {
             ],
             has_more: false,
         };
-        // 2 top-level + 2 nested = 4
         assert_eq!(TestService::count_replies_recursive(&tree), 4);
     }
 
@@ -1024,7 +878,6 @@ mod tests {
             replies: vec![make_reply(Some(vec![make_reply(Some(vec![make_reply(None)]))]))],
             has_more: false,
         };
-        // 1 at each level = 3
         assert_eq!(TestService::count_replies_recursive(&tree), 3);
     }
 

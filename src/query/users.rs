@@ -12,12 +12,25 @@ use crate::query::{QueryError, QueryResult, WaypointQuery};
 
 use prost::Message as ProstMessage;
 
+pub(crate) fn set_user_data_field(profile: &mut UserProfile, data_type: i32, value: String) {
+    match data_type {
+        1 => profile.pfp = Some(value),
+        2 => profile.display_name = Some(value),
+        3 => profile.bio = Some(value),
+        5 => profile.url = Some(value),
+        6 => profile.username = Some(value),
+        7 => profile.location = Some(value),
+        8 => profile.twitter = Some(value),
+        9 => profile.github = Some(value),
+        _ => {},
+    }
+}
+
 impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
-    /// Get user data by FID
     pub async fn do_get_user_by_fid(&self, fid: Fid) -> QueryResult<UserByFidResponse> {
         let messages = self.data_context.get_user_data_by_fid(fid, 20).await?;
 
@@ -30,20 +43,6 @@ where
         }
 
         Ok(UserByFidResponse::Found(Self::user_profile_from_messages(fid, &messages, None)))
-    }
-
-    fn set_user_data_field(profile: &mut UserProfile, data_type: i32, value: String) {
-        match data_type {
-            1 => profile.pfp = Some(value),
-            2 => profile.display_name = Some(value),
-            3 => profile.bio = Some(value),
-            5 => profile.url = Some(value),
-            6 => profile.username = Some(value),
-            7 => profile.location = Some(value),
-            8 => profile.twitter = Some(value),
-            9 => profile.github = Some(value),
-            _ => {},
-        }
     }
 
     fn user_profile_from_messages(
@@ -64,7 +63,7 @@ where
                 && let Some(crate::proto::message_data::Body::UserDataBody(user_data)) =
                     msg_data.body
             {
-                Self::set_user_data_field(&mut profile, user_data.r#type, user_data.value);
+                set_user_data_field(&mut profile, user_data.r#type, user_data.value);
             }
         }
 

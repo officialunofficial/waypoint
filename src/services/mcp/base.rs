@@ -8,7 +8,6 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 
-// Import types from core
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -20,7 +19,6 @@ use crate::core::{
 };
 use crate::query::WaypointQuery;
 
-// NullDB implementation that satisfies the Database trait
 #[derive(Debug, Clone)]
 pub struct NullDb;
 

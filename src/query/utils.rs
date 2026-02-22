@@ -251,6 +251,26 @@ pub fn parse_link_compact_state_messages(messages: &[FarcasterMessage]) -> Vec<L
         .collect()
 }
 
+pub fn parse_embed_list(embeds: &[crate::proto::Embed]) -> Vec<CastEmbed> {
+    embeds
+        .iter()
+        .filter_map(|embed| match &embed.embed {
+            Some(crate::proto::embed::Embed::Url(url)) => Some(CastEmbed::Url(TypedUrlReference {
+                target_type: "url".to_string(),
+                url: url.clone(),
+            })),
+            Some(crate::proto::embed::Embed::CastId(cast_id)) => {
+                Some(CastEmbed::Cast(TypedCastReference {
+                    target_type: "cast".to_string(),
+                    fid: cast_id.fid,
+                    hash: hex::encode(&cast_id.hash),
+                }))
+            },
+            None => None,
+        })
+        .collect()
+}
+
 pub fn parse_hash_bytes(hash: &str) -> Result<Vec<u8>, String> {
     let trimmed = hash.trim_start_matches("0x");
     if trimmed.is_empty() {

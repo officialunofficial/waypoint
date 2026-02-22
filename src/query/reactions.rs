@@ -9,7 +9,24 @@ use crate::query::{QueryError, QueryResult, WaypointQuery};
 
 use prost::Message as ProstMessage;
 
-// Common types are used in the handler implementations
+/// Build `(target_cast, target_url)` from the raw target parameters, for use in not-found
+/// responses and target-based query responses.
+fn build_target_info(
+    target_cast_fid: Option<Fid>,
+    target_cast_hash: Option<&[u8]>,
+    target_url: Option<&str>,
+) -> (Option<CastReference>, Option<String>) {
+    if let Some(url) = target_url {
+        return (None, Some(url.to_string()));
+    }
+
+    match (target_cast_fid, target_cast_hash) {
+        (Some(fid), Some(hash)) => {
+            (Some(CastReference { fid: fid.value(), hash: hex::encode(hash) }), None)
+        },
+        _ => (None, None),
+    }
+}
 
 impl<DB, HC> WaypointQuery<DB, HC>
 where
@@ -102,20 +119,8 @@ where
                 Ok(ReactionLookupResponse::Found(reaction))
             },
             Ok(None) => {
-                let (target_cast, target_url) = if let Some(url) = target_url {
-                    (None, Some(url.to_string()))
-                } else {
-                    (
-                        match (target_cast_fid, target_cast_hash) {
-                            (Some(target_fid), Some(target_hash)) => Some(CastReference {
-                                fid: target_fid.value(),
-                                hash: hex::encode(target_hash),
-                            }),
-                            _ => None,
-                        },
-                        None,
-                    )
-                };
+                let (target_cast, target_url) =
+                    build_target_info(target_cast_fid, target_cast_hash, target_url);
 
                 Ok(ReactionLookupResponse::NotFound(ReactionNotFoundResponse {
                     fid: fid.value(),
@@ -173,19 +178,8 @@ where
 
         let reactions = super::utils::parse_reaction_messages(&messages);
 
-        let (target_cast, target_url) = if let Some(url) = target_url {
-            (None, Some(url.to_string()))
-        } else {
-            (
-                match (target_cast_fid, target_cast_hash) {
-                    (Some(tfid), Some(thash)) => {
-                        Some(CastReference { fid: tfid.value(), hash: hex::encode(thash) })
-                    },
-                    _ => None,
-                },
-                None,
-            )
-        };
+        let (target_cast, target_url) =
+            build_target_info(target_cast_fid, target_cast_hash, target_url);
 
         Ok(ReactionsByTargetResponse { count: reactions.len(), reactions, target_cast, target_url })
     }
@@ -195,13 +189,13 @@ where
         &self,
         fid: Fid,
         limit: usize,
-        _start_time: Option<u64>,
-        _end_time: Option<u64>,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
     ) -> QueryResult<ReactionsByFidResponse> {
         tracing::debug!("Query: Fetching all reactions for FID: {} with time filtering", fid);
 
         let messages =
-            self.data_context.get_all_reactions_by_fid(fid, limit, _start_time, _end_time).await?;
+            self.data_context.get_all_reactions_by_fid(fid, limit, start_time, end_time).await?;
         let reactions = super::utils::parse_reaction_messages(&messages);
         Ok(ReactionsByFidResponse { fid: fid.value(), count: reactions.len(), reactions })
     }
