@@ -5,8 +5,11 @@ use serde_with::{DisplayFromStr, serde_as};
 use std::fmt;
 use std::str::FromStr;
 
+/// Farcaster timestamp epoch (January 1, 2021 UTC in seconds)
+pub const FARCASTER_EPOCH_SECONDS: u64 = 1_609_459_200;
+
 /// Farcaster timestamp epoch (January 1, 2021 UTC in milliseconds)
-pub const FARCASTER_EPOCH: u64 = 1609459200000;
+pub const FARCASTER_EPOCH_MS: u64 = FARCASTER_EPOCH_SECONDS * 1_000;
 
 /// Farcaster Identifier (FID)
 ///
@@ -513,15 +516,16 @@ mod tests {
 
         #[test]
         fn test_farcaster_epoch_value() {
-            // January 1, 2021 00:00:00 UTC in milliseconds
-            assert_eq!(FARCASTER_EPOCH, 1609459200000);
+            // January 1, 2021 00:00:00 UTC represented in both units
+            assert_eq!(FARCASTER_EPOCH_SECONDS, 1_609_459_200);
+            assert_eq!(FARCASTER_EPOCH_MS, 1_609_459_200_000);
         }
 
         #[test]
         fn test_farcaster_epoch_is_2021() {
             use std::time::{Duration, UNIX_EPOCH};
 
-            let epoch_time = UNIX_EPOCH + Duration::from_millis(FARCASTER_EPOCH);
+            let epoch_time = UNIX_EPOCH + Duration::from_millis(FARCASTER_EPOCH_MS);
             let datetime = chrono::DateTime::<chrono::Utc>::from(epoch_time);
 
             assert_eq!(datetime.format("%Y-%m-%d").to_string(), "2021-01-01");

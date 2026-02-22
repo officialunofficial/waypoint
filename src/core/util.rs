@@ -1,4 +1,4 @@
-use crate::core::types::FARCASTER_EPOCH;
+use crate::core::types::FARCASTER_EPOCH_MS;
 use std::borrow::Cow;
 
 #[derive(Debug)]
@@ -16,18 +16,18 @@ impl std::fmt::Display for HubError {
 impl std::error::Error for HubError {}
 
 pub fn to_farcaster_time(time_ms: u64) -> Result<u32, HubError> {
-    if time_ms < FARCASTER_EPOCH {
+    if time_ms < FARCASTER_EPOCH_MS {
         return Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: format!("time_ms is before the farcaster epoch: {}", time_ms),
         });
     }
-    let seconds_since_epoch = ((time_ms - FARCASTER_EPOCH) / 1000) as u32;
+    let seconds_since_epoch = ((time_ms - FARCASTER_EPOCH_MS) / 1000) as u32;
     Ok(seconds_since_epoch)
 }
 
 pub fn from_farcaster_time(time: u32) -> u64 {
-    (time as u64) * 1000 + FARCASTER_EPOCH
+    (time as u64) * 1000 + FARCASTER_EPOCH_MS
 }
 
 pub fn get_farcaster_time() -> Result<u32, HubError> {
@@ -138,21 +138,21 @@ mod tests {
         let time = to_farcaster_time(0);
         assert!(time.is_err());
 
-        let time = to_farcaster_time(FARCASTER_EPOCH - 1);
+        let time = to_farcaster_time(FARCASTER_EPOCH_MS - 1);
         assert!(time.is_err());
 
-        let time = to_farcaster_time(FARCASTER_EPOCH).unwrap();
+        let time = to_farcaster_time(FARCASTER_EPOCH_MS).unwrap();
         assert_eq!(time, 0);
 
-        let time = to_farcaster_time(FARCASTER_EPOCH + 1000).unwrap();
+        let time = to_farcaster_time(FARCASTER_EPOCH_MS + 1000).unwrap();
         assert_eq!(time, 1);
     }
 
     #[test]
     fn test_from_farcaster_time() {
-        assert_eq!(from_farcaster_time(0), FARCASTER_EPOCH);
-        assert_eq!(from_farcaster_time(1), FARCASTER_EPOCH + 1000);
-        assert_eq!(from_farcaster_time(1000), FARCASTER_EPOCH + 1_000_000);
+        assert_eq!(from_farcaster_time(0), FARCASTER_EPOCH_MS);
+        assert_eq!(from_farcaster_time(1), FARCASTER_EPOCH_MS + 1000);
+        assert_eq!(from_farcaster_time(1000), FARCASTER_EPOCH_MS + 1_000_000);
     }
 
     #[test]

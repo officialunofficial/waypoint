@@ -8,4 +8,6 @@ pub mod util;
 pub use data_context::{
     DataAccessError, DataContext, DataContextBuilder, Database, HubClient, Result,
 };
-pub use types::{FARCASTER_EPOCH, Fid, Message, MessageId, MessageType};
+pub use types::{
+    FARCASTER_EPOCH_MS, FARCASTER_EPOCH_SECONDS, Fid, Message, MessageId, MessageType,
+};

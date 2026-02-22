@@ -25,52 +25,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::app::{Service, ServiceContext, ServiceHandle};
-use crate::core::{
-    data_context::DataContext,
-    types::{Fid, Message as FarcasterMessage},
-};
-
-// NullDB implementation that satisfies the Database trait
-#[derive(Debug, Clone)]
-pub struct NullDb;
-
-#[async_trait]
-impl crate::core::data_context::Database for NullDb {
-    async fn get_message(
-        &self,
-        _id: &crate::core::types::MessageId,
-        _message_type: crate::core::types::MessageType,
-    ) -> crate::core::data_context::Result<FarcasterMessage> {
-        Err(crate::core::data_context::DataAccessError::NotFound(
-            "NullDb does not store messages".to_string(),
-        ))
-    }
-
-    async fn get_messages_by_fid(
-        &self,
-        _fid: Fid,
-        _message_type: crate::core::types::MessageType,
-        _limit: usize,
-        _cursor: Option<crate::core::types::MessageId>,
-    ) -> crate::core::data_context::Result<Vec<FarcasterMessage>> {
-        Ok(Vec::new())
-    }
-
-    async fn store_message(
-        &self,
-        _message: FarcasterMessage,
-    ) -> crate::core::data_context::Result<()> {
-        Ok(())
-    }
-
-    async fn delete_message(
-        &self,
-        _id: &crate::core::types::MessageId,
-        _message_type: crate::core::types::MessageType,
-    ) -> crate::core::data_context::Result<()> {
-        Ok(())
-    }
-}
+use crate::core::{data_context::DataContext, types::Fid};
+use crate::database::NullDb;
 
 // Simple MooCow service to demonstrate MCP functionality
 #[derive(Clone)]
