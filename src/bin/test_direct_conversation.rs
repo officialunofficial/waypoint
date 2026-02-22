@@ -2,10 +2,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use waypoint::core::data_context::DataContextBuilder;
 use waypoint::core::types::Fid;
+use waypoint::database::NullDb;
 use waypoint::hub::client::Hub;
 use waypoint::hub::providers::FarcasterHubClient;
 use waypoint::query::WaypointQuery;
-use waypoint::services::mcp::NullDb;
 
 #[tokio::main]
 async fn main() {

@@ -8,4 +8,4 @@ pub mod providers;
 // Re-export most commonly used types
 pub use client::Database;
 pub use error::Error;
-pub use providers::PostgresDatabaseClient;
+pub use providers::{NullDb, PostgresDatabaseClient};

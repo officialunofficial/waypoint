@@ -9,8 +9,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use waypoint::config::Config;
 use waypoint::core::data_context::{DataContext, DataContextBuilder};
+use waypoint::database::NullDb;
 use waypoint::query::WaypointQuery;
-use waypoint::services::mcp::{NullDb, WaypointMcpTools};
+use waypoint::services::mcp::WaypointMcpTools;
 
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8000";
 

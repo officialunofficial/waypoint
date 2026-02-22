@@ -6,8 +6,8 @@ mod utils;
 use std::sync::Arc;
 
 use crate::core::types::Fid;
+use crate::database::NullDb;
 use crate::query::{QueryError, WaypointQuery, parse_hash_bytes};
-use crate::services::mcp::base::NullDb;
 
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
