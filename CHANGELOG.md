@@ -2,6 +2,23 @@
 
 All notable changes to Waypoint will be documented in this file.
 
+## [2026.2.6] - 2026-02-22
+
+### Refactor
+
+- Extract transport-agnostic `WaypointQuery` layer from MCP handlers (#94)
+- Centralize Farcaster epoch constants, relocate stream key and NullDb helpers (#93)
+- Simplify query layer: extract helpers, eliminate duplication, reduce arg counts
+- Remove stale re-exports and use consistent import paths
+
+### Tests
+
+- Add fixture-based MCP contract compatibility tests
+
+### Documentation
+
+- Update architecture and MCP docs to reflect layered query design
+
 ## [2026.2.5] - 2026-02-11
 
 ### Features
