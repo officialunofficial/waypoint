@@ -74,6 +74,7 @@ The MCP service uses the Data Context pattern for efficient and flexible data ac
 
 - **Unified Data Access**: Accesses data from both Snapchain Hub and PostgreSQL database through a single interface
 - **Prioritized Data Sources**: Always tries to fetch fresh data from the Hub first, with database fallback
+- **Transport-agnostic query core**: `WaypointQuery` stays reusable across adapters and can run with different DB/Hub implementations
 - **Efficient Resource Management**: Shares database and Hub client connections between requests
 - **Type-Safe Interfaces**: Uses Rust's trait system for clean abstractions
 
@@ -101,15 +102,18 @@ This design ensures proper URL encoding, avoids ambiguity, and follows web stand
 ### Resource Templates
 
 #### Users
+
 - `waypoint://users/{fid}`: User profile by FID
 - `waypoint://users/by-username/{username}`: User profile by username
 
 #### Verifications
+
 - `waypoint://verifications/{fid}`: Verified addresses for a FID
 - `waypoint://verifications/{fid}/{address}`: Specific verification by FID and address
 - `waypoint://verifications/all-by-fid/{fid}`: All verification messages for a FID
 
 #### Casts
+
 - `waypoint://casts/{fid}/{hash}`: Specific cast by author FID + hash
 - `waypoint://casts/by-fid/{fid}`: Recent casts by FID
 - `waypoint://casts/by-mention/{fid}`: Casts mentioning a FID
@@ -117,19 +121,23 @@ This design ensures proper URL encoding, avoids ambiguity, and follows web stand
 - `waypoint://casts/by-parent-url{?url}`: Replies to a parent URL (RFC 6570 query expansion)
 
 #### Conversations
+
 - `waypoint://conversations/{fid}/{hash}`: Full conversation thread for a cast (includes replies, participants, parent context, quoted casts)
 
 #### Reactions
+
 - `waypoint://reactions/by-fid/{fid}`: Reactions by FID
 - `waypoint://reactions/by-target-cast/{fid}/{hash}`: Reactions to a target cast
 - `waypoint://reactions/by-target-url{?url}`: Reactions to a target URL (RFC 6570 query expansion)
 
 #### Links
+
 - `waypoint://links/by-fid/{fid}`: Links by FID (defaults to `follow`)
 - `waypoint://links/by-target/{fid}`: Links to a target FID (defaults to `follow`)
 - `waypoint://links/compact-state/{fid}`: Link compact state by FID
 
 #### Username Proofs
+
 - `waypoint://username-proofs/{fid}`: Username proofs (fname, ens_l1, basename) for a FID
 - `waypoint://username-proofs/by-name/{name}`: Username proof for a specific name
 
@@ -149,7 +157,6 @@ List-style resources use the same default limit as tools (10), unless the tool s
 ### User Tools
 
 #### Get User by FID
-
 
 ```json
 {
@@ -225,6 +232,7 @@ The response includes detailed information about each verification:
 ```
 
 The response includes:
+
 - Protocol type (ethereum, solana)
 - Verification type (eoa for personal wallets, contract for smart contracts)
 - Chain ID (for contract verifications)
@@ -362,7 +370,7 @@ Retrieve complete conversation details for a cast, including participants, neste
   "params": {
     "name": "get_conversation",
     "input": {
-      "fid": "12345",
+      "fid": 12345,
       "cast_hash": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
       "recursive": true,
       "max_depth": 5,
@@ -371,6 +379,8 @@ Retrieve complete conversation details for a cast, including participants, neste
   }
 }
 ```
+
+`fid` should be sent as a number. For backward compatibility, a numeric string is also accepted.
 
 The response includes:
 
@@ -477,6 +487,7 @@ The response includes:
 ```
 
 Additional parameters:
+
 - `recursive`: When true, fetches nested replies to create a complete conversation tree (default: false)
 - `max_depth`: Controls how deep to traverse the reply tree (default: 5)
 - `limit`: Maximum number of replies to fetch per level (default: 10)
@@ -560,6 +571,7 @@ Find a user's FID by their Farcaster username.
 ```
 
 Response:
+
 ```json
 {
   "username": "alice",
@@ -777,7 +789,6 @@ The response includes both add/remove verification messages:
 }
 ```
 
-
 ## Using the Waypoint Prompt
 
 The Waypoint MCP integration includes a customizable prompt for AI assistants:
@@ -796,6 +807,7 @@ The Waypoint MCP integration includes a customizable prompt for AI assistants:
 ```
 
 The prompt supports two parameters:
+
 - `fid` (required): The Farcaster ID to focus on
 - `username` (optional): The username associated with the FID, including full ENS domains
 
@@ -1055,6 +1067,7 @@ Accept: application/json, text/event-stream
 ```
 
 Example connection using the MCP client library:
+
 ```javascript
 import { createClient } from "@modelcontextprotocol/client";
 
@@ -1081,7 +1094,6 @@ const casts = await client.callTool({
 console.log(casts);
 ```
 
-
 ### Docker Setup
 
 When using Docker Compose, the MCP service is already configured and exposed:
@@ -1092,26 +1104,29 @@ The service is enabled by default and will automatically start with Waypoint.
 
 ## Extending the MCP Integration
 
-Developers can extend Waypoint's MCP capabilities by adding more tools to the MCP service modules (`src/services/mcp/`):
+Developers can extend Waypoint's MCP capabilities by adding query logic in `src/query/` and exposing it through MCP adapters in `src/services/mcp/handlers/`:
 
-1. Define new data structures for tool inputs/outputs in `src/services/mcp/handlers/common.rs`
-2. Implement the tool functionality in the `WaypointMcpService<DB, HC>` implementation in `src/services/mcp/base.rs`
+1. Define new request schemas for MCP in `src/services/mcp/handlers/common.rs`
+2. Implement transport-agnostic query logic in `WaypointQuery<DB, HC>` under `src/query/*.rs`
 3. Add a delegate method in a `#[tool_router]` impl block for `WaypointMcpTools` in `src/services/mcp/handlers/mod.rs`
-4. Use the `Parameters<T>` wrapper for type-safe parameter handling
-5. Use the DataContext for data access to benefit from the abstraction
+4. Use the `Parameters<T>` wrapper for type-safe MCP parameter handling
+5. Use the DataContext through `WaypointQuery` for data access abstraction
 
-The recently implemented `do_get_user_by_fid` function demonstrates this pattern:
+The `do_get_user_by_fid` query method demonstrates this pattern:
 
 1. It receives a Farcaster ID (FID) parameter
 2. Uses the `DataContext` to make a gRPC request to the Hub via `get_user_data_by_fid`
-3. Processes the returned `MessagesResponse` by decoding the protobuf messages 
+3. Processes the returned `MessagesResponse` by decoding the protobuf messages
 4. Extracts the relevant data from each `UserDataBody` based on its type
-5. Formats the data into a clean JSON structure for the client
-6. Handles potential errors gracefully with descriptive messages
+5. Returns typed DTOs as `QueryResult<T>` (without building transport JSON in query logic)
+6. Lets the MCP adapter serialize and return the response to clients
 
 This layered approach promotes clean separation of concerns:
-- The `WaypointMcpTools` class handles the MCP protocol interface
-- The `WaypointMcpService` implements the business logic
+
+- The `McpService` struct manages MCP server lifecycle/startup integration with the app
+- The `WaypointMcpTools` type handles the MCP protocol interface
+- The `WaypointQuery` type implements transport-agnostic business/query logic
+- `WaypointMcpTools` performs JSON serialization at the transport boundary
 - The `DataContext` provides data access abstraction
 - The Hub/Database clients handle the actual data retrieval
 
@@ -1126,31 +1141,39 @@ pub struct SearchCastsRequest {
     pub limit: usize,
 }
 
-// 2. Add the implementation in WaypointMcpService
-impl<DB, HC> WaypointMcpService<DB, HC>
+#[derive(Debug, serde::Serialize)]
+pub struct SearchCastsResponse {
+    pub query: String,
+    pub results: Vec<CastSummary>,
+}
+
+// 2. Add the transport-agnostic implementation in WaypointQuery
+impl<DB, HC> WaypointQuery<DB, HC>
 where
     DB: crate::core::data_context::Database + Clone + Send + Sync + 'static,
     HC: crate::core::data_context::HubClient + Clone + Send + Sync + 'static,
 {
     // Implementation method with business logic
-    async fn do_search_casts(&self, query: &str, limit: usize) -> String {
-        info!("MCP: Searching casts for query: {}", query);
+    async fn do_search_casts(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> QueryResult<SearchCastsResponse> {
+        info!("Query: Searching casts for query: {}", query);
         
         // Use the Data Context to access multiple data sources
         match self.data_context.search_casts(query, limit).await {
             Ok(messages) => {
                 let results = messages.iter()
-                    .map(|message| Self::message_to_json(message))
+                    .map(Self::map_cast_summary)
                     .collect::<Vec<_>>();
-                
-                let result = serde_json::json!({
-                    "query": query,
-                    "results": results
-                });
-                
-                result.to_string()
+
+                Ok(SearchCastsResponse {
+                    query: query.to_string(),
+                    results,
+                })
             },
-            Err(e) => format!("Error searching casts: {}", e)
+            Err(e) => Err(e.into())
         }
     }
 }
@@ -1165,9 +1188,14 @@ impl WaypointMcpTools {
         &self,
         Parameters(SearchCastsRequest { query, limit }): Parameters<SearchCastsRequest>,
     ) -> Result<CallToolResult, McpError> {
-        // Delegate to the implementation in WaypointMcpService
-        let result = self.service.do_search_casts(&query, limit).await;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
+        // Delegate to transport-agnostic query logic
+        let result = self
+            .query
+            .do_search_casts(&query, limit)
+            .await
+            .map_err(Self::map_query_error)?;
+
+        Self::call_tool_json(&result)
     }
 }
 ```

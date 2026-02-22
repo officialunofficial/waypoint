@@ -1,0 +1,4 @@
+{
+	"error_type": "invalid_input",
+	"message": "Either target_url or both target_cast_fid and target_cast_hash are required"
+}

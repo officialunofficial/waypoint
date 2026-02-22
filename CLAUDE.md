@@ -20,7 +20,8 @@ Rust edition 2024, minimum rustc 1.92.0.
 - **Consumer** (`src/services/streaming.rs`) reads streams via XREADGROUP, dispatches to database processors
 - **Database processors** (`src/processor/database.rs`) write to Postgres via sqlx
 - **Backfill reconciler** (`src/backfill/reconciler.rs`) fetches historical data per-FID from hub gRPC
-- **MCP server** (`src/services/mcp/`) exposes tools, prompts, and resources via Model Context Protocol
+- **Query core** (`src/query/`) contains transport-agnostic query/business logic shared across adapters
+- **MCP server** (`src/services/mcp/`) exposes tools, prompts, and resources via Model Context Protocol; `WaypointMcpTools` is the protocol adapter and serializes query results at the transport boundary
 
 ## MCP Resource URI Conventions (RFC 3986 / RFC 6570)
 

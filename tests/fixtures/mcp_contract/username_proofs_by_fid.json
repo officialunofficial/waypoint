@@ -1,0 +1,20 @@
+{
+	"fid": 1001,
+	"count": 2,
+	"proofs": [
+		{
+			"name": "alice",
+			"type": "fname",
+			"fid": 1001,
+			"timestamp": 1700000000,
+			"owner": "0xaabb"
+		},
+		{
+			"name": "alice.eth",
+			"type": "ens_l1",
+			"fid": 1001,
+			"timestamp": 1700000100,
+			"owner": "0x1122"
+		}
+	]
+}

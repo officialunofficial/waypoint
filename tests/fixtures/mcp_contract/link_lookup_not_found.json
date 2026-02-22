@@ -1,0 +1,7 @@
+{
+	"fid": 5005,
+	"link_type": "follow",
+	"target_fid": 9999,
+	"found": false,
+	"error": "Link not found"
+}

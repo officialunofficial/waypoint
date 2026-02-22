@@ -1,0 +1,20 @@
+{
+	"fid": 1001,
+	"count": 2,
+	"compact_links": [
+		{
+			"fid": 1001,
+			"timestamp": 25,
+			"hash": "3434343434343434343434343434343434343434",
+			"link_type": "follow",
+			"target_fid": 5005
+		},
+		{
+			"fid": 1001,
+			"timestamp": 25,
+			"hash": "3434343434343434343434343434343434343434",
+			"link_type": "follow",
+			"target_fid": 4004
+		}
+	]
+}

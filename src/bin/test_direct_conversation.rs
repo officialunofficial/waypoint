@@ -2,15 +2,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use waypoint::core::data_context::DataContextBuilder;
 use waypoint::core::types::Fid;
+use waypoint::database::NullDb;
 use waypoint::hub::client::Hub;
 use waypoint::hub::providers::FarcasterHubClient;
-
-// Import the public modules from mcp
-mod mcp_helpers {
-    pub use waypoint::database::NullDb;
-    pub use waypoint::services::mcp::WaypointMcpService;
-}
-use mcp_helpers::*;
+use waypoint::query::WaypointQuery;
 
 #[tokio::main]
 async fn main() {
@@ -45,8 +40,8 @@ async fn main() {
     let data_context =
         DataContextBuilder::new().with_hub_client(hub_client).with_database(NullDb).build();
 
-    // Create the MCP service
-    let service = WaypointMcpService::new(data_context);
+    // Create shared query core
+    let query = WaypointQuery::new(data_context);
 
     // Test parameters
     let fid = Fid::from(4085);
@@ -54,7 +49,7 @@ async fn main() {
 
     // Call the get_conversation function
     println!("Testing get_conversation with FID {} and hash {}", fid, hash_str);
-    let conversation = service
+    let conversation = query
         .do_get_conversation(
             fid, hash_str, // Without 0x prefix
             true,     // recursive
@@ -64,5 +59,14 @@ async fn main() {
         .await;
 
     println!("Conversation Result:");
-    println!("{}", conversation);
+    match conversation {
+        Ok(value) => {
+            let formatted = serde_json::to_string_pretty(&value)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize\"}".to_string());
+            println!("{}", formatted);
+        },
+        Err(err) => {
+            eprintln!("Query error: {}", err);
+        },
+    }
 }

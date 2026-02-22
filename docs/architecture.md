@@ -1,6 +1,7 @@
 # Architecture
 
 Three main components:
+
 1. **Streaming** - Real-time Snapchain events via gRPC → Redis → PostgreSQL
 2. **Backfill** - Historical data via queue/worker pattern
 3. **MCP** - AI assistant data access
@@ -35,6 +36,7 @@ sequenceDiagram
 ```
 
 **Flow:**
+
 - Subscriber connects to Snapchain gRPC, filters spam, groups by type
 - Redis streams provide durability and backpressure
 - Consumer groups enable parallel processing
@@ -56,6 +58,7 @@ sequenceDiagram
 ```
 
 **Flow:**
+
 - Queue service populates Redis with FID batches
 - Workers pull jobs atomically (BRPOP)
 - Each job reconciles all message types for its FIDs
@@ -66,15 +69,22 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant AI
-    participant MCP
+    participant MCP as MCP Adapter
+    participant Query as WaypointQuery
     participant Hub as Snapchain
     participant DB as PostgreSQL
 
-    AI->>MCP: Tool call
-    MCP->>Hub: Fetch (primary)
-    MCP->>DB: Fallback
+    AI->>MCP: Tool call / resource read
+    MCP->>Query: Transport mapping
+    Query->>Hub: Fetch
+    Query->>DB: Optional fallback (adapter-dependent)
     MCP->>AI: JSON response
 ```
+
+- `McpService` handles runtime lifecycle and server startup.
+- `WaypointMcpTools` is a thin protocol adapter (`rmcp` schemas + routing).
+- `WaypointQuery` owns transport-agnostic query/business logic shared across transports.
+- `WaypointQuery` returns typed query results; `WaypointMcpTools` serializes JSON for MCP responses.
 
 See [mcp.md](mcp.md) for tool details.
 

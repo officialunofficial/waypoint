@@ -5,18 +5,17 @@ This document provides a UML class diagram and explanation of Waypoint's data ar
 ## Class Diagram
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'background': '#f5f5f5' }}}%%
 classDiagram
     class Message {
-        +MessageId id
-        +MessageType message_type
-        +Vec~u8~ payload
+        +id: MessageId
+        +message_type: MessageType
+        +payload: Vec_u8
         +new(id, message_type, payload)
     }
 
     class MessageId {
-        +String value
-        +value(): String
+        +value: String
+        +value()
     }
 
     class MessageType {
@@ -31,99 +30,99 @@ classDiagram
     }
 
     class Fid {
-        +u64 value
-        +value(): u64
-        +from(value: u64): Fid
+        +value: u64
+        +value()
+        +from(value)
     }
 
     class DataAccessError {
         <<enumeration>>
-        +Database(sqlx::Error)
-        +Redis(String)
-        +NotFound(String)
-        +Hub(String)
-        +Other(String)
+        Database
+        Redis
+        NotFound
+        Hub
+        Other
     }
 
     class Database {
         <<interface>>
-        +store_message(message: Message): Result
-        +get_message(id: &MessageId, message_type: MessageType): Result~Message~
-        +get_messages_by_fid(fid: Fid, message_type: MessageType, limit: usize, cursor: Option~MessageId~): Result~Vec~Message~~
-        +delete_message(id: &MessageId, message_type: MessageType): Result
+        +store_message(message)
+        +get_message(id, message_type)
+        +get_messages_by_fid(fid, message_type, limit, cursor)
+        +delete_message(id, message_type)
     }
 
     class HubClient {
         <<interface>>
-        +get_user_data_by_fid(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_user_data(fid: Fid, data_type: &str): Result~Option~Message~~
-        +get_username_proofs_by_fid(fid: Fid): Result~Vec~Message~~
-        +get_verifications_by_fid(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_casts_by_fid(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_cast(fid: Fid, hash: &[u8]): Result~Option~Message~~
-        +get_casts_by_mention(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_casts_by_parent(parent_fid: Fid, parent_hash: &[u8], limit: usize): Result~Vec~Message~~
-        +get_casts_by_parent_url(parent_url: &str, limit: usize): Result~Vec~Message~~
-        +get_all_casts_by_fid(fid: Fid, limit: usize, start_time: Option~u64~, end_time: Option~u64~): Result~Vec~Message~~
+        +get_user_data_by_fid(fid, limit)
+        +get_user_data(fid, data_type)
+        +get_username_proofs_by_fid(fid)
+        +get_verifications_by_fid(fid, limit)
+        +get_casts_by_fid(fid, limit)
+        +get_cast(fid, hash)
+        +get_casts_by_mention(fid, limit)
+        +get_casts_by_parent(parent_fid, parent_hash, limit)
+        +get_casts_by_parent_url(parent_url, limit)
+        +get_all_casts_by_fid(fid, limit, start_time, end_time)
     }
 
-    class DataContext~DB, HC~ {
-        -DB database
-        -HC hub_client
-        +new(database: DB, hub_client: HC): Self
-        +get_user_data_by_fid(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_user_data(fid: Fid, data_type: &str): Result~Option~Message~~
-        +get_username_proofs_by_fid(fid: Fid): Result~Vec~Message~~
-        +get_verifications_by_fid(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_casts_by_fid(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_cast(fid: Fid, hash: &[u8]): Result~Option~Message~~
-        +get_casts_by_mention(fid: Fid, limit: usize): Result~Vec~Message~~
-        +get_casts_by_parent(parent_fid: Fid, parent_hash: &[u8], limit: usize): Result~Vec~Message~~
-        +get_casts_by_parent_url(parent_url: &str, limit: usize): Result~Vec~Message~~
-        +get_all_casts_by_fid(fid: Fid, limit: usize, start_time: Option~u64~, end_time: Option~u64~): Result~Vec~Message~~
+    class DataContext {
+        -database
+        -hub_client
+        +new(database, hub_client)
+        +get_user_data_by_fid(fid, limit)
+        +get_user_data(fid, data_type)
+        +get_username_proofs_by_fid(fid)
+        +get_verifications_by_fid(fid, limit)
+        +get_casts_by_fid(fid, limit)
+        +get_cast(fid, hash)
+        +get_casts_by_mention(fid, limit)
+        +get_casts_by_parent(parent_fid, parent_hash, limit)
+        +get_casts_by_parent_url(parent_url, limit)
+        +get_all_casts_by_fid(fid, limit, start_time, end_time)
     }
 
-    class DataContextBuilder~DB, HC~ {
-        -Option~DB~ database
-        -Option~HC~ hub_client
-        +new(): Self
-        +with_database(database: DB): Self
-        +with_hub_client(hub_client: HC): Self
-        +build(): DataContext~DB, HC~
+    class DataContextBuilder {
+        -database
+        -hub_client
+        +new()
+        +with_database(database)
+        +with_hub_client(hub_client)
+        +build()
     }
 
     class FarcasterHubClient {
-        -Hub hub
-        +new(hub: Arc~Hub~): Self
+        -hub
+        +new(hub)
     }
 
     class Hub {
-        +Option~Channel~ channel
-        +Option~HubServiceClient~ client
-        +Arc~HubConfig~ config
-        +String host
-        +new(config: Arc~HubConfig~): Result~Hub, Error~
-        +connect(): Result
-        +stream(): Result~EventStream, Error~
-        +get_hub_info(): Result~GetInfoResponse~
-        +get_fids(page_size: Option~u32~, page_token: Option~Vec~u8~~, reverse: Option~bool~): Result~FidsResponse~
+        +channel
+        +client
+        +config
+        +host
+        +new(config)
+        +connect()
+        +stream()
+        +get_hub_info()
+        +get_fids(page_size, page_token, reverse)
     }
-    
+
     class EventStream {
-        +subscribe(): Result~impl Stream~HubEvent~, Error~
+        +subscribe()
     }
 
     class HubConfig {
-        +String url
-        +u32 retry_max_attempts
-        +u64 retry_base_delay_ms
-        +u64 retry_max_delay_ms
-        +f32 retry_jitter_factor
+        +url
+        +retry_max_attempts
+        +retry_base_delay_ms
+        +retry_max_delay_ms
+        +retry_jitter_factor
     }
 
     class PostgresDatabase {
-        -Pool pool
-        +new(pool: Pool): Self
+        -pool
+        +new(pool)
     }
 
     %% Object inheritance

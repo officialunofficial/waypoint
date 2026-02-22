@@ -1,0 +1,87 @@
+{
+	"root_cast": {
+		"id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"type": "cast",
+		"fid": 1001,
+		"timestamp": 12,
+		"text": "Root cast discussing fixture coverage and compatibility",
+		"mentions": [4004],
+		"parent": {
+			"fid": 2002,
+			"hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		"embeds": [
+			{
+				"type": "cast",
+				"fid": 3003,
+				"hash": "cccccccccccccccccccccccccccccccccccccccc"
+			}
+		]
+	},
+	"participants": {
+		"count": 4,
+		"fids": ["1001", "2002", "3003", "4004"],
+		"user_data": {
+			"1001": {
+				"fid": 1001,
+				"username": "alice",
+				"pfp": "https://example.com/alice.png",
+				"display_name": "Alice",
+				"bio": "building typed contracts"
+			},
+			"2002": {
+				"fid": 2002,
+				"username": "bob",
+				"display_name": "Bob"
+			},
+			"3003": {
+				"fid": 3003,
+				"username": "carol",
+				"display_name": "Carol"
+			},
+			"4004": {
+				"fid": 4004,
+				"username": "dave",
+				"display_name": "Dave"
+			}
+		}
+	},
+	"topic": "Root cast discussing fixture coverage...",
+	"summary": "Conversation started by Alice (@alice) with: \"Root cast discussing fixture coverage and compatib...\". 1 replies in the thread.",
+	"parent_casts": [
+		{
+			"id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"type": "cast",
+			"fid": 2002,
+			"timestamp": 10,
+			"text": "Parent context cast"
+		}
+	],
+	"quoted_casts": [
+		{
+			"id": "cccccccccccccccccccccccccccccccccccccccc",
+			"type": "cast",
+			"fid": 3003,
+			"timestamp": 11,
+			"text": "Quoted cast content"
+		}
+	],
+	"conversation": {
+		"replies": [
+			{
+				"id": "dddddddddddddddddddddddddddddddddddddddd",
+				"type": "cast",
+				"fid": 4004,
+				"timestamp": 13,
+				"text": "Reply in thread",
+				"parent": {
+					"fid": 1001,
+					"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+				},
+				"replies": [],
+				"has_more_replies": false
+			}
+		],
+		"has_more": false
+	}
+}

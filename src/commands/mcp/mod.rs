@@ -6,11 +6,12 @@ use rmcp::transport::streamable_http_server::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 use waypoint::config::Config;
 use waypoint::core::data_context::{DataContext, DataContextBuilder};
 use waypoint::database::NullDb;
-use waypoint::services::mcp::{WaypointMcpService, WaypointMcpTools};
+use waypoint::query::WaypointQuery;
+use waypoint::services::mcp::WaypointMcpTools;
 
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8000";
 
@@ -30,10 +31,10 @@ pub fn register_commands(app: Command) -> Command {
 }
 
 /// Handle MCP commands
-pub async fn handle_command(matches: &ArgMatches, _config: &Config) -> Result<()> {
+pub async fn handle_command(matches: &ArgMatches, config: &Config) -> Result<()> {
     match matches.subcommand() {
         Some(("serve", serve_matches)) => {
-            serve_mcp(serve_matches).await?;
+            serve_mcp(serve_matches, config).await?;
         },
         _ => {
             let cmd = Command::new("mcp");
@@ -44,7 +45,7 @@ pub async fn handle_command(matches: &ArgMatches, _config: &Config) -> Result<()
 }
 
 /// Serve MCP service with Farcaster data tools
-async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
+async fn serve_mcp(matches: &ArgMatches, config: &Config) -> Result<()> {
     let bind_address = matches
         .get_one::<std::net::SocketAddr>("bind")
         .copied()
@@ -53,11 +54,15 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
     info!("Starting MCP service on {}", bind_address);
 
     // Create the required clients for the DataContext
-    let hub_config = Arc::new(Config::default().hub);
+    let hub_config = Arc::new(config.hub.clone());
 
-    // Create Hub client (connection will happen automatically on first use)
-    let hub = waypoint::hub::client::Hub::new(hub_config)
+    // Create Hub client and attempt eager connection.
+    let mut hub = waypoint::hub::client::Hub::new(hub_config)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to create Hub client: {}", e))?;
+
+    if let Err(err) = hub.connect().await {
+        warn!("Failed to connect to Hub: {}. Will retry automatically when needed.", err);
+    }
 
     // Create Hub client for data context
     let hub_client = waypoint::hub::providers::FarcasterHubClient::new(Arc::new(Mutex::new(hub)));
@@ -77,13 +82,13 @@ async fn serve_mcp(matches: &ArgMatches) -> Result<()> {
         cancellation_token: cancellation_token.clone(),
     };
 
-    // Initialize the WaypointMcpService with data context
-    let waypoint_service = WaypointMcpService::new(data_context);
+    // Initialize shared query core with data context
+    let query = WaypointQuery::new(data_context);
 
     // Create the Streamable HTTP service with session management
     let service = StreamableHttpService::new(
         move || {
-            let tools = WaypointMcpTools::new(waypoint_service.clone());
+            let tools = WaypointMcpTools::new(query.clone());
             Ok(tools)
         },
         Arc::new(LocalSessionManager::default()),

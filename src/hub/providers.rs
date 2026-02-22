@@ -587,14 +587,14 @@ impl HubClient for FarcasterHubClient {
 
         // Create the target (either cast ID or URL)
         let target = match (target_cast_fid, target_cast_hash, target_url) {
+            (_, _, Some(url)) => {
+                Some(crate::proto::reaction_request::Target::TargetUrl(url.to_string()))
+            },
             (Some(target_fid), Some(hash), _) => {
                 Some(crate::proto::reaction_request::Target::TargetCastId(crate::proto::CastId {
                     fid: target_fid.value(),
                     hash: hash.to_vec(),
                 }))
-            },
-            (_, _, Some(url)) => {
-                Some(crate::proto::reaction_request::Target::TargetUrl(url.to_string()))
             },
             _ => {
                 return Err(DataAccessError::Other(
@@ -658,11 +658,14 @@ impl HubClient for FarcasterHubClient {
         }
 
         // Convert reaction type
-        let reaction_type_enum = reaction_type.map(|rt| match rt {
-            1 => crate::proto::ReactionType::Like,
-            2 => crate::proto::ReactionType::Recast,
-            _ => crate::proto::ReactionType::Like, // Default to like
-        });
+        let reaction_type_enum = match reaction_type {
+            Some(1) => Some(crate::proto::ReactionType::Like),
+            Some(2) => Some(crate::proto::ReactionType::Recast),
+            Some(value) => {
+                return Err(DataAccessError::Other(format!("Invalid reaction type: {}", value)));
+            },
+            None => None,
+        };
 
         // Create ReactionsByFidRequest
         let request = crate::proto::ReactionsByFidRequest {
@@ -717,13 +720,13 @@ impl HubClient for FarcasterHubClient {
 
         // Create the target (either cast ID or URL)
         let target = match (target_cast_fid, target_cast_hash, target_url) {
+            (_, _, Some(url)) => {
+                Some(crate::proto::reactions_by_target_request::Target::TargetUrl(url.to_string()))
+            },
             (Some(target_fid), Some(hash), _) => {
                 Some(crate::proto::reactions_by_target_request::Target::TargetCastId(
                     crate::proto::CastId { fid: target_fid.value(), hash: hash.to_vec() },
                 ))
-            },
-            (_, _, Some(url)) => {
-                Some(crate::proto::reactions_by_target_request::Target::TargetUrl(url.to_string()))
             },
             _ => {
                 return Err(DataAccessError::Other(
@@ -733,11 +736,14 @@ impl HubClient for FarcasterHubClient {
         };
 
         // Convert reaction type
-        let reaction_type_enum = reaction_type.map(|rt| match rt {
-            1 => crate::proto::ReactionType::Like,
-            2 => crate::proto::ReactionType::Recast,
-            _ => crate::proto::ReactionType::Like, // Default to like
-        });
+        let reaction_type_enum = match reaction_type {
+            Some(1) => Some(crate::proto::ReactionType::Like),
+            Some(2) => Some(crate::proto::ReactionType::Recast),
+            Some(value) => {
+                return Err(DataAccessError::Other(format!("Invalid reaction type: {}", value)));
+            },
+            None => None,
+        };
 
         // Create ReactionsByTargetRequest
         let request = crate::proto::ReactionsByTargetRequest {
@@ -1018,7 +1024,7 @@ impl HubClient for FarcasterHubClient {
 
     /// Get link compact state messages by FID
     async fn get_link_compact_state_by_fid(&self, fid: Fid) -> Result<Vec<Message>> {
-        debug!("Fetching reactions for FID: {}", fid);
+        debug!("Fetching link compact state for FID: {}", fid);
         let mut hub = self.hub.lock().await;
 
         // Ensure hub is connected

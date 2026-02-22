@@ -15,6 +15,7 @@ pub mod health;
 pub mod hub;
 pub mod metrics;
 pub mod processor;
+pub mod query;
 pub mod redis;
 pub mod services;
 
