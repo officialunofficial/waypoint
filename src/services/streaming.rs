@@ -331,7 +331,7 @@ impl Consumer {
         match self.stream.redis.xinfo_consumers(stream_key, group_name).await {
             Ok(consumers) => {
                 let mut deleted_count = 0;
-                let current_consumer = crate::redis::stream::RedisStream::get_stable_consumer_id();
+                let current_consumer = RedisStream::get_stable_consumer_id();
 
                 for consumer_info in consumers {
                     // Get consumer name and idle time
@@ -758,8 +758,7 @@ impl Consumer {
         // Build stream key for DLQ context - use Arc<str> to avoid cloning in hot path
         let stream_key: Arc<str> =
             Arc::from(RedisStream::get_stream_key(&self.hub_host, message_type.to_stream_key()));
-        let consumer_id: Arc<str> =
-            Arc::from(crate::redis::stream::RedisStream::get_stable_consumer_id());
+        let consumer_id: Arc<str> = Arc::from(RedisStream::get_stable_consumer_id());
         let group_name = Arc::clone(&self.group_name);
 
         // Process entries concurrently with semaphore-based throttling
